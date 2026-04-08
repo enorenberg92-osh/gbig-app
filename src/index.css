@@ -1,0 +1,105 @@
+/* ===========================
+   GBIG App – Global Styles
+   Green Bay Indoor Golf
+   =========================== */
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --green: #2d6a4f;
+  --green-dark: #1b4332;
+  --green-light: #52b788;
+  --green-xlight: #d8f3dc;
+  --gold: #c9a84c;
+  --gold-light: #f4d58d;
+  --white: #ffffff;
+  --off-white: #f8f9fa;
+  --gray-100: #f1f3f5;
+  --gray-200: #e9ecef;
+  --gray-400: #adb5bd;
+  --gray-600: #6c757d;
+  --gray-800: #343a40;
+  --black: #1a1a1a;
+  --tab-height: 68px;
+  --header-height: 60px;
+  --radius: 12px;
+  --radius-sm: 8px;
+  --shadow: 0 2px 12px rgba(0,0,0,0.10);
+  --shadow-lg: 0 4px 24px rgba(0,0,0,0.15);
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, sans-serif;
+  background: var(--off-white);
+  color: var(--black);
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  cursor: pointer;
+  border: none;
+  background: none;
+  font-family: inherit;
+}
+
+input, textarea {
+  font-family: inherit;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* ── AdminBookings animations ── */
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: scale(0.95); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+@keyframes countdown {
+  from { width: 100%; }
+  to   { width: 0%; }
+}
+
+/* ── Splash screen animations ── */
+@keyframes splashLogoIn {
+  0%   { opacity: 0; transform: scale(0.4) translateY(12px); }
+  60%  { opacity: 1; transform: scale(1.15) translateY(-4px); }
+  80%  { transform: scale(0.95) translateY(2px); }
+  100% { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+@keyframes splashTitleIn {
+  from { opacity: 0; transform: translateY(18px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes splashLineIn {
+  from { width: 0; opacity: 0; }
+  to   { width: 72px; opacity: 1; }
+}
+
+@keyframes splashSubIn {
+  from { opacity: 0; letter-spacing: 4px; }
+  to   { opacity: 0.6; letter-spacing: 2.5px; }
+}
+
+@keyframes splashFadeOut {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
