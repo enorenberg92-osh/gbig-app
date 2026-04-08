@@ -10,10 +10,12 @@ import AdminAlerts    from './AdminAlerts'
 import AdminSkins     from './AdminSkins'
 import AdminHandicap  from './AdminHandicap'
 import AdminLeague    from './AdminLeague'
+import AdminStandings from './AdminStandings'
 
 const SECTIONS = [
   { id: 'dashboard',  label: 'Overview',     emoji: '📊' },
   { id: 'scores',     label: 'Scores',       emoji: '⛳' },
+  { id: 'standings',  label: 'Standings',    emoji: '🏅' },
   { id: 'players',    label: 'Players',      emoji: '👥' },
   { id: 'league',     label: 'Leagues',      emoji: '🏆' },
   { id: 'handicap',   label: 'Handicap',     emoji: '🏌️' },
@@ -90,6 +92,7 @@ export default function AdminPanel({ session, onBack }) {
       case 'courses':   return <AdminCourses />
       case 'skins':     return <AdminSkins     activeEventId={activeEventId} onEventChange={handleEventChange} />
       case 'alerts':    return <AdminAlerts />
+      case 'standings': return <AdminStandings session={session} />
       default:          return <AdminDashboard onWeekClosed={handleWeekClosed} />
     }
   }

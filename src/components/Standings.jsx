@@ -1,96 +1,118 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 
-export default function Standings({ session, onBack }) {
-  const [view, setView]         = useState('week')
-  const [sortBy, setSortBy]     = useState('net')
-  const [loading, setLoading]   = useState(true)
-  const [events, setEvents]     = useState([])
+// adminMode: Season shows ALL events (open + closed) so admins have full
+// visibility. Players only see closed weeks so rankings stay clean.
+export default function Standings({ session, onBack, adminMode = false }) {
+  const [view, setView]                   = useState('week')
+  const [sortBy, setSortBy]               = useState('net')
+  const [loading, setLoading]             = useState(true)
+  const [events, setEvents]               = useState([])
   const [selectedEvent, setSelectedEvent] = useState(null)
-  const [rows, setRows]         = useState([])
-  const [error, setError]       = useState(null)
+  const [rows, setRows]                   = useState([])
+  const [error, setError]                 = useState(null)
 
+  // ── 1. On mount, fetch the event list ────────────────────────────
   useEffect(() => { loadEvents() }, [])
 
+  // ── 2. Whenever the selected event or view changes, reload data ──
   useEffect(() => {
-    if (view === 'week' && selectedEvent) loadWeekly(selectedEvent.id)
-    if (view === 'season') loadSeason()
-  }, [view, selectedEvent, sortBy])
+    if (view === 'week') {
+      if (selectedEvent) loadWeekly(selectedEvent.id)
+    } else {
+      loadSeason()
+    }
+  }, [view, selectedEvent])   // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── 3. Re-sort in place when sort toggle changes ─────────────────
+  useEffect(() => {
+    setRows(prev => sortRows(prev, sortBy))
+  }, [sortBy])                // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ─────────────────────────────────────────────────────────────────
   async function loadEvents() {
-    // Only show events that have already started — never expose future weeks to players
-    const today = new Date().toISOString().split('T')[0]
+    setLoading(true)
+    setError(null)
+
+    // Filter by status rather than start_date so the open week always appears
+    // in the picker even if its calendar start_date hasn't passed yet.
     const { data, error } = await supabase
       .from('events')
       .select('id, name, week_number, start_date, status')
       .neq('is_bye', true)
-      .lte('start_date', today)
+      .in('status', ['open', 'closed'])
       .order('week_number', { ascending: false })
 
     if (error) { setError(error.message); setLoading(false); return }
 
     const evts = data || []
     setEvents(evts)
-    if (evts.length > 0) setSelectedEvent(evts[0])
-    else setLoading(false)
+
+    if (evts.length === 0) { setLoading(false); return }
+
+    // Always default to the open event so "This Week" shows current-week scores
+    const defaultEvt = evts.find(e => e.status === 'open') || evts[0]
+    setSelectedEvent(defaultEvt)
+    // ↑ Setting selectedEvent triggers useEffect #2, which calls loadWeekly
   }
 
+  // ─────────────────────────────────────────────────────────────────
   async function loadWeekly(eventId) {
+    if (!eventId) return
     setLoading(true)
     setError(null)
 
-    // Load scores, players, and teams separately (avoid FK join failures)
     const [scoresRes, playersRes, teamsRes] = await Promise.all([
-      supabase.from('scores').select('id, player_id, event_id, gross_total, net_total, handicap_used').eq('event_id', eventId),
+      supabase.from('scores')
+        .select('id, player_id, event_id, gross_total, net_total, handicap_used')
+        .eq('event_id', eventId),
       supabase.from('players').select('id, name, first_name, last_name, handicap'),
       supabase.from('teams').select('id, name, player1_id, player2_id'),
     ])
 
     if (scoresRes.error) { setError(scoresRes.error.message); setLoading(false); return }
 
-    const playerMap = {}
-    ;(playersRes.data || []).forEach(p => { playerMap[p.id] = p })
-
-    const teamRows = buildTeamRows(scoresRes.data || [], playersRes.data || [], teamsRes.data || [], false)
+    const teamRows = buildTeamRows(
+      scoresRes.data || [], playersRes.data || [], teamsRes.data || [], false
+    )
     setRows(sortRows(teamRows, sortBy))
     setLoading(false)
   }
 
+  // ─────────────────────────────────────────────────────────────────
   async function loadSeason() {
     setLoading(true)
     setError(null)
 
-    // Load all scored events (open or closed)
-    const { data: closedEvents } = await supabase
-      .from('events')
-      .select('id')
-      .in('status', ['open', 'closed'])
+    // Admins see all events; players only see closed weeks
+    const { data: eligibleEvents } = adminMode
+      ? await supabase.from('events').select('id').in('status', ['open', 'closed'])
+      : await supabase.from('events').select('id').eq('status', 'closed')
 
-    const closedIds = (closedEvents || []).map(e => e.id)
-
-    if (closedIds.length === 0) {
-      setRows([])
-      setLoading(false)
-      return
-    }
+    const ids = (eligibleEvents || []).map(e => e.id)
+    if (ids.length === 0) { setRows([]); setLoading(false); return }
 
     const [scoresRes, playersRes, teamsRes] = await Promise.all([
-      supabase.from('scores').select('id, player_id, event_id, gross_total, net_total').in('event_id', closedIds),
+      supabase.from('scores')
+        .select('id, player_id, event_id, gross_total, net_total')
+        .in('event_id', ids),
       supabase.from('players').select('id, name, first_name, last_name, handicap'),
       supabase.from('teams').select('id, name, player1_id, player2_id'),
     ])
 
     if (scoresRes.error) { setError(scoresRes.error.message); setLoading(false); return }
 
-    const teamRows = buildTeamRows(scoresRes.data || [], playersRes.data || [], teamsRes.data || [], true)
+    const teamRows = buildTeamRows(
+      scoresRes.data || [], playersRes.data || [], teamsRes.data || [], true
+    )
     setRows(sortRows(teamRows, sortBy))
     setLoading(false)
   }
 
+  // ─────────────────────────────────────────────────────────────────
   function buildTeamRows(scores, players, teams, aggregate) {
-    if (!scores.length || !teams.length) return []
+    if (!teams.length) return []
 
-    // Build lookup maps
     const playerMap = {}
     players.forEach(p => { playerMap[p.id] = p })
 
@@ -105,7 +127,6 @@ export default function Standings({ session, onBack }) {
     for (const team of teams) {
       const p1scores = byPlayer[team.player1_id] || []
       const p2scores = byPlayer[team.player2_id] || []
-
       if (!p1scores.length && !p2scores.length) continue
 
       const p1 = playerMap[team.player1_id]
@@ -126,14 +147,14 @@ export default function Standings({ session, onBack }) {
 
         teamRows.push({
           teamId: team.id,
-          teamName: team.name || `${p1Name.split(' ')[0]} & ${p2Name.split(' ')[0]}`,
-          p1Name, p2Name,
-          p1Gross, p2Gross,
+          teamName: team.name || `${p1Name.split(' ')[0]}/${p2Name.split(' ')[0]}`,
+          p1Name, p2Name, p1Gross, p2Gross,
           teamGross: p1Gross + p2Gross,
-          teamNet:   p1Net + p2Net,
+          teamNet:   p1Net   + p2Net,
           rounds,
           avgGross: rounds > 0 ? ((p1Gross + p2Gross) / rounds).toFixed(1) : '—',
           avgNet:   rounds > 0 ? ((p1Net   + p2Net)   / rounds).toFixed(1) : '—',
+          hasScore: true,
         })
       } else {
         const s1 = p1scores[0]
@@ -145,13 +166,14 @@ export default function Standings({ session, onBack }) {
 
         teamRows.push({
           teamId: team.id,
-          teamName: team.name || `${p1Name.split(' ')[0]} & ${p2Name.split(' ')[0]}`,
+          teamName: team.name || `${p1Name.split(' ')[0]}/${p2Name.split(' ')[0]}`,
           p1Name, p1Gross, p1Net,
           p2Name, p2Gross, p2Net,
           teamGross: (p1Gross ?? 0) + (p2Gross ?? 0),
           teamNet:   (p1Net   ?? 0) + (p2Net   ?? 0),
           p1Hcp: p1?.handicap ?? null,
           p2Hcp: p2?.handicap ?? null,
+          hasScore: p1Gross != null || p2Gross != null,
         })
       }
     }
@@ -159,47 +181,54 @@ export default function Standings({ session, onBack }) {
     return teamRows
   }
 
+  // Lower = better in golf; teams with no score sink to the bottom
   function sortRows(rows, by) {
-    return [...rows].sort((a, b) =>
-      by === 'gross' ? a.teamGross - b.teamGross : a.teamNet - b.teamNet
-    )
+    return [...rows].sort((a, b) => {
+      if (!a.hasScore && b.hasScore)  return 1
+      if (a.hasScore  && !b.hasScore) return -1
+      return by === 'gross'
+        ? a.teamGross - b.teamGross
+        : a.teamNet   - b.teamNet
+    })
   }
 
-  useEffect(() => {
-    setRows(prev => sortRows(prev, sortBy))
-  }, [sortBy])
+  function medalEmoji(rank) {
+    return ['🥇', '🥈', '🥉'][rank] ?? null
+  }
 
   function medalColor(rank) {
-    if (rank === 0) return '#FFD700'
-    if (rank === 1) return '#C0C0C0'
-    if (rank === 2) return '#CD7F32'
-    return null
+    return ['#FFD700', '#C0C0C0', '#CD7F32'][rank] ?? null
   }
 
   const eventLabel = (evt) => {
-    const wk = evt.week_number ? `Wk ${evt.week_number} — ` : ''
-    return `${wk}${evt.name}`
+    const wk  = evt.week_number ? `Wk ${evt.week_number} — ` : ''
+    const tag = evt.status === 'open' ? ' (current)' : ''
+    return `${wk}${evt.name}${tag}`
   }
 
+  // ─────────────────────────────────────────────────────────────────
   if (error) {
     return (
       <div style={styles.centered}>
         <p style={{ color: '#c53030', fontSize: 14 }}>Error: {error}</p>
-        <button style={styles.backBtn} onClick={onBack}>← Back</button>
+        {onBack && <button style={styles.backBtn} onClick={onBack}>← Back</button>}
       </div>
     )
   }
 
   return (
     <div style={styles.container}>
-      {/* Header */}
-      <div style={styles.header}>
-        <button style={styles.headerBack} onClick={onBack}>← Back</button>
-        <div style={styles.headerTitle}>Standings</div>
-        <div style={{ width: 52 }} />
-      </div>
 
-      {/* View toggle */}
+      {/* Header — hidden in admin panel (no onBack) */}
+      {onBack && (
+        <div style={styles.header}>
+          <button style={styles.headerBack} onClick={onBack}>← Back</button>
+          <div style={styles.headerTitle}>Standings</div>
+          <div style={{ width: 52 }} />
+        </div>
+      )}
+
+      {/* This Week / Season toggle */}
       <div style={styles.toggleRow}>
         <button
           style={{ ...styles.toggleBtn, ...(view === 'week' ? styles.toggleActive : {}) }}
@@ -211,7 +240,7 @@ export default function Standings({ session, onBack }) {
         >Season</button>
       </div>
 
-      {/* Event selector (weekly only) */}
+      {/* Week picker (only visible in weekly view) */}
       {view === 'week' && events.length > 0 && (
         <div style={styles.eventPicker}>
           <select
@@ -229,7 +258,12 @@ export default function Standings({ session, onBack }) {
         </div>
       )}
 
-      {/* Sort toggle */}
+      {/* Season context note */}
+      {view === 'season' && adminMode && (
+        <p style={styles.seasonNote}>All weeks included. Players only see completed weeks.</p>
+      )}
+
+      {/* Net / Gross sort */}
       <div style={styles.sortRow}>
         <span style={styles.sortLabel}>Sort by:</span>
         <button
@@ -242,62 +276,67 @@ export default function Standings({ session, onBack }) {
         >Gross Score</button>
       </div>
 
-      {/* Standings */}
+      {/* Content */}
       {loading ? (
         <div style={styles.loading}>Loading standings…</div>
       ) : rows.length === 0 ? (
         <div style={styles.empty}>
           <div style={{ fontSize: 36, marginBottom: 10 }}>📭</div>
-          <p>No scores recorded yet{view === 'week' && selectedEvent ? ` for ${selectedEvent.name}` : ''}.</p>
+          <p style={{ margin: 0 }}>
+            {view === 'season'
+              ? (adminMode ? 'No scores recorded yet.' : 'No completed weeks yet.')
+              : selectedEvent
+                ? `No scores recorded yet for ${selectedEvent.name}.`
+                : 'No scores recorded yet.'}
+          </p>
         </div>
       ) : (
         <div style={styles.tableWrap}>
           <div style={styles.tableHeader}>
             <div style={{ ...styles.thCell, width: 32 }}>#</div>
             <div style={{ ...styles.thCell, flex: 1 }}>Team</div>
-            <div style={{ ...styles.thCell, width: 48, textAlign: 'right' }}>Gross</div>
-            <div style={{ ...styles.thCell, width: 48, textAlign: 'right' }}>Net</div>
+            <div style={{ ...styles.thCell, width: 56, textAlign: 'right' }}>Gross</div>
+            <div style={{ ...styles.thCell, width: 56, textAlign: 'right' }}>Net</div>
           </div>
 
-          {rows.map((row, idx) => {
-            const medal = medalColor(idx)
-            return (
-              <div key={row.teamId} style={{ ...styles.teamRow, ...(idx < 3 ? styles.teamRowTop : {}) }}>
-                <div style={{ ...styles.rankCell, color: medal || 'var(--gray-400)' }}>
-                  {medal ? ['🥇', '🥈', '🥉'][idx] : idx + 1}
-                </div>
+          {rows.map((row, idx) => (
+            <div key={row.teamId} style={{ ...styles.teamRow, ...(idx < 3 ? styles.teamRowTop : {}) }}>
+              <div style={{ ...styles.rankCell, color: medalColor(idx) || 'var(--gray-400)' }}>
+                {medalEmoji(idx) ?? idx + 1}
+              </div>
 
-                <div style={styles.teamInfo}>
-                  <div style={styles.teamName}>{row.teamName}</div>
-                  <div style={styles.playerLine}>
-                    <span style={styles.playerChip}>
-                      {row.p1Name.split(' ')[0]}
-                      {view === 'week' && row.p1Gross != null && (
-                        <span style={styles.chipScore}> {row.p1Gross}</span>
-                      )}
-                    </span>
-                    <span style={styles.ampersand}>&</span>
-                    <span style={styles.playerChip}>
-                      {row.p2Name.split(' ')[0]}
-                      {view === 'week' && row.p2Gross != null && (
-                        <span style={styles.chipScore}> {row.p2Gross}</span>
-                      )}
-                    </span>
-                    {view === 'season' && row.rounds != null && (
-                      <span style={styles.roundsBadge}>{row.rounds} rnd{row.rounds !== 1 ? 's' : ''}</span>
+              <div style={styles.teamInfo}>
+                <div style={styles.teamName}>{row.teamName}</div>
+                <div style={styles.playerLine}>
+                  <span style={styles.playerChip}>
+                    {row.p1Name.split(' ')[0]}
+                    {view === 'week' && row.p1Gross != null && (
+                      <span style={styles.chipScore}> {row.p1Gross}</span>
                     )}
-                  </div>
-                </div>
-
-                <div style={{ ...styles.scoreCell, fontWeight: sortBy === 'gross' ? 700 : 400 }}>
-                  {view === 'season' ? row.avgGross : row.teamGross || '—'}
-                </div>
-                <div style={{ ...styles.scoreCell, fontWeight: sortBy === 'net' ? 700 : 400, color: 'var(--green-dark)' }}>
-                  {view === 'season' ? row.avgNet : row.teamNet || '—'}
+                  </span>
+                  <span style={styles.ampersand}>&</span>
+                  <span style={styles.playerChip}>
+                    {row.p2Name.split(' ')[0]}
+                    {view === 'week' && row.p2Gross != null && (
+                      <span style={styles.chipScore}> {row.p2Gross}</span>
+                    )}
+                  </span>
+                  {view === 'season' && row.rounds != null && (
+                    <span style={styles.roundsBadge}>
+                      {row.rounds} rnd{row.rounds !== 1 ? 's' : ''}
+                    </span>
+                  )}
                 </div>
               </div>
-            )
-          })}
+
+              <div style={{ ...styles.scoreCell, fontWeight: sortBy === 'gross' ? 700 : 400 }}>
+                {row.teamGross || '—'}
+              </div>
+              <div style={{ ...styles.scoreCell, fontWeight: sortBy === 'net' ? 700 : 400, color: 'var(--green-dark)' }}>
+                {row.teamNet || '—'}
+              </div>
+            </div>
+          ))}
         </div>
       )}
     </div>
@@ -315,6 +354,7 @@ const styles = {
   toggleActive: { background: 'var(--green)', color: 'var(--white)', boxShadow: '0 1px 4px rgba(45,106,79,0.3)' },
   eventPicker:  { margin: '10px 16px 0' },
   eventSelect:  { width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-sm)', border: '1.5px solid var(--gray-200)', fontSize: 13, background: 'var(--white)', color: 'var(--black)' },
+  seasonNote:   { margin: '8px 16px 0', fontSize: 11, color: 'var(--gray-400)', fontStyle: 'italic', lineHeight: 1.4 },
   sortRow:      { display: 'flex', alignItems: 'center', gap: 8, padding: '10px 16px 0' },
   sortLabel:    { fontSize: 11, color: 'var(--gray-400)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.4px', marginRight: 2 },
   sortBtn:      { padding: '5px 12px', borderRadius: 20, fontSize: 11, fontWeight: 600, color: 'var(--gray-600)', background: 'var(--white)', border: '1px solid var(--gray-200)' },
@@ -335,5 +375,5 @@ const styles = {
   chipScore:    { fontWeight: 700, color: 'var(--green-dark)' },
   ampersand:    { fontSize: 10, color: 'var(--gray-400)' },
   roundsBadge:  { fontSize: 10, color: 'var(--green)', background: 'var(--green-xlight)', padding: '2px 7px', borderRadius: 10, fontWeight: 600 },
-  scoreCell:    { width: 48, textAlign: 'right', fontSize: 15, color: 'var(--black)', flexShrink: 0 },
+  scoreCell:    { width: 56, textAlign: 'right', fontSize: 15, color: 'var(--black)', flexShrink: 0 },
 }
