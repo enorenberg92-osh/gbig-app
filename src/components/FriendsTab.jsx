@@ -2,6 +2,19 @@ import React, { useState, useEffect, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import PlayerProfile from './PlayerProfile'
 
+// ── Social push helper ────────────────────────────────────────────────────────
+// Fire-and-forget: sends a targeted push notification to one player's devices.
+// Never throws — social pings are best-effort and should never break UI flows.
+async function sendSocialPush(targetPlayerId, title, body) {
+  try {
+    await supabase.functions.invoke('send-social-push', {
+      body: { target_player_id: targetPlayerId, title, body },
+    })
+  } catch (e) {
+    console.warn('sendSocialPush failed (non-fatal):', e)
+  }
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function playerName(p) {
   if (!p) return 'Unknown'
@@ -90,15 +103,30 @@ export default function FriendsTab({ session }) {
 
   async function handleFollow(player) {
     if (!myPlayer) return
+
+    // Check BEFORE inserting whether this follow creates a mutual (friendship)
+    const willBeMutual = followers.some(f => f.id === player.id)
+
     const { error } = await supabase.from('follows').insert({
       follower_id: myPlayer.id,
       following_id: player.id,
     })
     if (error) { showToast('Could not follow — try again.', 'error'); return }
+
     showToast(`Following ${playerName(player)}!`)
     setSearchQuery('')
     setSearchResults([])
     await loadFollows(myPlayer.id)
+
+    // Send push notification to the followed player (best-effort, never blocks UI)
+    const myName = playerName(myPlayer)
+    if (willBeMutual) {
+      // Both now follow each other — notify them that a friendship formed
+      sendSocialPush(player.id, '🤝 New Friend!', `You and ${myName} are now mutual followers!`)
+    } else {
+      // Simple follow
+      sendSocialPush(player.id, '👥 New Follower', `${myName} started following you.`)
+    }
   }
 
   async function handleUnfollow(player) {
@@ -341,12 +369,18 @@ function ConversationView({ myPlayer, otherPlayer, onBack }) {
     e.preventDefault()
     if (!newMsg.trim() || sending) return
     setSending(true)
+    const text = newMsg.trim()
     const { error } = await supabase.from('messages').insert({
       sender_id: myPlayer.id,
       recipient_id: otherPlayer.id,
-      content: newMsg.trim(),
+      content: text,
     })
-    if (!error) setNewMsg('')
+    if (!error) {
+      setNewMsg('')
+      // Notify the recipient (best-effort)
+      const preview = text.length > 80 ? text.slice(0, 80) + '…' : text
+      sendSocialPush(otherPlayer.id, `💬 ${playerName(myPlayer)}`, preview)
+    }
     setSending(false)
   }
 

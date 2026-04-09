@@ -22,7 +22,7 @@ function timeAgo(dateStr) {
   return new Date(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
-export default function AlertsPage() {
+export default function AlertsPage({ session }) {
   const [alerts, setAlerts]             = useState([])
   const [loading, setLoading]           = useState(true)
   const [notifStatus, setNotifStatus]   = useState('unknown') // 'unknown'|'unsupported'|'denied'|'prompt'|'subscribed'
@@ -81,6 +81,7 @@ export default function AlertsPage() {
         endpoint: json.endpoint,
         p256dh:   json.keys.p256dh,
         auth_key: json.keys.auth,
+        user_id:  session?.user?.id || null,
       }, { onConflict: 'endpoint' })
       setNotifStatus('subscribed')
     } catch (err) {

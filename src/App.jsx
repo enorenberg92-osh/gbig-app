@@ -166,7 +166,7 @@ export default function App() {
       case 'reservations': return <ReservationsPage />
       case 'league':       return <LeaguePage session={session} />
       case 'events':       return <EventsPage />
-      case 'alerts':       return <AlertsPage />
+      case 'alerts':       return <AlertsPage session={session} />
       default:             return <ReservationsPage />
     }
   }
