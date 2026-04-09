@@ -1,75 +1,36 @@
-// Supabase Edge Function — create-player-account
-// Creates a Supabase Auth user and links them to a player record.
-//
-// Deploy: supabase functions deploy create-player-account --project-ref mtuzmasicpcxcvtslevm
-
-import { createClient } from 'npm:@supabase/supabase-js@2'
-
-const CORS = {
-  'Access-Control-Allow-Origin':  '*',
+﻿const CORS = {
+  'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
-
   try {
+    console.log('invoked')
     const { player_id, email, password } = await req.json()
-
     if (!player_id || !email || !password) {
-      return new Response(
-        JSON.stringify({ error: 'player_id, email, and password are required' }),
-        { status: 400, headers: { ...CORS, 'Content-Type': 'application/json' } }
-      )
+      return new Response(JSON.stringify({ error: 'missing fields' }), { status: 400, headers: CORS })
     }
-
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL')!,
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
-      { auth: { autoRefreshToken: false, persistSession: false } }
-    )
-
-    // Create the auth user — pre-confirmed, no email sent
-    const { data: newUserData, error: createError } = await supabase.auth.admin.createUser({
-      email:         email.toLowerCase().trim(),
-      password,
-      email_confirm: true,
+    const url = Deno.env.get('SUPABASE_URL')
+    const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+    const clean = email.toLowerCase().trim()
+    const r1 = await fetch(url + '/auth/v1/admin/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key, 'apikey': key },
+      body: JSON.stringify({ email: clean, password: password, email_confirm: true }),
     })
-
-    if (createError) {
-      console.error('createUser error:', createError.message)
-      return new Response(
-        JSON.stringify({ error: createError.message }),
-        { status: 400, headers: { ...CORS, 'Content-Type': 'application/json' } }
-      )
-    }
-
-    // Link the new auth user to the player record
-    const { error: updateError } = await supabase
-      .from('players')
-      .update({ user_id: newUserData.user.id, email: email.toLowerCase().trim() })
-      .eq('id', player_id)
-
-    if (updateError) {
-      console.error('player link error:', updateError.message)
-      return new Response(
-        JSON.stringify({ error: updateError.message }),
-        { status: 400, headers: { ...CORS, 'Content-Type': 'application/json' } }
-      )
-    }
-
-    console.log(`Account created: player=${player_id} email=${email} user=${newUserData.user.id}`)
-
-    return new Response(
-      JSON.stringify({ success: true, user_id: newUserData.user.id }),
-      { headers: { ...CORS, 'Content-Type': 'application/json' } }
-    )
-
+    const b1 = await r1.json()
+    console.log('createUser', r1.status)
+    if (!r1.ok) return new Response(JSON.stringify({ error: b1.message || 'create failed' }), { status: 400, headers: CORS })
+    await fetch(url + '/rest/v1/players?id=eq.' + player_id, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key, 'apikey': key, 'Prefer': 'return=minimal' },
+      body: JSON.stringify({ user_id: b1.id, email: clean }),
+    })
+    console.log('done', b1.id)
+    return new Response(JSON.stringify({ success: true, user_id: b1.id }), { headers: CORS })
   } catch (e) {
-    console.error('create-player-account fatal error:', String(e))
-    return new Response(
-      JSON.stringify({ error: String(e) }),
-      { status: 500, headers: { ...CORS, 'Content-Type': 'application/json' } }
-    )
+    console.error(String(e))
+    return new Response(JSON.stringify({ error: String(e) }), { status: 500, headers: CORS })
   }
 })

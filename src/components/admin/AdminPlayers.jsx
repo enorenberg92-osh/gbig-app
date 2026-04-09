@@ -129,8 +129,20 @@ export default function AdminPlayers() {
       },
     })
 
-    if (error || data?.error) {
-      showToast('Error: ' + (data?.error || error.message), 'error')
+    // Extract the real error message from the function response body if possible
+    let errMsg = null
+    if (error) {
+      try {
+        const body = await error.context?.json()
+        errMsg = body?.error || error.message
+      } catch {
+        errMsg = error.message
+      }
+    }
+    if (data?.error) errMsg = data.error
+
+    if (errMsg) {
+      showToast('Error: ' + errMsg, 'error')
     } else {
       showToast(`✅ Account created for ${player.name}! They can now sign in.`)
       loadAll()
