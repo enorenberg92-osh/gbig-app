@@ -184,7 +184,7 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
   }
 
   function calcNet(playerId, handicap) {
-    return calcGross(playerId) - (handicap || 0)
+    return Math.round(calcGross(playerId) - (handicap || 0))
   }
 
   function calcNetVsPar(playerId, handicap) {
@@ -205,7 +205,7 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
       // Use sub's handicap if an approved sub exists for this player/event
       const sub = subMap[player.id]
       const effectiveHandicap = sub != null ? (sub.sub_handicap || 0) : (player.handicap || 0)
-      const net   = gross - effectiveHandicap
+      const net   = Math.round(gross - effectiveHandicap)
 
       const payload = {
         event_id:      selectedEvent,
@@ -601,7 +601,7 @@ function TeamRow({ team, holePars, isEditing, holeScores, saving, subMap = {}, o
                 </div>
                 <div style={trStyles.summaryItem}>
                   <span style={trStyles.summaryLabel}>Team HCP</span>
-                  <span style={trStyles.summaryValue}>{h1 + h2}</span>
+                  <span style={trStyles.summaryValue}>{Math.round((h1 + h2) * 10) / 10}</span>
                 </div>
                 <div style={trStyles.summaryItem}>
                   <span style={trStyles.summaryLabel}>Team Net</span>
