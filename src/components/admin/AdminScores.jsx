@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
+import { recalcPlayerHandicap } from '../../lib/handicapCalc'
 
 // ─── Skins calculation ───────────────────────────────────────────────────────
 // For each hole: find the lowest score. If exactly one player shot it → skin won.
@@ -256,6 +257,16 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
     showToast(`✓ Scores saved for ${team.name}!`)
     setEditingTeam(null)
     loadEventData(selectedEvent)
+
+    // Silently recalculate handicaps for both players now that new scores are in.
+    // Fire-and-forget — never blocks the UI or shows an error to the admin.
+    const playerIds = [team.p1?.id, team.p2?.id].filter(Boolean)
+    Promise.all(playerIds.map(id => recalcPlayerHandicap(supabase, id)))
+      .then(results => {
+        results.forEach((r, i) => {
+          if (r.updated) console.log(`Handicap updated: player ${playerIds[i]} → ${r.newHcp} (was ${r.oldHcp})`)
+        })
+      })
   }
 
   async function handleCalculateSkins() {

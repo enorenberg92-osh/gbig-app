@@ -58,13 +58,40 @@ export default function AdminPlayers() {
     let error
     if (editingPlayer) {
       ;({ error } = await supabase.from('players').update(payload).eq('id', editingPlayer.id))
+      setSaving(false)
+      if (error) { showToast('Error: ' + error.message, 'error'); return }
+      showToast('Player updated!')
     } else {
-      ;({ error } = await supabase.from('players').insert(payload))
+      // Insert and get the new player's ID back so we can create their account
+      const { data: newPlayer, error: insertError } = await supabase
+        .from('players')
+        .insert(payload)
+        .select('id')
+        .single()
+
+      setSaving(false)
+      if (insertError) { showToast('Error: ' + insertError.message, 'error'); return }
+
+      // Automatically create a login account if an email was provided
+      if (payload.email && newPlayer?.id) {
+        const { data: accountData, error: accountError } = await supabase.functions.invoke('create-player-account', {
+          body: {
+            player_id: newPlayer.id,
+            email:     payload.email,
+            password:  payload.league_password || 'password',
+          },
+        })
+        if (accountError || accountData?.error) {
+          // Account creation failed — player record still saved, surface the issue
+          showToast(`Player added, but account creation failed: ${accountData?.error || accountError?.message}`, 'error')
+        } else {
+          showToast(`✅ Player added & account created! They can sign in now.`)
+        }
+      } else {
+        showToast('Player added! (No email — add one later to create a login.)')
+      }
     }
 
-    setSaving(false)
-    if (error) { showToast('Error: ' + error.message, 'error'); return }
-    showToast(editingPlayer ? 'Player updated!' : 'Player added!')
     setShowPlayerForm(false); setEditingPlayer(null); setPlayerForm(EMPTY_PLAYER_FORM)
     loadAll()
   }
