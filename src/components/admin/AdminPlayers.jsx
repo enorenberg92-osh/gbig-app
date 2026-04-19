@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import { useLocation as useRouterLocation, useNavigate } from 'react-router-dom'
 import {
   Users, Upload, User, Lock, Unlock, Target, KeyRound,
   CheckCircle2, BarChart3, Handshake, X, Plus, Inbox, Search,
@@ -28,8 +29,21 @@ export default function AdminPlayers() {
   const [toast, setToast]             = useState(null)
   const [dialog, setDialog]           = useState(null)
   const [search, setSearch]           = useState('')
-  const [viewingProfileId, setViewingProfileId] = useState(null)
-  const [activeView, setActiveView] = useState('players') // 'players' | 'import'
+
+  // ── URL-driven sub-view state ────────────────────────────────────────────
+  // /league/admin/players            → main list + teams (default)
+  // /league/admin/players/import     → CSV importer
+  // /league/admin/players/:playerId  → admin-mode player profile
+  //
+  // Keeping this derived from the URL (instead of local state) means admins
+  // can deep-link to a specific player's stats, reload without losing the
+  // view, and the browser back button behaves as expected.
+  const routerLocation = useRouterLocation()
+  const navigate       = useNavigate()
+  const subPathMatch   = routerLocation.pathname.match(/\/league\/admin\/players\/?([^/?#]*)/)
+  const subPath        = (subPathMatch && subPathMatch[1]) || ''
+  const isImportView   = subPath === 'import'
+  const viewingProfileId = (subPath && !isImportView) ? subPath : null
 
   useEffect(() => { if (locationId) loadAll() }, [locationId])
 
@@ -309,27 +323,27 @@ export default function AdminPlayers() {
         <PlayerProfile
           session={null}
           playerId={viewingProfileId}
-          onBack={() => setViewingProfileId(null)}
+          onBack={() => navigate('/league/admin/players')}
         />
       </div>
     )
   }
 
   // ── Import sub-view ──────────────────────────────────────────────────────
-  if (activeView === 'import') {
+  if (isImportView) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
         <div style={styles.subNav}>
           <button
-            style={{ ...styles.subNavBtn, ...(activeView === 'players' ? styles.subNavActive : {}) }}
-            onClick={() => setActiveView('players')}
+            style={{ ...styles.subNavBtn, ...(!isImportView ? styles.subNavActive : {}) }}
+            onClick={() => navigate('/league/admin/players')}
           >
             <Users size={15} strokeWidth={2.25} style={{ verticalAlign: '-3px', marginRight: 6 }} />
             Players &amp; Teams
           </button>
           <button
-            style={{ ...styles.subNavBtn, ...(activeView === 'import' ? styles.subNavActive : {}) }}
-            onClick={() => setActiveView('import')}
+            style={{ ...styles.subNavBtn, ...(isImportView ? styles.subNavActive : {}) }}
+            onClick={() => navigate('/league/admin/players/import')}
           >
             <Upload size={15} strokeWidth={2.25} style={{ verticalAlign: '-3px', marginRight: 6 }} />
             Import from CSV
@@ -354,15 +368,15 @@ export default function AdminPlayers() {
       {/* Sub-nav toggle */}
       <div style={styles.subNav}>
         <button
-          style={{ ...styles.subNavBtn, ...(activeView === 'players' ? styles.subNavActive : {}) }}
-          onClick={() => setActiveView('players')}
+          style={{ ...styles.subNavBtn, ...(!isImportView ? styles.subNavActive : {}) }}
+          onClick={() => navigate('/league/admin/players')}
         >
           <Users size={15} strokeWidth={2.25} style={{ verticalAlign: '-3px', marginRight: 6 }} />
           Players &amp; Teams
         </button>
         <button
-          style={{ ...styles.subNavBtn, ...(activeView === 'import' ? styles.subNavActive : {}) }}
-          onClick={() => setActiveView('import')}
+          style={{ ...styles.subNavBtn, ...(isImportView ? styles.subNavActive : {}) }}
+          onClick={() => navigate('/league/admin/players/import')}
         >
           <Upload size={15} strokeWidth={2.25} style={{ verticalAlign: '-3px', marginRight: 6 }} />
           Import from CSV
@@ -559,7 +573,7 @@ export default function AdminPlayers() {
                   </div>
                 </div>
                 <div style={styles.rowActions}>
-                  <Button variant="secondary" size="sm" onClick={() => setViewingProfileId(player.id)} aria-label="View profile" icon={<BarChart3 size={16} strokeWidth={2} />} />
+                  <Button variant="secondary" size="sm" onClick={() => navigate('/league/admin/players/' + player.id)} aria-label="View profile" icon={<BarChart3 size={16} strokeWidth={2} />} />
                   <Button variant="secondary" size="sm" onClick={() => startEditPlayer(player)} style={{ background: 'var(--green-xlight)', color: 'var(--green)', borderColor: 'var(--green-xlight)' }}>
                     Edit
                   </Button>
