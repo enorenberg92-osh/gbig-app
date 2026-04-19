@@ -1,9 +1,11 @@
 import React, { useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useLocation } from '../context/LocationContext'
+import { useBrand } from '../context/ThemeProvider'
 
 export default function LoginScreen() {
   const { appName } = useLocation()
+  const { logoUrl } = useBrand()
   const [email, setEmail]     = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
@@ -43,7 +45,7 @@ export default function LoginScreen() {
     <div style={styles.container}>
       {/* Hero */}
       <div style={styles.hero}>
-        <img src="/logo-full-white.png" alt="" aria-hidden="true" style={styles.heroLogo} />
+        <img src={logoUrl || '/logo-full-white.png'} alt="" aria-hidden="true" style={styles.heroLogo} />
         <h1 style={styles.heroTitle}>League Portal</h1>
         <p style={styles.heroSubtitle}>{appName}</p>
       </div>

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { Routes, Route, Navigate, useLocation as useRouterLocation, useNavigate } from 'react-router-dom'
 import { supabase } from './lib/supabase'
 import { useLocation } from './context/LocationContext'
+import { useBrand } from './context/ThemeProvider'
 
 // Pages
 import ReservationsPage from './pages/ReservationsPage'
@@ -46,6 +47,7 @@ const TABS = [
 // ─── Splash Screen ───────────────────────────────────────────────
 function SplashScreen({ onDone, appFullName }) {
   const [phase, setPhase] = useState('in') // 'in' | 'out'
+  const { logoUrl } = useBrand()
 
   useEffect(() => {
     // Hold for 1.8s then fade out
@@ -62,7 +64,7 @@ function SplashScreen({ onDone, appFullName }) {
     }}>
       {/* Full wordmark logo — white on the deep-green splash gradient */}
       <img
-        src="/logo-full-white.png"
+        src={logoUrl || '/logo-full-white.png'}
         alt={appFullName}
         style={splash.wordmark}
       />
@@ -128,6 +130,7 @@ function activeTabFromPath(pathname) {
 // ─── Main App ────────────────────────────────────────────────────
 export default function App() {
   const { locationId, appName, appFullName } = useLocation()
+  const { logoIconUrl } = useBrand()
   const routerLoc                   = useRouterLocation()
   const navigate                    = useNavigate()
   const [session, setSession]       = useState(null)
@@ -174,7 +177,7 @@ export default function App() {
             <div style={styles.headerGoldInner}>
               <span style={styles.headerGoldFlag}>
                 <img
-                  src="/logo-icon-white.png"
+                  src={logoIconUrl || '/logo-icon-white.png'}
                   alt=""
                   aria-hidden="true"
                   style={styles.headerGoldFlagImg}
@@ -191,7 +194,7 @@ export default function App() {
             <div style={styles.headerInner}>
               <span style={styles.headerLogo}>
                 <img
-                  src="/logo-icon-white.png"
+                  src={logoIconUrl || '/logo-icon-white.png'}
                   alt=""
                   aria-hidden="true"
                   style={styles.headerLogoImg}

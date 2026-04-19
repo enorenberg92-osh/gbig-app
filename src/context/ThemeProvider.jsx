@@ -1,6 +1,24 @@
-import { useEffect, useState } from 'react'
+import { createContext, useContext, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useLocation } from './LocationContext'
+
+// ── Brand assets context ───────────────────────────────────────────────────
+// Logo URLs live in the `locations` table so onboarding a new location is
+// one DB row, not a rebuild. Values resolve async; `null` means "fall back
+// to the /public/ defaults baked into the build."
+const BrandContext = createContext({ logoUrl: null, logoIconUrl: null })
+
+/**
+ * const { logoUrl, logoIconUrl } = useBrand()
+ *
+ * Both values may be null while the fetch is pending or if the row has no
+ * override. Consumers should render with a fallback:
+ *   <img src={logoUrl || '/logo-full-white.png'} />
+ */
+export function useBrand() {
+  return useContext(BrandContext)
+}
+
 
 // ── Color math ──────────────────────────────────────────────────────────────
 // Convert a hex color to HSL so we can derive a full brand family (dark,
@@ -79,6 +97,7 @@ export function deriveBrandPalette(primaryHex) {
 export function ThemeProvider({ children }) {
   const { locationId } = useLocation()
   const [ready, setReady] = useState(false)
+  const [brand, setBrand] = useState({ logoUrl: null, logoIconUrl: null })
 
   useEffect(() => {
     if (!locationId) { setReady(true); return }
@@ -87,7 +106,7 @@ export function ThemeProvider({ children }) {
     async function applyTheme() {
       const { data, error } = await supabase
         .from('locations')
-        .select('primary_color')
+        .select('primary_color, logo_url, logo_icon_url')
         .eq('id', locationId)
         .maybeSingle()
 
@@ -109,6 +128,11 @@ export function ThemeProvider({ children }) {
         root.style.setProperty('--green-xlight', palette.xlight)
       }
 
+      setBrand({
+        logoUrl:     data?.logo_url      || null,
+        logoIconUrl: data?.logo_icon_url || null,
+      })
+
       setReady(true)
     }
 
@@ -121,5 +145,9 @@ export function ThemeProvider({ children }) {
   // GBIG regardless. Keeping this non-blocking means a slow network never
   // stalls the app.
   void ready
-  return children
+  return (
+    <BrandContext.Provider value={brand}>
+      {children}
+    </BrandContext.Provider>
+  )
 }
