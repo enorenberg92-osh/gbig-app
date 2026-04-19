@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react'
+import { Plus, X, Flag } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useLocation } from '../../context/LocationContext'
+import { Button, Toast, EmptyState } from '../ui'
 import ConfirmDialog from '../ConfirmDialog'
 
 const DEFAULT_HOLES = 9
@@ -145,15 +147,21 @@ export default function AdminCourses() {
           onCancel={() => setDialog(null)}
         />
       )}
-      {toast && (
-        <div style={{ ...styles.toast, background: toast.type === 'error' ? '#c53030' : 'var(--green)' }}>
-          {toast.msg}
-        </div>
-      )}
+      <Toast toast={toast} />
 
-      <button style={styles.addBtn} onClick={() => { resetForm(); setShowForm(true) }}>
-        + Add New Course
-      </button>
+      <Button
+        variant="primary"
+        size="lg"
+        fullWidth
+        icon={<Plus size={16} strokeWidth={2.5} />}
+        onClick={() => { resetForm(); setShowForm(true) }}
+        style={{
+          fontSize: '15px',
+          boxShadow: '0 2px 8px rgba(45,106,79,0.3)',
+        }}
+      >
+        Add New Course
+      </Button>
 
       {/* Course Form */}
       {showForm && (
@@ -242,12 +250,23 @@ export default function AdminCourses() {
             </div>
 
             <div style={styles.formActions}>
-              <button type="submit" style={styles.saveBtn} disabled={saving}>
-                {saving ? 'Saving…' : editing ? 'Update Course' : 'Save Course'}
-              </button>
-              <button type="button" style={styles.cancelBtn} onClick={resetForm}>
+              <Button
+                type="submit"
+                variant="primary"
+                loading={saving}
+                loadingText="Saving…"
+                style={{ flex: 1 }}
+              >
+                {editing ? 'Update Course' : 'Save Course'}
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={resetForm}
+                style={{ flex: 1 }}
+              >
                 Cancel
-              </button>
+              </Button>
             </div>
           </form>
         </div>
@@ -261,7 +280,11 @@ export default function AdminCourses() {
         </div>
 
         {courses.length === 0 ? (
-          <p style={styles.empty}>No courses yet — add your first one above.</p>
+          <EmptyState
+            icon={<Flag size={36} strokeWidth={1.5} />}
+            title="No courses yet"
+            description="Add your first course above to start tracking pars per hole."
+          />
         ) : (
           courses.map(course => {
             const isExpanded = expandedId === course.id
@@ -287,8 +310,26 @@ export default function AdminCourses() {
                     </div>
                   </div>
                   <div style={styles.courseActions}>
-                    <button style={styles.editBtn} onClick={e => { e.stopPropagation(); startEdit(course) }}>Edit</button>
-                    <button style={styles.deleteBtn} onClick={e => { e.stopPropagation(); handleDelete(course) }}>✕</button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={e => { e.stopPropagation(); startEdit(course) }}
+                      style={{
+                        background: 'var(--green-xlight)',
+                        borderColor: 'var(--green-xlight)',
+                        color: 'var(--green)',
+                        padding: '4px 10px',
+                      }}
+                    >
+                      Edit
+                    </Button>
+                    <Button
+                      variant="danger"
+                      size="sm"
+                      icon={<X size={13} strokeWidth={2.5} />}
+                      onClick={e => { e.stopPropagation(); handleDelete(course) }}
+                      style={{ padding: '4px 8px' }}
+                    />
                     <span style={styles.chevron}>{isExpanded ? '▲' : '▼'}</span>
                   </div>
                 </div>
@@ -324,8 +365,6 @@ export default function AdminCourses() {
 const styles = {
   container: { padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' },
   loading: { padding: '40px', textAlign: 'center', color: 'var(--gray-400)' },
-  toast: { position: 'fixed', top: '16px', left: '50%', transform: 'translateX(-50%)', color: 'white', padding: '10px 20px', borderRadius: '20px', fontSize: '13px', fontWeight: 600, zIndex: 9999, boxShadow: 'var(--shadow-lg)' },
-  addBtn: { width: '100%', padding: '13px', background: 'var(--green)', color: 'var(--white)', borderRadius: 'var(--radius-sm)', fontSize: '15px', fontWeight: 700, boxShadow: '0 2px 8px rgba(45,106,79,0.3)' },
   card: { background: 'var(--white)', borderRadius: 'var(--radius)', padding: '16px', boxShadow: 'var(--shadow)', border: '1px solid var(--gray-200)' },
   cardTitleRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' },
   cardTitle: { fontSize: '14px', fontWeight: 700, color: 'var(--green-dark)', textTransform: 'uppercase', letterSpacing: '0.4px' },
@@ -345,17 +384,12 @@ const styles = {
   holeInput: { width: '100%', minWidth: '28px', height: '36px', borderRadius: '6px', border: '1.5px solid', textAlign: 'center', fontSize: '15px', background: 'var(--gray-100)', outline: 'none', transition: 'border-color 0.15s', padding: 0 },
   holeHint: { fontSize: '11px', color: 'var(--gray-400)', marginTop: '4px' },
   formActions: { display: 'flex', gap: '10px' },
-  saveBtn: { flex: 1, padding: '12px', background: 'var(--green)', color: 'var(--white)', borderRadius: 'var(--radius-sm)', fontSize: '14px', fontWeight: 700 },
-  cancelBtn: { flex: 1, padding: '12px', background: 'var(--gray-100)', color: 'var(--gray-600)', borderRadius: 'var(--radius-sm)', fontSize: '14px' },
-  empty: { fontSize: '13px', color: 'var(--gray-400)', textAlign: 'center', padding: '16px 0' },
   courseRow: { borderBottom: '1px solid var(--gray-100)', paddingBottom: '10px', marginBottom: '10px' },
   courseHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' },
   courseInfo: {},
   courseName: { fontSize: '15px', fontWeight: 600, color: 'var(--black)' },
   courseMeta: { fontSize: '12px', color: 'var(--gray-400)', marginTop: '2px' },
   courseActions: { display: 'flex', gap: '6px', alignItems: 'center' },
-  editBtn: { fontSize: '12px', color: 'var(--green)', fontWeight: 600, padding: '4px 8px', background: 'var(--green-xlight)', borderRadius: '6px' },
-  deleteBtn: { fontSize: '12px', color: '#c53030', fontWeight: 700, padding: '4px 8px', background: '#fff5f5', borderRadius: '6px' },
   chevron: { fontSize: '10px', color: 'var(--gray-400)', marginLeft: '4px' },
   holePreview: { marginTop: '10px', padding: '10px', background: 'var(--gray-100)', borderRadius: 'var(--radius-sm)' },
   holePreviewGrid: { display: 'grid', gridTemplateColumns: 'repeat(9, 1fr)', gap: '6px' },

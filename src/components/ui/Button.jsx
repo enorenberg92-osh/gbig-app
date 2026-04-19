@@ -26,6 +26,7 @@ export default function Button({
   type          = 'button',
   onClick,
   children,
+  className     = '',
   style: overrideStyle = {},
   ...rest
 }) {
@@ -42,7 +43,6 @@ export default function Button({
     fontWeight:    700,
     cursor:        isDisabled ? 'not-allowed' : 'pointer',
     opacity:       isDisabled ? 0.6 : 1,
-    transition:    'background 0.15s, border-color 0.15s, color 0.15s',
     whiteSpace:    'nowrap',
     width:         fullWidth ? '100%' : 'auto',
   }
@@ -85,9 +85,17 @@ export default function Button({
   }
 
   const label = loading && loadingText ? loadingText : children
+  const combinedClass = ['ui-pressable', className].filter(Boolean).join(' ')
 
   return (
-    <button type={type} onClick={onClick} disabled={isDisabled} style={style} {...rest}>
+    <button
+      type={type}
+      onClick={onClick}
+      disabled={isDisabled}
+      style={style}
+      className={combinedClass}
+      {...rest}
+    >
       {icon && <span style={{ display: 'inline-flex', alignItems: 'center' }}>{icon}</span>}
       {label && <span>{label}</span>}
       {iconRight && <span style={{ display: 'inline-flex', alignItems: 'center' }}>{iconRight}</span>}

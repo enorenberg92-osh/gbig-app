@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react'
+import { Search, Users, Check, Plus, Handshake, MessageSquare, Send } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import PlayerProfile from './PlayerProfile'
 import { useLocation } from '../context/LocationContext'
+import { Button, Toast, EmptyState, TabGroup, Input } from './ui'
 
 // ── Social push helper ────────────────────────────────────────────────────────
 // Fire-and-forget: sends a targeted push notification to one player's devices.
@@ -187,10 +189,12 @@ export default function FriendsTab({ session }) {
   if (loading) return <div style={st.loading}>Loading…</div>
 
   if (!myPlayer) return (
-    <div style={st.emptyState}>
-      <div style={st.emptyIcon}>👥</div>
-      <div style={st.emptyTitle}>Player record not linked</div>
-      <div style={st.emptySub}>Contact your league admin to link your account to your player record.</div>
+    <div style={st.page}>
+      <EmptyState
+        icon={<Users size={44} strokeWidth={1.5} />}
+        title="Player record not linked"
+        description="Contact your league admin to link your account to your player record."
+      />
     </div>
   )
 
@@ -213,17 +217,14 @@ export default function FriendsTab({ session }) {
   // ── List view ──────────────────────────────────────────────────────────────
   return (
     <div style={st.page}>
-      {toast && (
-        <div style={{ ...st.toast, background: toast.type === 'error' ? '#c53030' : 'var(--green)' }}>
-          {toast.msg}
-        </div>
-      )}
+      <Toast toast={toast} />
 
       {/* Search */}
       <div style={st.card}>
-        <label style={st.label}>🔍 Find a player to follow</label>
-        <input
-          style={st.searchInput}
+        <Input
+          label="Find a player to follow"
+          type="search"
+          prefixIcon={<Search size={14} strokeWidth={2.25} />}
           value={searchQuery}
           onChange={e => setSearchQuery(e.target.value)}
           placeholder="Search by name…"
@@ -242,8 +243,23 @@ export default function FriendsTab({ session }) {
                   {p.handicap != null && <div style={st.meta}>HCP {p.handicap}</div>}
                 </div>
                 {isFollowing(p)
-                  ? <span style={st.followingPill}>Following ✓</span>
-                  : <button style={st.followBtn} onClick={() => handleFollow(p)}>+ Follow</button>
+                  ? (
+                    <span style={st.followingPill}>
+                      <Check size={11} strokeWidth={3} style={{ marginRight: 3, verticalAlign: '-2px' }} />
+                      Following
+                    </span>
+                  )
+                  : (
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      icon={<Plus size={12} strokeWidth={2.75} />}
+                      onClick={() => handleFollow(p)}
+                      style={{ borderRadius: 20, padding: '5px 12px', fontSize: 12 }}
+                    >
+                      Follow
+                    </Button>
+                  )
                 }
               </div>
             ))}
@@ -252,25 +268,16 @@ export default function FriendsTab({ session }) {
       </div>
 
       {/* Following / Followers tabs */}
-      <div style={st.tabRow}>
-        {[
+      <TabGroup
+        variant="pill"
+        options={[
           { id: 'following', label: 'Following', count: following.length },
           { id: 'followers', label: 'Followers', count: followers.length },
-        ].map(({ id, label, count }) => (
-          <button
-            key={id}
-            style={{ ...st.tabBtn, ...(activeTab === id ? st.tabBtnActive : {}) }}
-            onClick={() => setActiveTab(id)}
-          >
-            {label}
-            {count > 0 && (
-              <span style={{ ...st.tabCount, background: activeTab === id ? 'rgba(255,255,255,0.25)' : 'var(--green-xlight)', color: activeTab === id ? '#fff' : 'var(--green-dark)' }}>
-                {count}
-              </span>
-            )}
-          </button>
-        ))}
-      </div>
+        ]}
+        value={activeTab}
+        onChange={setActiveTab}
+        style={{ background: 'transparent' }}
+      />
 
       {/* List */}
       <div style={st.card}>
@@ -286,17 +293,38 @@ export default function FriendsTab({ session }) {
                       <div style={st.playerName}>{playerName(p)}</div>
                       <div style={st.metaRow}>
                         {p.handicap != null && <span style={st.meta}>HCP {p.handicap}</span>}
-                        {mutual && <span style={st.mutualPill}>🤝 Mutual</span>}
+                        {mutual && (
+                          <span style={st.mutualPill}>
+                            <Handshake size={11} strokeWidth={2.25} style={{ marginRight: 3, verticalAlign: '-2px' }} />
+                            Mutual
+                          </span>
+                        )}
                         <span style={st.tapHint}>Tap to view profile →</span>
                       </div>
                     </div>
                     <div style={st.actions}>
                       {mutual && (
-                        <button style={st.msgBtn} title="Send message" onClick={() => { setViewingPlayer(p); setView('conversation') }}>
-                          💬
-                        </button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          icon={<MessageSquare size={14} strokeWidth={2} color="var(--green-dark)" />}
+                          onClick={() => { setViewingPlayer(p); setView('conversation') }}
+                          style={{
+                            background: 'var(--green-xlight)',
+                            borderColor: 'var(--green)',
+                            padding: '5px 8px',
+                          }}
+                          title="Send message"
+                        />
                       )}
-                      <button style={st.unfollowBtn} onClick={() => handleUnfollow(p)}>Unfollow</button>
+                      <Button
+                        variant="danger"
+                        size="sm"
+                        onClick={() => handleUnfollow(p)}
+                        style={{ padding: '4px 10px', fontSize: 11 }}
+                      >
+                        Unfollow
+                      </Button>
                     </div>
                   </div>
                 )
@@ -315,19 +343,48 @@ export default function FriendsTab({ session }) {
                       <div style={st.playerName}>{playerName(p)}</div>
                       <div style={st.metaRow}>
                         {p.handicap != null && <span style={st.meta}>HCP {p.handicap}</span>}
-                        {mutual && <span style={st.mutualPill}>🤝 Mutual</span>}
+                        {mutual && (
+                          <span style={st.mutualPill}>
+                            <Handshake size={11} strokeWidth={2.25} style={{ marginRight: 3, verticalAlign: '-2px' }} />
+                            Mutual
+                          </span>
+                        )}
                       </div>
                     </div>
                     <div style={st.actions}>
                       {mutual && (
-                        <button style={st.msgBtn} title="Send message" onClick={() => { setViewingPlayer(p); setView('conversation') }}>
-                          💬
-                        </button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          icon={<MessageSquare size={14} strokeWidth={2} color="var(--green-dark)" />}
+                          onClick={() => { setViewingPlayer(p); setView('conversation') }}
+                          style={{
+                            background: 'var(--green-xlight)',
+                            borderColor: 'var(--green)',
+                            padding: '5px 8px',
+                          }}
+                          title="Send message"
+                        />
                       )}
                       {!isFollowing(p) && (
-                        <button style={st.followBtn} onClick={() => handleFollow(p)}>Follow Back</button>
+                        <Button
+                          variant="primary"
+                          size="sm"
+                          icon={<Plus size={12} strokeWidth={2.75} />}
+                          onClick={() => handleFollow(p)}
+                          style={{ borderRadius: 20, padding: '5px 12px', fontSize: 12 }}
+                        >
+                          Follow Back
+                        </Button>
                       )}
-                      <button style={st.removeBtn} onClick={() => handleRemoveFollower(p)}>Remove</button>
+                      <Button
+                        variant="danger"
+                        size="sm"
+                        onClick={() => handleRemoveFollower(p)}
+                        style={{ padding: '4px 10px', fontSize: 11 }}
+                      >
+                        Remove
+                      </Button>
                     </div>
                   </div>
                 )
@@ -477,13 +534,21 @@ function ConversationView({ myPlayer, otherPlayer, onBack }) {
           autoComplete="off"
           maxLength={500}
         />
-        <button
+        <Button
           type="submit"
-          style={{ ...cv.sendBtn, opacity: sending || !newMsg.trim() ? 0.5 : 1 }}
+          variant="primary"
+          icon={<Send size={14} strokeWidth={2.25} />}
           disabled={sending || !newMsg.trim()}
+          style={{
+            background: 'var(--green-dark)',
+            borderColor: 'var(--green-dark)',
+            borderRadius: 20,
+            padding: '10px 18px',
+            flexShrink: 0,
+          }}
         >
           Send
-        </button>
+        </Button>
       </form>
     </div>
   )
@@ -493,26 +558,13 @@ function ConversationView({ myPlayer, otherPlayer, onBack }) {
 const st = {
   page:    { padding: '16px', display: 'flex', flexDirection: 'column', gap: '14px', paddingBottom: '32px' },
   loading: { padding: '60px', textAlign: 'center', color: 'var(--gray-400)' },
-  toast:   { position: 'fixed', top: '16px', left: '50%', transform: 'translateX(-50%)', color: '#fff', padding: '10px 22px', borderRadius: '20px', fontSize: '13px', fontWeight: 600, zIndex: 9999, boxShadow: 'var(--shadow-lg)', whiteSpace: 'nowrap' },
-
-  emptyState: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '60px 32px', textAlign: 'center', gap: '14px' },
-  emptyIcon:  { fontSize: '52px' },
-  emptyTitle: { fontSize: '20px', fontWeight: 800, color: 'var(--green-dark)' },
-  emptySub:   { fontSize: '14px', color: 'var(--gray-500)', lineHeight: 1.6, maxWidth: '280px' },
 
   card:        { background: '#fff', borderRadius: 'var(--radius)', padding: '16px', boxShadow: 'var(--shadow)', border: '1px solid var(--gray-200)' },
-  label:       { fontSize: '11px', fontWeight: 700, color: 'var(--gray-500)', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'block', marginBottom: '8px' },
-  searchInput: { width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-sm)', border: '1.5px solid var(--gray-200)', fontSize: '14px', background: 'var(--gray-100)', color: 'var(--black)', boxSizing: 'border-box' },
   searchResults: { marginTop: '10px', display: 'flex', flexDirection: 'column' },
   hint:        { fontSize: '13px', color: 'var(--gray-400)', padding: '10px 0', textAlign: 'center' },
   searchRow:   { display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 0', borderBottom: '1px solid var(--gray-100)' },
   searchInfo:  { flex: 1, minWidth: 0 },
   meta:        { fontSize: '11px', color: 'var(--gray-400)' },
-
-  tabRow:       { display: 'flex', gap: '8px' },
-  tabBtn:       { flex: 1, padding: '10px', borderRadius: 'var(--radius-sm)', fontSize: '13px', fontWeight: 600, color: 'var(--gray-500)', background: '#fff', border: '1.5px solid var(--gray-200)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' },
-  tabBtnActive: { background: 'var(--green-dark)', color: '#fff', border: '1.5px solid var(--green-dark)' },
-  tabCount:     { fontSize: '11px', fontWeight: 700, padding: '1px 7px', borderRadius: '10px' },
 
   playerRow:    { display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 0', borderBottom: '1px solid var(--gray-100)' },
   avatar:       { width: '38px', height: '38px', background: 'var(--green)', color: '#fff', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', fontWeight: 700, flexShrink: 0 },
@@ -520,15 +572,11 @@ const st = {
   playerName:   { fontSize: '14px', fontWeight: 600, color: 'var(--black)' },
   metaRow:      { display: 'flex', gap: '6px', alignItems: 'center', marginTop: '2px', flexWrap: 'wrap' },
   tapHint:      { fontSize: '10px', color: 'var(--gray-400)', fontStyle: 'italic' },
-  mutualPill:   { fontSize: '11px', fontWeight: 600, color: 'var(--green-dark)', background: 'var(--green-xlight)', padding: '1px 7px', borderRadius: '10px' },
-  followingPill:{ fontSize: '11px', fontWeight: 600, color: 'var(--green-dark)', background: 'var(--green-xlight)', padding: '3px 9px', borderRadius: '20px', flexShrink: 0 },
+  mutualPill:   { fontSize: '11px', fontWeight: 600, color: 'var(--green-dark)', background: 'var(--green-xlight)', padding: '1px 7px', borderRadius: '10px', display: 'inline-flex', alignItems: 'center' },
+  followingPill:{ fontSize: '11px', fontWeight: 600, color: 'var(--green-dark)', background: 'var(--green-xlight)', padding: '3px 9px', borderRadius: '20px', flexShrink: 0, display: 'inline-flex', alignItems: 'center' },
   emptyList:    { padding: '24px 0', textAlign: 'center', color: 'var(--gray-400)', fontSize: '13px', lineHeight: 1.5 },
 
   actions:      { display: 'flex', gap: '6px', flexShrink: 0, alignItems: 'center' },
-  msgBtn:       { fontSize: '16px', padding: '5px 8px', background: 'var(--green-xlight)', borderRadius: '8px', cursor: 'pointer', border: '1px solid var(--green)', lineHeight: 1 },
-  followBtn:    { fontSize: '12px', fontWeight: 700, color: '#fff', background: 'var(--green)', padding: '5px 12px', borderRadius: '20px', flexShrink: 0, cursor: 'pointer', border: 'none' },
-  unfollowBtn:  { fontSize: '11px', fontWeight: 600, color: '#c53030', background: '#fff5f5', padding: '4px 8px', borderRadius: '6px', cursor: 'pointer', border: '1px solid #fecaca' },
-  removeBtn:    { fontSize: '11px', fontWeight: 600, color: '#c53030', background: '#fff5f5', padding: '4px 8px', borderRadius: '6px', cursor: 'pointer', border: '1px solid #fecaca' },
 }
 
 const cv = {
@@ -550,7 +598,6 @@ const cv = {
   bubbleText:  { fontSize: '14px', lineHeight: 1.45, wordBreak: 'break-word' },
   bubbleTime:  { fontSize: '10px', marginTop: '4px', textAlign: 'right' },
 
-  inputRow:    { display: 'flex', gap: '8px', padding: '10px 12px', background: '#fff', borderTop: '1px solid var(--gray-200)', flexShrink: 0 },
+  inputRow:    { display: 'flex', gap: '8px', padding: '10px 12px', background: '#fff', borderTop: '1px solid var(--gray-200)', flexShrink: 0, alignItems: 'center' },
   input:       { flex: 1, padding: '10px 14px', borderRadius: '20px', border: '1.5px solid var(--gray-200)', fontSize: '14px', background: 'var(--gray-100)', outline: 'none' },
-  sendBtn:     { padding: '10px 18px', background: 'var(--green-dark)', color: '#fff', borderRadius: '20px', fontSize: '13px', fontWeight: 700, cursor: 'pointer', flexShrink: 0, border: 'none', transition: 'opacity 0.15s' },
 }

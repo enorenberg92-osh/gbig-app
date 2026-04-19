@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react'
-import { Calendar, Globe, Check, X } from 'lucide-react'
+import { Calendar, Globe, Check, X, Plus, Inbox } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useLocation } from '../../context/LocationContext'
 import ConfirmDialog from '../ConfirmDialog'
+import { Button, Toast, EmptyState } from '../ui'
 
 const EMPTY_FORM = { name: '', num_weeks: '', start_date: '', is_active: false }
 
@@ -151,7 +152,7 @@ export default function AdminLeague() {
         }
         const { error } = await supabase.from('events').insert(toInsert)
         if (error) { showToast('Error: ' + error.message, 'error'); return }
-        showToast(`✓ ${toInsert.length} week${toInsert.length !== 1 ? 's' : ''} added to Schedule!`)
+        showToast(`${toInsert.length} week${toInsert.length !== 1 ? 's' : ''} added to Schedule!`)
       },
     })
   }
@@ -185,11 +186,7 @@ export default function AdminLeague() {
           onCancel={() => setDialog(null)}
         />
       )}
-      {toast && (
-        <div style={{ ...s.toast, background: toast.type === 'error' ? '#c53030' : 'var(--green)' }}>
-          {toast.msg}
-        </div>
-      )}
+      <Toast toast={toast} />
 
       {/* ── Header row ────────────────────────────────────────────────────── */}
       <div style={s.headerRow}>
@@ -201,18 +198,24 @@ export default function AdminLeague() {
           </div>
           <div style={s.headerSub}>{leagues.length} league{leagues.length !== 1 ? 's' : ''} total</div>
         </div>
-        <button
-          style={s.addBtn}
+        <Button
+          variant="primary"
+          icon={<Plus size={16} strokeWidth={2.5} />}
           onClick={() => { setShowForm(true); setEditing(null); setForm(EMPTY_FORM) }}
+          style={{ boxShadow: '0 2px 6px rgba(45,106,79,0.25)' }}
         >
-          + Add League
-        </button>
+          Add League
+        </Button>
       </div>
 
       {/* ── League list ───────────────────────────────────────────────────── */}
       <div style={s.card}>
         {leagues.length === 0 ? (
-          <p style={s.empty}>No leagues yet — click "+ Add League" to get started.</p>
+          <EmptyState
+            icon={<Inbox size={38} strokeWidth={1.5} />}
+            title="No leagues yet"
+            description='Click "Add League" above to create your first season.'
+          />
         ) : (
           <>
             {/* Table header */}
@@ -276,10 +279,10 @@ export default function AdminLeague() {
 
                   {/* Actions */}
                   <div style={s.colActions}>
-                    <button style={s.editBtn} onClick={() => startEdit(league)}>Edit</button>
-                    <button style={s.deleteBtn} onClick={() => handleDelete(league)} aria-label="Delete league">
-                      <X size={15} strokeWidth={2.5} />
-                    </button>
+                    <Button variant="secondary" size="sm" onClick={() => startEdit(league)} style={{ background: 'var(--green-xlight)', color: 'var(--green)', borderColor: 'var(--green-xlight)' }}>
+                      Edit
+                    </Button>
+                    <Button variant="danger" size="sm" onClick={() => handleDelete(league)} aria-label="Delete league" icon={<X size={15} strokeWidth={2.5} />} />
                   </div>
                 </div>
               )
@@ -377,28 +380,37 @@ export default function AdminLeague() {
                     </div>
                   ))}
                 </div>
-                <button
+                <Button
                   type="button"
-                  style={s.generateBtn}
+                  variant="primary"
+                  fullWidth
+                  icon={<Calendar size={16} strokeWidth={2.25} />}
                   onClick={() => handleGenerateSchedule(editing)}
+                  style={{ background: 'var(--green-dark)', borderColor: 'var(--green-dark)' }}
                 >
-                  <Calendar size={16} strokeWidth={2.25} style={{ verticalAlign: '-3px', marginRight: 8 }} />
                   Generate {weekPreview.length}-Week Schedule
-                </button>
+                </Button>
               </div>
             )}
 
             <div style={s.formActions}>
-              <button type="submit" style={s.saveBtn} disabled={saving}>
-                {saving ? 'Saving…' : editing ? 'Update League' : 'Create League'}
-              </button>
-              <button
+              <Button
+                type="submit"
+                variant="primary"
+                fullWidth
+                loading={saving}
+                loadingText="Saving…"
+              >
+                {editing ? 'Update League' : 'Create League'}
+              </Button>
+              <Button
                 type="button"
-                style={s.cancelBtn}
+                variant="secondary"
+                fullWidth
                 onClick={() => { setShowForm(false); setEditing(null); setForm(EMPTY_FORM) }}
               >
                 Cancel
-              </button>
+              </Button>
             </div>
           </form>
         </div>
@@ -416,18 +428,15 @@ export default function AdminLeague() {
 const s = {
   page:    { padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px', maxWidth: '860px' },
   loading: { padding: '60px', textAlign: 'center', color: 'var(--gray-400)' },
-  toast:   { position: 'fixed', top: '16px', left: '50%', transform: 'translateX(-50%)', color: '#fff', padding: '10px 22px', borderRadius: '20px', fontSize: '13px', fontWeight: 600, zIndex: 9999, boxShadow: 'var(--shadow-lg)', whiteSpace: 'nowrap' },
 
   // header
   headerRow:   { display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
   headerTitle: { fontSize: '15px', fontWeight: 600, color: 'var(--black)' },
   workingName: { color: 'var(--green-dark)', fontWeight: 800 },
   headerSub:   { fontSize: '12px', color: 'var(--gray-400)', marginTop: '2px' },
-  addBtn:      { padding: '10px 20px', background: 'var(--green)', color: '#fff', borderRadius: 'var(--radius-sm)', fontSize: '14px', fontWeight: 700, cursor: 'pointer', boxShadow: '0 2px 6px rgba(45,106,79,0.25)' },
 
   // card
   card: { background: '#fff', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow)', border: '1px solid var(--gray-200)', overflow: 'hidden' },
-  empty: { padding: '32px', textAlign: 'center', fontSize: '14px', color: 'var(--gray-400)' },
 
   // table
   tableHeader: { display: 'flex', alignItems: 'center', padding: '10px 16px', background: 'var(--off-white)', borderBottom: '1px solid var(--gray-200)', fontSize: '11px', fontWeight: 700, color: 'var(--gray-500)', textTransform: 'uppercase', letterSpacing: '0.4px', gap: '12px' },
@@ -445,9 +454,6 @@ const s = {
   radioWrap: { background: 'transparent', cursor: 'pointer', display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '4px' },
   radio:     { width: '20px', height: '20px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'border 0.15s', flexShrink: 0 },
   radioDot:  { width: '10px', height: '10px', borderRadius: '50%', background: 'var(--green)' },
-
-  editBtn:   { fontSize: '12px', color: 'var(--green)', fontWeight: 600, padding: '4px 8px', background: 'var(--green-xlight)', borderRadius: '6px', cursor: 'pointer' },
-  deleteBtn: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: '#c53030', padding: '5px 8px', background: '#fff5f5', border: '1px solid #fecaca', borderRadius: '6px', cursor: 'pointer' },
 
   // form
   formTitle:   { fontSize: '15px', fontWeight: 800, color: 'var(--green-dark)', padding: '18px 20px 0', letterSpacing: '-0.1px' },
@@ -475,11 +481,8 @@ const s = {
   weekNum:      { fontWeight: 800, color: 'var(--green-dark)', width: '40px', flexShrink: 0 },
   weekDate:     { color: 'var(--gray-600)', flex: 1 },
   weekArrow:    { color: 'var(--gray-300)', flexShrink: 0 },
-  generateBtn:  { padding: '11px', background: 'var(--green-dark)', color: '#fff', borderRadius: 'var(--radius-sm)', fontSize: '13px', fontWeight: 700, cursor: 'pointer', textAlign: 'center' },
 
   formActions: { display: 'flex', gap: '10px', paddingTop: '4px' },
-  saveBtn:     { flex: 1, padding: '12px', background: 'var(--green)', color: '#fff', borderRadius: 'var(--radius-sm)', fontSize: '14px', fontWeight: 700, cursor: 'pointer' },
-  cancelBtn:   { flex: 1, padding: '12px', background: 'var(--gray-100)', color: 'var(--gray-600)', borderRadius: 'var(--radius-sm)', fontSize: '14px', cursor: 'pointer' },
 
   // legend
   legend:      { display: 'flex', gap: '20px', flexWrap: 'wrap' },

@@ -9,6 +9,7 @@ import Standings from './Standings'
 import PlayerProfile from './PlayerProfile'
 import SubRequest from './SubRequest'
 import FriendsTab from './FriendsTab'
+import { Button, StatTile } from './ui'
 
 export default function LeagueDashboard({ session }) {
   const { isAdmin, checking } = useIsAdmin(session)
@@ -116,24 +117,34 @@ export default function LeagueDashboard({ session }) {
       {/* 2×2 tile grid */}
       <div style={styles.grid}>
         {tiles.map(({ Icon, label, action, soon }) => (
-          <button
+          <StatTile
             key={label}
-            style={{ ...styles.tile, ...(soon ? styles.tileDimmed : {}) }}
-            disabled={soon || !action}
-            onClick={action || undefined}
-          >
-            <Icon size={30} strokeWidth={1.75} color="var(--green)" />
-            <span style={styles.tileLabel}>{label}</span>
-            {soon && <span style={styles.comingSoon}>Soon</span>}
-          </button>
+            size="md"
+            icon={<Icon size={30} strokeWidth={1.75} color="var(--green)" />}
+            label={label}
+            onClick={soon ? null : action}
+            disabled={!!soon}
+            badge={soon ? 'Soon' : null}
+          />
         ))}
       </div>
 
       {isAdmin && (
-        <button style={styles.adminPanelBtn} onClick={() => setShowAdmin(true)}>
-          <Shield size={16} strokeWidth={2.25} style={{ marginRight: 6, verticalAlign: '-3px' }} />
+        <Button
+          variant="primary"
+          size="lg"
+          fullWidth
+          icon={<Shield size={16} strokeWidth={2.25} />}
+          onClick={() => setShowAdmin(true)}
+          style={{
+            background: 'var(--green-dark)',
+            borderColor: 'var(--green-dark)',
+            marginBottom: '16px',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+          }}
+        >
           Open Admin Panel
-        </button>
+        </Button>
       )}
 
       <p style={styles.note}>League season in progress! 🏌️</p>
@@ -171,28 +182,6 @@ const styles = {
   grid: {
     display: 'grid', gridTemplateColumns: '1fr 1fr',
     gap: '12px', marginBottom: '16px',
-  },
-  tile: {
-    background: 'var(--white)', border: '1px solid var(--gray-200)',
-    borderRadius: 'var(--radius)', padding: '24px 16px',
-    display: 'flex', flexDirection: 'column', alignItems: 'center',
-    gap: '10px', boxShadow: 'var(--shadow)', position: 'relative',
-    cursor: 'pointer',
-  },
-  tileDimmed:  { opacity: 0.55 },
-  tileLabel:   { fontSize: '14px', fontWeight: 600, color: 'var(--green-dark)' },
-  comingSoon: {
-    position: 'absolute', top: '8px', right: '8px',
-    background: '#fff8e1', color: '#7a5c00',
-    fontSize: '9px', fontWeight: 700, padding: '2px 6px',
-    borderRadius: '20px', textTransform: 'uppercase', letterSpacing: '0.4px',
-  },
-
-  adminPanelBtn: {
-    width: '100%', padding: '13px', background: 'var(--green-dark)',
-    color: '#fff', borderRadius: 'var(--radius-sm)', fontSize: '14px',
-    fontWeight: 700, marginBottom: '16px', cursor: 'pointer',
-    boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
   },
   note: { textAlign: 'center', fontSize: '13px', color: 'var(--gray-400)' },
 }

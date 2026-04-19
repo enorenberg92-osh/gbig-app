@@ -1,13 +1,14 @@
 import React, { useState, useEffect } from 'react'
 import {
   Users, Upload, User, Lock, Unlock, Target, KeyRound,
-  CheckCircle2, BarChart3, Handshake, X,
+  CheckCircle2, BarChart3, Handshake, X, Plus, Inbox, Search,
 } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import PlayerProfile from '../PlayerProfile'
 import AdminImport from './AdminImport'
 import { useLocation } from '../../context/LocationContext'
 import ConfirmDialog from '../ConfirmDialog'
+import { Button, Toast, EmptyState, Input } from '../ui'
 
 const EMPTY_PLAYER_FORM = { name: '', email: '', handicap: '', in_skins: false, handicap_locked: false, league_password: 'password' }
 const EMPTY_TEAM_FORM   = { name: '', player1_id: '', player2_id: '' }
@@ -108,7 +109,7 @@ export default function AdminPlayers() {
           if (!fnRes.ok || fnBody?.error) {
             showToast(`Player added, but account creation failed: ${fnBody?.error || fnRes.status}`, 'error')
           } else {
-            showToast(`✅ Player added & account created! They can sign in now.`)
+            showToast(`Player added & account created! They can sign in now.`)
           }
         } catch (e) {
           showToast(`Player added, but account creation failed: ${e.message}`, 'error')
@@ -179,7 +180,7 @@ export default function AdminPlayers() {
           if (!fnRes.ok || fnBody?.error) {
             showToast('Error: ' + (fnBody?.error || fnRes.status), 'error')
           } else {
-            showToast(`✅ Account created for ${player.name}! They can now sign in.`)
+            showToast(`Account created for ${player.name}! They can now sign in.`)
             loadAll()
           }
         } catch (e) {
@@ -367,11 +368,7 @@ export default function AdminPlayers() {
           Import from CSV
         </button>
       </div>
-      {toast && (
-        <div style={{ ...styles.toast, background: toast.type === 'error' ? '#c53030' : 'var(--green)' }}>
-          {toast.msg}
-        </div>
-      )}
+      <Toast toast={toast} />
 
       {/* ── PLAYERS SECTION ── */}
       <div style={styles.sectionHeader}>
@@ -379,9 +376,14 @@ export default function AdminPlayers() {
           <User size={18} strokeWidth={2} style={{ verticalAlign: '-4px', marginRight: 8, color: 'var(--green-dark)' }} />
           Players
         </h2>
-        <button style={styles.addBtn} onClick={() => { setShowPlayerForm(true); setEditingPlayer(null); setPlayerForm(EMPTY_PLAYER_FORM); setShowTeamForm(false) }}>
-          + Add Player
-        </button>
+        <Button
+          variant="primary"
+          size="sm"
+          icon={<Plus size={15} strokeWidth={2.5} />}
+          onClick={() => { setShowPlayerForm(true); setEditingPlayer(null); setPlayerForm(EMPTY_PLAYER_FORM); setShowTeamForm(false) }}
+        >
+          Add Player
+        </Button>
       </div>
 
       {showPlayerForm && (
@@ -466,8 +468,12 @@ export default function AdminPlayers() {
             </div>
 
             <div style={styles.formActions}>
-              <button type="submit" style={styles.saveBtn} disabled={saving}>{saving ? 'Saving…' : editingPlayer ? 'Update Player' : 'Add Player'}</button>
-              <button type="button" style={styles.cancelBtn} onClick={() => { setShowPlayerForm(false); setEditingPlayer(null) }}>Cancel</button>
+              <Button type="submit" variant="primary" fullWidth loading={saving} loadingText="Saving…">
+                {editingPlayer ? 'Update Player' : 'Add Player'}
+              </Button>
+              <Button type="button" variant="secondary" fullWidth onClick={() => { setShowPlayerForm(false); setEditingPlayer(null) }}>
+                Cancel
+              </Button>
             </div>
           </form>
         </div>
@@ -476,14 +482,29 @@ export default function AdminPlayers() {
       <div style={styles.card}>
         <div style={styles.cardTitleRow}>
           <div style={styles.searchWrap}>
-            <input type="search" placeholder="Search players…" style={styles.searchInput} value={search} onChange={e => setSearch(e.target.value)} />
+            <Input
+              type="search"
+              placeholder="Search players…"
+              prefixIcon={<Search size={14} strokeWidth={2.25} />}
+              size="sm"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+            />
           </div>
           <span style={styles.count}>{search.trim() ? filtered.length : players.length}</span>
         </div>
         {!search.trim() ? (
-          <p style={styles.empty}>Search above to find a player.</p>
+          <EmptyState
+            icon={<Search size={36} strokeWidth={1.5} />}
+            title="Search to find a player"
+            description="Start typing a name or email above to see matching players."
+          />
         ) : filtered.length === 0 ? (
-          <p style={styles.empty}>No players match "{search}".</p>
+          <EmptyState
+            icon={<Inbox size={36} strokeWidth={1.5} />}
+            title="No matches"
+            description={`No players match "${search}".`}
+          />
         ) : (
           filtered.map(player => {
             const team = player.team_id ? teams.find(t => t.id === player.team_id) : null
@@ -524,25 +545,25 @@ export default function AdminPlayers() {
                           Account active
                         </span>
                       : (
-                        <button
-                          style={styles.createAccountBtn}
+                        <Button
+                          variant="primary"
+                          size="sm"
+                          icon={<KeyRound size={13} strokeWidth={2.25} />}
                           onClick={() => handleCreateAccount(player)}
+                          style={{ background: 'var(--green-dark)', borderColor: 'var(--green-dark)', padding: '3px 10px', fontSize: 11, borderRadius: 10 }}
                         >
-                          <KeyRound size={13} strokeWidth={2.25} style={{ verticalAlign: '-2px', marginRight: 6 }} />
                           Create Account
-                        </button>
+                        </Button>
                       )
                     }
                   </div>
                 </div>
                 <div style={styles.rowActions}>
-                  <button style={styles.profileBtn} onClick={() => setViewingProfileId(player.id)} aria-label="View profile">
-                    <BarChart3 size={16} strokeWidth={2} />
-                  </button>
-                  <button style={styles.editBtn} onClick={() => startEditPlayer(player)}>Edit</button>
-                  <button style={styles.deleteBtn} onClick={() => handleDeletePlayer(player)} aria-label="Delete player">
-                    <X size={15} strokeWidth={2.5} />
-                  </button>
+                  <Button variant="secondary" size="sm" onClick={() => setViewingProfileId(player.id)} aria-label="View profile" icon={<BarChart3 size={16} strokeWidth={2} />} />
+                  <Button variant="secondary" size="sm" onClick={() => startEditPlayer(player)} style={{ background: 'var(--green-xlight)', color: 'var(--green)', borderColor: 'var(--green-xlight)' }}>
+                    Edit
+                  </Button>
+                  <Button variant="danger" size="sm" onClick={() => handleDeletePlayer(player)} aria-label="Delete player" icon={<X size={15} strokeWidth={2.5} />} />
                 </div>
               </div>
             )
@@ -556,9 +577,14 @@ export default function AdminPlayers() {
           <Handshake size={18} strokeWidth={2} style={{ verticalAlign: '-4px', marginRight: 8, color: 'var(--green-dark)' }} />
           Teams
         </h2>
-        <button style={styles.addBtn} onClick={() => { setShowTeamForm(true); setEditingTeam(null); setTeamForm(EMPTY_TEAM_FORM); setShowPlayerForm(false) }}>
-          + Create Team
-        </button>
+        <Button
+          variant="primary"
+          size="sm"
+          icon={<Plus size={15} strokeWidth={2.5} />}
+          onClick={() => { setShowTeamForm(true); setEditingTeam(null); setTeamForm(EMPTY_TEAM_FORM); setShowPlayerForm(false) }}
+        >
+          Create Team
+        </Button>
       </div>
 
       {showTeamForm && (
@@ -601,8 +627,12 @@ export default function AdminPlayers() {
               <div style={styles.infoNote}>All players are already assigned to teams.</div>
             )}
             <div style={styles.formActions}>
-              <button type="submit" style={styles.saveBtn} disabled={saving}>{saving ? 'Saving…' : editingTeam ? 'Update Team' : 'Create Team'}</button>
-              <button type="button" style={styles.cancelBtn} onClick={() => { setShowTeamForm(false); setEditingTeam(null) }}>Cancel</button>
+              <Button type="submit" variant="primary" fullWidth loading={saving} loadingText="Saving…">
+                {editingTeam ? 'Update Team' : 'Create Team'}
+              </Button>
+              <Button type="button" variant="secondary" fullWidth onClick={() => { setShowTeamForm(false); setEditingTeam(null) }}>
+                Cancel
+              </Button>
             </div>
           </form>
         </div>
@@ -610,7 +640,11 @@ export default function AdminPlayers() {
 
       <div style={styles.card}>
         {teams.length === 0 ? (
-          <p style={styles.empty}>No teams yet — click "+ Create Team" above.</p>
+          <EmptyState
+            icon={<Handshake size={36} strokeWidth={1.5} />}
+            title="No teams yet"
+            description='Click "Create Team" above to pair players up for the league.'
+          />
         ) : (
           teams.map((team, idx) => {
             const p1 = players.find(p => p.id === team.player1_id)
@@ -630,10 +664,10 @@ export default function AdminPlayers() {
                   </div>
                 </div>
                 <div style={styles.rowActions}>
-                  <button style={styles.editBtn} onClick={() => startEditTeam(team)}>Edit</button>
-                  <button style={styles.deleteBtn} onClick={() => handleDeleteTeam(team)} aria-label="Delete team">
-                    <X size={15} strokeWidth={2.5} />
-                  </button>
+                  <Button variant="secondary" size="sm" onClick={() => startEditTeam(team)} style={{ background: 'var(--green-xlight)', color: 'var(--green)', borderColor: 'var(--green-xlight)' }}>
+                    Edit
+                  </Button>
+                  <Button variant="danger" size="sm" onClick={() => handleDeleteTeam(team)} aria-label="Delete team" icon={<X size={15} strokeWidth={2.5} />} />
                 </div>
               </div>
             )
@@ -650,16 +684,13 @@ const styles = {
   subNavBtn: { padding: '7px 18px', borderRadius: '20px', fontSize: '13px', fontWeight: 500, color: 'var(--gray-600)', border: '1.5px solid var(--gray-200)', background: 'var(--white)', cursor: 'pointer', transition: 'all 0.15s' },
   subNavActive: { background: 'var(--green)', color: 'var(--white)', border: '1.5px solid var(--green)', fontWeight: 700 },
   loading: { padding: '40px', textAlign: 'center', color: 'var(--gray-400)' },
-  toast: { position: 'fixed', top: '16px', left: '50%', transform: 'translateX(-50%)', color: 'white', padding: '10px 20px', borderRadius: '20px', fontSize: '13px', fontWeight: 600, zIndex: 9999, boxShadow: 'var(--shadow-lg)', whiteSpace: 'nowrap' },
   sectionHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '4px' },
   sectionTitle: { fontSize: '15px', fontWeight: 700, color: 'var(--green-dark)' },
-  addBtn: { padding: '9px 16px', background: 'var(--green)', color: 'var(--white)', borderRadius: 'var(--radius-sm)', fontSize: '13px', fontWeight: 700, whiteSpace: 'nowrap' },
   card: { background: 'var(--white)', borderRadius: 'var(--radius)', padding: '16px', boxShadow: 'var(--shadow)', border: '1px solid var(--gray-200)' },
   cardTitleRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' },
   cardTitle: { fontSize: '14px', fontWeight: 700, color: 'var(--green-dark)', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: '4px' },
   count: { fontSize: '13px', fontWeight: 700, color: 'var(--green)', background: 'var(--green-xlight)', padding: '2px 10px', borderRadius: '20px' },
   searchWrap: { flex: 1, marginRight: '10px' },
-  searchInput: { width: '100%', padding: '8px 12px', borderRadius: 'var(--radius-sm)', border: '1.5px solid var(--gray-200)', fontSize: '14px', background: 'var(--white)', boxSizing: 'border-box' },
   form: { display: 'flex', flexDirection: 'column', gap: '14px' },
   fieldGroup: { display: 'flex', flexDirection: 'column', gap: '5px' },
   row: { display: 'flex', gap: '12px' },
@@ -668,10 +699,7 @@ const styles = {
   input: { padding: '10px 12px', borderRadius: 'var(--radius-sm)', border: '1.5px solid var(--gray-200)', fontSize: '14px', background: 'var(--gray-100)', color: 'var(--black)' },
   select: { padding: '10px 12px', borderRadius: 'var(--radius-sm)', border: '1.5px solid var(--gray-200)', fontSize: '14px', background: 'var(--gray-100)', color: 'var(--black)' },
   formActions: { display: 'flex', gap: '10px' },
-  saveBtn: { flex: 1, padding: '12px', background: 'var(--green)', color: 'var(--white)', borderRadius: 'var(--radius-sm)', fontSize: '14px', fontWeight: 700 },
-  cancelBtn: { flex: 1, padding: '12px', background: 'var(--gray-100)', color: 'var(--gray-600)', borderRadius: 'var(--radius-sm)', fontSize: '14px' },
   infoNote: { fontSize: '12px', color: 'var(--gray-400)', fontStyle: 'italic' },
-  empty: { fontSize: '13px', color: 'var(--gray-400)', textAlign: 'center', padding: '16px 0' },
   playerRow: { display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 0', borderBottom: '1px solid var(--gray-100)' },
   playerAvatar: { width: '36px', height: '36px', background: 'var(--green)', color: 'var(--white)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', fontWeight: 700, flexShrink: 0 },
   playerInfo: { flex: 1, minWidth: 0 },
@@ -680,9 +708,6 @@ const styles = {
   teamPill: { fontSize: '11px', fontWeight: 600, color: 'var(--green-dark)', background: 'var(--green-xlight)', padding: '1px 7px', borderRadius: '10px' },
   unpairPill: { fontSize: '11px', fontWeight: 600, color: '#7a5c00', background: '#fff8e1', padding: '1px 7px', borderRadius: '10px' },
   rowActions: { display: 'flex', gap: '6px', flexShrink: 0 },
-  profileBtn: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '5px 8px', background: 'var(--gray-100)', borderRadius: '6px', border: '1px solid var(--gray-200)', color: 'var(--gray-600)', cursor: 'pointer' },
-  editBtn: { fontSize: '12px', color: 'var(--green)', fontWeight: 600, padding: '4px 8px', background: 'var(--green-xlight)', borderRadius: '6px' },
-  deleteBtn: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: '#c53030', padding: '5px 8px', background: '#fff5f5', border: '1px solid #fecaca', borderRadius: '6px', cursor: 'pointer' },
   teamRow: { display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 0', borderBottom: '1px solid var(--gray-100)' },
   teamNum: { width: '28px', height: '28px', background: 'var(--green)', color: 'var(--white)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', fontWeight: 800, flexShrink: 0 },
   teamInfo: { flex: 1, minWidth: 0 },
@@ -693,7 +718,6 @@ const styles = {
   skinsPill:   { fontSize: '11px', fontWeight: 600, color: '#7a5c00', background: '#fff8e1', padding: '1px 7px', borderRadius: '10px', border: '1px solid #f6c90e' },
   noSkinsPill: { fontSize: '11px', fontWeight: 500, color: 'var(--gray-400)', background: 'var(--gray-100)', padding: '1px 7px', borderRadius: '10px' },
   loginPill:        { fontSize: '11px', fontWeight: 600, color: '#166534', background: '#d8f3dc', padding: '2px 9px', borderRadius: '10px' },
-  createAccountBtn: { fontSize: '11px', fontWeight: 700, color: '#fff', background: 'var(--green-dark)', padding: '3px 10px', borderRadius: '10px', cursor: 'pointer', border: 'none' },
   skinsToggleRow:   { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 14px', borderRadius: 'var(--radius-sm)', cursor: 'pointer', userSelect: 'none', gap: '12px' },
   skinsToggleLeft:  { display: 'flex', alignItems: 'center', gap: '10px' },
   skinsToggleLabel: { fontSize: '13px', fontWeight: 700, color: 'var(--black)' },

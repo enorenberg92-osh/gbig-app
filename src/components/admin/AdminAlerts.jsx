@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react'
+import { Megaphone, Inbox } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useLocation } from '../../context/LocationContext'
+import { Button, Toast, EmptyState } from '../ui'
 
 const EDGE_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-alert`
 
@@ -63,7 +65,7 @@ export default function AdminAlerts() {
       })
       const json = await res.json()
       if (!res.ok) throw new Error(json.error || 'Send failed')
-      showToast(`✅ Alert sent to ${json.sent} device${json.sent !== 1 ? 's' : ''}!`)
+      showToast(`Alert sent to ${json.sent} device${json.sent !== 1 ? 's' : ''}!`)
       setTitle('')
       setBody('')
       load()
@@ -80,11 +82,7 @@ export default function AdminAlerts() {
     <div style={styles.page}>
 
       {/* Toast */}
-      {toast && (
-        <div style={{ ...styles.toast, background: toast.type === 'error' ? '#c53030' : '#2d6a4f' }}>
-          {toast.msg}
-        </div>
-      )}
+      <Toast toast={toast} />
 
       {/* ── Compose ────────────────────────────────────────── */}
       <div style={styles.section}>
@@ -143,16 +141,24 @@ export default function AdminAlerts() {
           </div>
         )}
 
-        <button
-          style={{
-            ...styles.sendBtn,
-            opacity: sending || !title.trim() || !body.trim() ? 0.5 : 1,
-          }}
+        <Button
+          variant="primary"
+          size="lg"
+          fullWidth
+          icon={<Megaphone size={16} strokeWidth={2.25} />}
+          loading={sending}
+          loadingText="Sending…"
+          disabled={!title.trim() || !body.trim()}
           onClick={handleSend}
-          disabled={sending || !title.trim() || !body.trim()}
+          style={{
+            background: 'var(--green-dark)',
+            borderColor: 'var(--green-dark)',
+            letterSpacing: '0.3px',
+            boxShadow: '0 3px 10px rgba(45,106,79,0.3)',
+          }}
         >
-          {sending ? 'Sending…' : `📣 Send to ${subCount ?? '…'} Subscriber${subCount !== 1 ? 's' : ''}`}
-        </button>
+          Send to {subCount ?? '…'} Subscriber{subCount !== 1 ? 's' : ''}
+        </Button>
       </div>
 
       {/* ── History ────────────────────────────────────────── */}
@@ -162,7 +168,11 @@ export default function AdminAlerts() {
         {loading && <p style={styles.loadingText}>Loading…</p>}
 
         {!loading && alerts.length === 0 && (
-          <p style={styles.emptyText}>No alerts sent yet.</p>
+          <EmptyState
+            icon={<Inbox size={36} strokeWidth={1.5} />}
+            title="No alerts sent yet"
+            description="Your first push notification to players will show up here."
+          />
         )}
 
         <div style={styles.history}>
@@ -189,20 +199,6 @@ const styles = {
     flexDirection: 'column',
     gap: '20px',
     paddingBottom: '40px',
-  },
-  toast: {
-    position: 'fixed',
-    top: '16px',
-    left: '50%',
-    transform: 'translateX(-50%)',
-    color: 'white',
-    padding: '10px 20px',
-    borderRadius: '20px',
-    fontSize: '13px',
-    fontWeight: 600,
-    zIndex: 9999,
-    boxShadow: 'var(--shadow-lg)',
-    whiteSpace: 'nowrap',
   },
   section: {
     background: 'var(--white)',
@@ -303,18 +299,6 @@ const styles = {
   previewTime: { fontSize: '11px', color: 'var(--gray-400)' },
   previewTitle: { fontSize: '13px', fontWeight: 700, color: 'var(--black)', lineHeight: 1.3, marginBottom: '2px' },
   previewBody: { fontSize: '12px', color: 'var(--gray-600)', lineHeight: 1.4 },
-  // ── Send button ───────────────────────────────────────────────
-  sendBtn: {
-    width: '100%',
-    padding: '13px',
-    background: 'var(--green-dark)',
-    color: 'var(--white)',
-    borderRadius: 'var(--radius-sm)',
-    fontSize: '14px',
-    fontWeight: 700,
-    letterSpacing: '0.3px',
-    transition: 'opacity 0.2s',
-  },
   // ── History ───────────────────────────────────────────────────
   history: { display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '12px' },
   histCard: {
@@ -328,5 +312,4 @@ const styles = {
   histTime: { fontSize: '11px', color: 'var(--gray-400)', flexShrink: 0 },
   histBody: { fontSize: '13px', color: 'var(--gray-600)', lineHeight: 1.4 },
   loadingText: { fontSize: '13px', color: 'var(--gray-400)', textAlign: 'center', padding: '20px 0' },
-  emptyText: { fontSize: '13px', color: 'var(--gray-400)', textAlign: 'center', padding: '20px 0' },
 }

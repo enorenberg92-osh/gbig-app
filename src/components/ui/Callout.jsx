@@ -34,6 +34,7 @@ export default function Callout({ tone = 'info', icon, children, style: override
       padding:      '12px 16px',
       borderRadius: 'var(--radius-sm)',
       fontSize:     14,
+      animation:    'uiFadeUp 0.28s cubic-bezier(0.2, 0.8, 0.2, 1)',
       ...overrideStyle,
     }}>
       <span style={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}>{Icon}</span>

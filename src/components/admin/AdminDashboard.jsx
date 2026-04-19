@@ -6,6 +6,7 @@ import {
 import { supabase } from '../../lib/supabase'
 import { useLocation } from '../../context/LocationContext'
 import ConfirmDialog from '../ConfirmDialog'
+import { Button } from '../ui'
 
 const STEPS = [
   { id: 'scores',  label: 'Review scores', num: 1 },
@@ -506,15 +507,18 @@ export default function AdminDashboard({ onWeekClosed = () => {} }) {
                   🎉 Event published! Season standings have been updated.
                 </div>
               ) : (
-                <button
-                  style={{ ...s.publishBtn, opacity: publishing ? 0.7 : 1 }}
+                <Button
+                  variant="primary"
+                  size="lg"
+                  fullWidth
+                  icon={<Lock size={16} strokeWidth={2.25} />}
+                  loading={publishing}
+                  loadingText="Publishing…"
                   onClick={handlePublish}
-                  disabled={publishing}
+                  style={{ boxShadow: '0 3px 10px rgba(45,106,79,0.4)' }}
                 >
-                  {publishing
-                    ? 'Publishing…'
-                    : <><Lock size={16} strokeWidth={2.25} style={{ verticalAlign: '-3px', marginRight: 8 }} />Lock & Publish Event</>}
-                </button>
+                  Lock &amp; Publish Event
+                </Button>
               )}
             </div>
           )}
@@ -603,7 +607,6 @@ const s = {
   checkIcon:   { display: 'flex', alignItems: 'center', flexShrink: 0 },
   checkText:   { fontSize: '14px', fontWeight: 500 },
   publishInfo: { background: '#e8f4fd', border: '1px solid #bee3f8', borderRadius: 'var(--radius-sm)', padding: '14px 16px', fontSize: '13px', color: '#2b6cb0', marginBottom: '20px', lineHeight: '1.5' },
-  publishBtn:  { width: '100%', padding: '16px', background: 'var(--green-dark)', color: '#fff', borderRadius: 'var(--radius-sm)', fontSize: '15px', fontWeight: 800, cursor: 'pointer', letterSpacing: '0.2px', transition: 'opacity 0.2s' },
   successBanner: { background: '#d8f3dc', border: '1px solid #95d5a8', borderRadius: 'var(--radius-sm)', padding: '16px', fontSize: '15px', fontWeight: 700, color: '#2d6a4f', textAlign: 'center' },
 
   // shared

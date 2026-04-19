@@ -1,7 +1,8 @@
 import React, { useState, useRef } from 'react'
-import { Check } from 'lucide-react'
+import { Check, Upload, FolderOpen } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useLocation } from '../../context/LocationContext'
+import { Button, Toast } from '../ui'
 
 // ── CSV helpers ───────────────────────────────────────────────────────────────
 
@@ -217,7 +218,7 @@ export default function AdminImport() {
     setImporting(false)
     setResults({ successes, errors })
     if (errors.length === 0) {
-      showToast(`✓ ${successes.length} team${successes.length !== 1 ? 's' : ''} imported!`)
+      showToast(`${successes.length} team${successes.length !== 1 ? 's' : ''} imported!`)
     } else {
       showToast(`${successes.length} imported, ${errors.length} failed`, 'error')
     }
@@ -233,14 +234,13 @@ export default function AdminImport() {
 
   return (
     <div style={styles.container}>
-      {toast && (
-        <div style={{ ...styles.toast, background: toast.type === 'error' ? '#c53030' : 'var(--green)' }}>
-          {toast.msg}
-        </div>
-      )}
+      <Toast toast={toast} />
 
       <div style={styles.sectionHeader}>
-        <h2 style={styles.sectionTitle}>📥 Import Players from CSV</h2>
+        <h2 style={styles.sectionTitle}>
+          <Upload size={16} strokeWidth={2.25} style={{ marginRight: 8, verticalAlign: '-3px' }} />
+          Import Players from CSV
+        </h2>
       </div>
 
       {/* Instructions */}
@@ -263,7 +263,9 @@ export default function AdminImport() {
             style={{ display: 'none' }}
           />
           <div style={styles.uploadBox}>
-            <div style={styles.uploadIcon}>📂</div>
+            <div style={styles.uploadIcon}>
+              <FolderOpen size={32} strokeWidth={1.75} color="var(--green)" />
+            </div>
             <div style={styles.uploadText}>
               {fileName ? fileName : 'Click to upload your WPForms CSV'}
             </div>
@@ -336,16 +338,21 @@ export default function AdminImport() {
           })}
 
           <div style={styles.importActions}>
-            <button
-              style={{ ...styles.importBtn, opacity: selected.size === 0 ? 0.5 : 1 }}
+            <Button
+              variant="primary"
+              size="lg"
+              icon={<Upload size={15} strokeWidth={2.25} />}
+              loading={importing}
+              loadingText="Importing…"
+              disabled={selected.size === 0}
               onClick={handleImport}
-              disabled={importing || selected.size === 0}
+              style={{ flex: 1 }}
             >
-              {importing
-                ? 'Importing…'
-                : `Import ${selected.size} Team${selected.size !== 1 ? 's' : ''}`}
-            </button>
-            <button style={styles.cancelBtn} onClick={reset}>Clear</button>
+              Import {selected.size} Team{selected.size !== 1 ? 's' : ''}
+            </Button>
+            <Button variant="secondary" size="lg" onClick={reset}>
+              Clear
+            </Button>
           </div>
         </div>
       )}
@@ -358,7 +365,8 @@ export default function AdminImport() {
           {results.successes.length > 0 && (
             <div style={styles.successSection}>
               <div style={styles.resultCount}>
-                ✓ {results.successes.length} team{results.successes.length !== 1 ? 's' : ''} created
+                <Check size={14} strokeWidth={2.5} style={{ verticalAlign: '-2px', marginRight: 6 }} />
+                {results.successes.length} team{results.successes.length !== 1 ? 's' : ''} created
               </div>
               {results.successes.map(name => (
                 <div key={name} style={styles.successRow}>🤝 {name}</div>
@@ -379,7 +387,9 @@ export default function AdminImport() {
             </div>
           )}
 
-          <button style={styles.importBtn} onClick={reset}>Import Another File</button>
+          <Button variant="primary" size="lg" fullWidth onClick={reset}>
+            Import Another File
+          </Button>
         </div>
       )}
     </div>
@@ -388,7 +398,6 @@ export default function AdminImport() {
 
 const styles = {
   container:      { padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' },
-  toast:          { position: 'fixed', top: '16px', left: '50%', transform: 'translateX(-50%)', color: 'white', padding: '10px 20px', borderRadius: '20px', fontSize: '13px', fontWeight: 600, zIndex: 9999, boxShadow: '0 4px 16px rgba(0,0,0,0.2)', whiteSpace: 'nowrap' },
   sectionHeader:  { display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
   sectionTitle:   { fontSize: '15px', fontWeight: 700, color: 'var(--green-dark)' },
   card:           { background: 'var(--white)', borderRadius: 'var(--radius)', padding: '16px', boxShadow: 'var(--shadow)', border: '1px solid var(--gray-200)' },
@@ -429,8 +438,6 @@ const styles = {
 
   // Actions
   importActions:  { display: 'flex', gap: '10px', marginTop: '16px' },
-  importBtn:      { flex: 1, padding: '13px', background: 'var(--green)', color: 'var(--white)', borderRadius: 'var(--radius-sm)', fontSize: '14px', fontWeight: 700 },
-  cancelBtn:      { padding: '13px 20px', background: 'var(--gray-100)', color: 'var(--gray-600)', borderRadius: 'var(--radius-sm)', fontSize: '14px' },
 
   // Results
   successSection: { background: '#f0fdf4', borderRadius: '10px', padding: '12px 14px', marginBottom: '12px', border: '1px solid #bbf7d0' },

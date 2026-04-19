@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react'
-import { AlertTriangle, Target } from 'lucide-react'
+import { AlertTriangle, Target, Inbox } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useLocation } from '../../context/LocationContext'
+import { Button, Toast, EmptyState } from '../ui'
 
 const SCORE_LABELS = [
   { diff: -3, label: 'Albatross', color: '#b8860b', bg: '#fef9c3' },
@@ -206,11 +207,7 @@ export default function AdminSkins({ activeEventId = null, onEventChange = () =>
 
   return (
     <div style={st.page}>
-      {toast && (
-        <div style={{ ...st.toast, background: toast.type === 'error' ? '#c53030' : 'var(--green)' }}>
-          {toast.msg}
-        </div>
-      )}
+      <Toast toast={toast} />
 
       {/* Event selector */}
       <div style={st.card}>
@@ -241,36 +238,46 @@ export default function AdminSkins({ activeEventId = null, onEventChange = () =>
       </div>
 
       {/* Run report button */}
-      <button
-        style={{ ...st.runBtn, opacity: calculating || !selectedEvent ? 0.7 : 1 }}
+      <Button
+        variant="primary"
+        size="lg"
+        fullWidth
+        icon={<Target size={16} strokeWidth={2.25} />}
+        loading={calculating}
+        loadingText="Calculating…"
+        disabled={!selectedEvent}
         onClick={runSkinReport}
-        disabled={calculating || !selectedEvent}
+        style={{
+          background: 'var(--green-dark)',
+          borderColor: 'var(--green-dark)',
+          padding: '16px',
+          fontSize: '15px',
+          fontWeight: 800,
+          letterSpacing: '0.2px',
+          boxShadow: '0 2px 8px rgba(45,106,79,0.25)',
+        }}
       >
-        {calculating
-          ? 'Calculating…'
-          : <><Target size={16} strokeWidth={2.25} style={{ verticalAlign: '-3px', marginRight: 8 }} />Run Skin Report</>}
-      </button>
+        Run Skin Report
+      </Button>
 
       {/* Results */}
       {skinResults === null && !calculating && (
-        <div style={st.promptCard}>
-          <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '10px' }}>
-            <Target size={44} strokeWidth={1.75} color="var(--green)" />
-          </div>
-          <div style={st.promptTitle}>Ready to calculate</div>
-          <div style={st.promptSub}>
-            Select an event above and click <strong>Run Skin Report</strong> to see who won each hole.
-          </div>
+        <div style={st.card}>
+          <EmptyState
+            icon={<Target size={44} strokeWidth={1.75} color="var(--green)" />}
+            title="Ready to calculate"
+            description="Select an event above and click Run Skin Report to see who won each hole."
+          />
         </div>
       )}
 
       {skinResults !== null && skinResults.length === 0 && (
-        <div style={st.promptCard}>
-          <div style={{ fontSize: '36px', marginBottom: '10px' }}>📭</div>
-          <div style={st.promptTitle}>No skins scores found</div>
-          <div style={st.promptSub}>
-            No scores have been submitted yet by players enrolled in skins for this event.
-          </div>
+        <div style={st.card}>
+          <EmptyState
+            icon={<Inbox size={40} strokeWidth={1.5} />}
+            title="No skins scores found"
+            description="No scores have been submitted yet by players enrolled in skins for this event."
+          />
         </div>
       )}
 
@@ -384,18 +391,11 @@ export default function AdminSkins({ activeEventId = null, onEventChange = () =>
 const st = {
   page:    { padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px', maxWidth: '860px' },
   loading: { padding: '60px', textAlign: 'center', color: 'var(--gray-400)' },
-  toast:   { position: 'fixed', top: '16px', left: '50%', transform: 'translateX(-50%)', color: '#fff', padding: '10px 22px', borderRadius: '20px', fontSize: '13px', fontWeight: 600, zIndex: 9999, boxShadow: 'var(--shadow-lg)', whiteSpace: 'nowrap' },
 
   card:    { background: '#fff', borderRadius: 'var(--radius)', padding: '16px', boxShadow: 'var(--shadow)', border: '1px solid var(--gray-200)' },
   label:   { fontSize: '11px', fontWeight: 700, color: 'var(--gray-500)', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'block', marginBottom: '8px' },
   select:  { width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-sm)', border: '1.5px solid var(--gray-200)', fontSize: '14px', background: 'var(--gray-100)', color: 'var(--black)' },
   skinsNote: { marginTop: '10px', fontSize: '12px', color: 'var(--gray-500)', lineHeight: '1.5', padding: '8px 12px', background: 'var(--off-white)', borderRadius: '6px' },
-
-  runBtn:  { width: '100%', padding: '16px', background: 'var(--green-dark)', color: '#fff', borderRadius: 'var(--radius-sm)', fontSize: '15px', fontWeight: 800, cursor: 'pointer', letterSpacing: '0.2px', boxShadow: '0 2px 8px rgba(45,106,79,0.25)', transition: 'opacity 0.2s' },
-
-  promptCard:  { background: '#fff', borderRadius: 'var(--radius)', padding: '48px 24px', textAlign: 'center', boxShadow: 'var(--shadow)', border: '1px solid var(--gray-200)' },
-  promptTitle: { fontSize: '17px', fontWeight: 700, color: 'var(--green-dark)', marginBottom: '8px' },
-  promptSub:   { fontSize: '14px', color: 'var(--gray-400)', lineHeight: '1.6' },
 
   // Summary banner
   summaryCard:  { background: 'var(--green-dark)', borderRadius: 'var(--radius)', padding: '20px', boxShadow: 'var(--shadow)' },

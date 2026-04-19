@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { Target, Lock, Flag, Ban, X } from 'lucide-react'
+import { Target, Lock, Flag, Ban, X, Plus, Calendar } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useLocation } from '../../context/LocationContext'
 import ConfirmDialog from '../ConfirmDialog'
+import { Button, Toast, EmptyState } from '../ui'
 
 const EMPTY_FORM = {
   name: '',
@@ -206,15 +207,18 @@ export default function AdminSchedule() {
           onCancel={() => setDialog(null)}
         />
       )}
-      {toast && (
-        <div style={{ ...styles.toast, background: toast.type === 'error' ? '#c53030' : 'var(--green)' }}>
-          {toast.msg}
-        </div>
-      )}
+      <Toast toast={toast} />
 
-      <button style={styles.addBtn} onClick={() => { setShowForm(true); setEditing(null); setForm(EMPTY_FORM) }}>
-        + Create New Event / Round
-      </button>
+      <Button
+        variant="primary"
+        size="lg"
+        fullWidth
+        icon={<Plus size={16} strokeWidth={2.5} />}
+        onClick={() => { setShowForm(true); setEditing(null); setForm(EMPTY_FORM) }}
+        style={{ fontSize: 15, boxShadow: '0 2px 8px rgba(45,106,79,0.3)' }}
+      >
+        Create New Event / Round
+      </Button>
 
       {/* Form */}
       {showForm && (
@@ -359,12 +363,12 @@ export default function AdminSchedule() {
             </div>}
 
             <div style={styles.formActions}>
-              <button type="submit" style={styles.saveBtn} disabled={saving}>
-                {saving ? 'Saving…' : editing ? 'Update Event' : 'Create Event'}
-              </button>
-              <button type="button" style={styles.cancelBtn} onClick={() => { setShowForm(false); setEditing(null) }}>
+              <Button type="submit" variant="primary" fullWidth loading={saving} loadingText="Saving…">
+                {editing ? 'Update Event' : 'Create Event'}
+              </Button>
+              <Button type="button" variant="secondary" fullWidth onClick={() => { setShowForm(false); setEditing(null) }}>
                 Cancel
-              </button>
+              </Button>
             </div>
           </form>
         </div>
@@ -392,7 +396,11 @@ export default function AdminSchedule() {
         </div>
 
         {events.length === 0 ? (
-          <p style={styles.empty}>No events yet — create your first round above.</p>
+          <EmptyState
+            icon={<Calendar size={38} strokeWidth={1.5} />}
+            title="No events yet"
+            description='Click "Create New Event / Round" above to add your first round.'
+          />
         ) : (
           events.map(evt => {
             const isBye     = !!evt.is_bye
@@ -460,15 +468,19 @@ export default function AdminSchedule() {
                   <div style={styles.eventActions}>
                     {/* Close Out only available once the week has arrived */}
                     {!isBye && !upcoming && evt.status === 'open' && (
-                      <button style={styles.closeBtn} onClick={() => handleStatusChange(evt, 'closed')}>Close Out</button>
+                      <Button variant="secondary" size="sm" onClick={() => handleStatusChange(evt, 'closed')} style={{ background: 'var(--gold-light)', color: '#7a5c00', borderColor: 'var(--gold-light)', fontWeight: 700 }}>
+                        Close Out
+                      </Button>
                     )}
                     {!isBye && evt.status === 'closed' && (
-                      <button style={styles.reopenBtn} onClick={() => handleStatusChange(evt, 'open')}>Reopen</button>
+                      <Button variant="secondary" size="sm" onClick={() => handleStatusChange(evt, 'open')} style={{ background: 'var(--green-xlight)', color: 'var(--green)', borderColor: 'var(--green-xlight)', fontWeight: 700 }}>
+                        Reopen
+                      </Button>
                     )}
-                    <button style={styles.editBtn} onClick={() => startEdit(evt)}>Edit</button>
-                    <button style={styles.deleteBtn} onClick={() => handleDelete(evt)} aria-label="Delete event">
-                      <X size={15} strokeWidth={2.5} />
-                    </button>
+                    <Button variant="secondary" size="sm" onClick={() => startEdit(evt)} style={{ background: 'var(--green-xlight)', color: 'var(--green)', borderColor: 'var(--green-xlight)' }}>
+                      Edit
+                    </Button>
+                    <Button variant="danger" size="sm" onClick={() => handleDelete(evt)} aria-label="Delete event" icon={<X size={15} strokeWidth={2.5} />} />
                   </div>
                 </div>
               </div>
@@ -483,8 +495,6 @@ export default function AdminSchedule() {
 const styles = {
   container: { padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' },
   loading: { padding: '40px', textAlign: 'center', color: 'var(--gray-400)' },
-  toast: { position: 'fixed', top: '16px', left: '50%', transform: 'translateX(-50%)', color: 'white', padding: '10px 20px', borderRadius: '20px', fontSize: '13px', fontWeight: 600, zIndex: 9999, boxShadow: 'var(--shadow-lg)' },
-  addBtn: { width: '100%', padding: '13px', background: 'var(--green)', color: 'var(--white)', borderRadius: 'var(--radius-sm)', fontSize: '15px', fontWeight: 700, boxShadow: '0 2px 8px rgba(45,106,79,0.3)' },
   card: { background: 'var(--white)', borderRadius: 'var(--radius)', padding: '16px', boxShadow: 'var(--shadow)', border: '1px solid var(--gray-200)' },
   cardTitleRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' },
   cardTitle: { fontSize: '14px', fontWeight: 700, color: 'var(--green-dark)', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: '3px' },
@@ -497,9 +507,6 @@ const styles = {
   input: { padding: '10px 12px', borderRadius: 'var(--radius-sm)', border: '1.5px solid var(--gray-200)', fontSize: '14px', background: 'var(--gray-100)', color: 'var(--black)' },
   select: { padding: '10px 12px', borderRadius: 'var(--radius-sm)', border: '1.5px solid var(--gray-200)', fontSize: '14px', background: 'var(--gray-100)', color: 'var(--black)' },
   formActions: { display: 'flex', gap: '10px' },
-  saveBtn: { flex: 1, padding: '12px', background: 'var(--green)', color: 'var(--white)', borderRadius: 'var(--radius-sm)', fontSize: '14px', fontWeight: 700 },
-  cancelBtn: { flex: 1, padding: '12px', background: 'var(--gray-100)', color: 'var(--gray-600)', borderRadius: 'var(--radius-sm)', fontSize: '14px' },
-  empty: { fontSize: '13px', color: 'var(--gray-400)', textAlign: 'center', padding: '16px 0' },
   eventRow: { padding: '12px 0', borderBottom: '1px solid var(--gray-100)', display: 'flex', justifyContent: 'space-between', gap: '10px' },
   eventMain: { flex: 1, minWidth: 0 },
   eventName: { fontSize: '14px', fontWeight: 600, color: 'var(--black)' },
@@ -511,10 +518,6 @@ const styles = {
   eventRight: { display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '6px', flexShrink: 0 },
   badge: { fontSize: '10px', fontWeight: 700, padding: '2px 8px', borderRadius: '20px', textTransform: 'uppercase', letterSpacing: '0.3px' },
   eventActions: { display: 'flex', gap: '5px' },
-  closeBtn: { fontSize: '11px', color: '#7a5c00', fontWeight: 700, padding: '4px 8px', background: 'var(--gold-light)', borderRadius: '6px' },
-  reopenBtn: { fontSize: '11px', color: 'var(--green)', fontWeight: 700, padding: '4px 8px', background: 'var(--green-xlight)', borderRadius: '6px' },
-  editBtn: { fontSize: '11px', color: 'var(--green)', fontWeight: 600, padding: '4px 8px', background: 'var(--green-xlight)', borderRadius: '6px' },
-  deleteBtn: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: '#c53030', padding: '5px 8px', background: '#fff5f5', border: '1px solid #fecaca', borderRadius: '6px', cursor: 'pointer' },
   holeEventBox: { background: 'var(--green-xlight)', border: '1.5px solid var(--green)', borderRadius: 'var(--radius-sm)', padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: '10px' },
   holeEventTitle: { fontSize: '13px', fontWeight: 700, color: 'var(--green-dark)' },
   holeEventSub: { fontSize: '11px', color: 'var(--green-dark)', opacity: 0.8, marginTop: '-6px' },

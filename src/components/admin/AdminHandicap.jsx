@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react'
-import { Settings, RefreshCw, Lock } from 'lucide-react'
+import { Settings, RefreshCw, Lock, Inbox } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { DEFAULT_SETTINGS, calcHandicap, calcBreakdown } from '../../lib/handicapCalc'
 import { useLocation } from '../../context/LocationContext'
+import { Button, Toast, EmptyState } from '../ui'
 
 // ── Component ────────────────────────────────────────────────────────────────
 export default function AdminHandicap() {
@@ -92,7 +93,7 @@ export default function AdminHandicap() {
     showToast(
       errors
         ? `Updated ${updated} player(s) — ${errors} error(s).`
-        : `✓ ${updated} handicap${updated !== 1 ? 's' : ''} updated!`,
+        : `${updated} handicap${updated !== 1 ? 's' : ''} updated!`,
       errors ? 'error' : 'success'
     )
     loadAll()
@@ -114,11 +115,7 @@ export default function AdminHandicap() {
 
   return (
     <div style={styles.container}>
-      {toast && (
-        <div style={{ ...styles.toast, background: toast.type === 'error' ? '#c53030' : 'var(--green)' }}>
-          {toast.msg}
-        </div>
-      )}
+      <Toast toast={toast} />
 
       {/* Settings Summary */}
       <div style={styles.settingsCard}>
@@ -158,15 +155,18 @@ export default function AdminHandicap() {
       </div>
 
       {/* Recalculate Button */}
-      <button
-        style={{ ...styles.recalcBtn, opacity: updating ? 0.7 : 1 }}
+      <Button
+        variant="primary"
+        size="lg"
+        fullWidth
+        icon={<RefreshCw size={16} strokeWidth={2.25} />}
+        loading={updating}
+        loadingText="Updating…"
         onClick={handleRecalcAll}
-        disabled={updating}
+        style={{ boxShadow: '0 2px 8px rgba(74,124,89,0.35)' }}
       >
-        {updating
-          ? 'Updating…'
-          : <><RefreshCw size={16} strokeWidth={2.25} style={{ verticalAlign: '-3px', marginRight: 8 }} />Recalculate &amp; Update All Handicaps</>}
-      </button>
+        Recalculate &amp; Update All Handicaps
+      </Button>
 
       {/* Players With Scores */}
       {playersWithScores.length > 0 && (
@@ -335,7 +335,11 @@ export default function AdminHandicap() {
       )}
 
       {players.length === 0 && (
-        <div style={styles.empty}>No players found. Add players in the Players tab first.</div>
+        <EmptyState
+          icon={<Inbox size={40} strokeWidth={1.5} />}
+          title="No players yet"
+          description="Add players in the Players tab first to start tracking handicaps."
+        />
       )}
     </div>
   )
@@ -345,7 +349,6 @@ export default function AdminHandicap() {
 const styles = {
   container:    { padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' },
   loading:      { padding: '40px', textAlign: 'center', color: 'var(--gray-400)' },
-  toast:        { position: 'fixed', top: '16px', left: '50%', transform: 'translateX(-50%)', color: 'white', padding: '10px 20px', borderRadius: '20px', fontSize: '13px', fontWeight: 600, zIndex: 9999, boxShadow: 'var(--shadow-lg)', whiteSpace: 'nowrap' },
 
   settingsCard:  { background: 'var(--white)', borderRadius: 'var(--radius)', padding: '14px 16px', boxShadow: 'var(--shadow)', border: '1px solid var(--gray-200)' },
   settingsTitle: { fontSize: '13px', fontWeight: 700, color: 'var(--green-dark)', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: '10px' },
@@ -354,8 +357,6 @@ const styles = {
   settingLabel:  { fontSize: '12px', color: 'var(--gray-500)' },
   settingValue:  { fontSize: '12px', fontWeight: 700, color: 'var(--green-dark)' },
   formulaNote:   { fontSize: '11px', color: 'var(--gray-400)', borderTop: '1px solid var(--gray-100)', paddingTop: '8px', marginTop: '4px' },
-
-  recalcBtn: { width: '100%', padding: '13px', background: 'var(--green)', color: 'var(--white)', borderRadius: 'var(--radius-sm)', fontSize: '14px', fontWeight: 700, boxShadow: '0 2px 8px rgba(74,124,89,0.35)', transition: 'opacity 0.15s' },
 
   sectionHeader: { display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' },
   sectionTitle:  { fontSize: '13px', fontWeight: 700, color: 'var(--green-dark)', textTransform: 'uppercase', letterSpacing: '0.4px' },
@@ -395,7 +396,6 @@ const styles = {
   noScoreRow: { display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 0', borderBottom: '1px solid var(--gray-100)' },
   noScoreAvatar: { width: '32px', height: '32px', background: 'var(--gray-200)', color: 'var(--gray-500)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', fontWeight: 700, flexShrink: 0 },
 
-  empty:       { padding: '40px', textAlign: 'center', color: 'var(--gray-400)', fontSize: '13px' },
   lockedBadge: { fontSize: '11px', fontWeight: 600, color: '#c53030', background: '#fff0f0', border: '1px solid #c53030', padding: '1px 7px', borderRadius: '10px', marginLeft: '8px', verticalAlign: 'middle' },
   lockedNote:  { fontSize: '11px', color: '#c53030', fontStyle: 'italic', maxWidth: '120px', textAlign: 'right', lineHeight: 1.3 },
 }

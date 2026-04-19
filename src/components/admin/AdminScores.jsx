@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react'
-import { AlertTriangle } from 'lucide-react'
+import { AlertTriangle, Target, Plus, Check } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { recalcPlayerHandicap } from '../../lib/handicapCalc'
 import { useLocation } from '../../context/LocationContext'
 import { scoreColor } from '../../lib/scoreUtils'
+import { Button, Toast } from '../ui'
 
 // ─── Skins calculation ───────────────────────────────────────────────────────
 // For each hole: find the lowest score. If exactly one player shot it → skin won.
@@ -251,7 +252,7 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
     }
 
     setSaving(false)
-    showToast(`✓ Scores saved for ${team.name}!`)
+    showToast(`Scores saved for ${team.name}!`)
     setEditingTeam(null)
     loadEventData(selectedEvent)
 
@@ -310,11 +311,7 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
 
   return (
     <div style={styles.container}>
-      {toast && (
-        <div style={{ ...styles.toast, background: toast.type === 'error' ? '#c53030' : 'var(--green)' }}>
-          {toast.msg}
-        </div>
-      )}
+      <Toast toast={toast} />
 
       {/* Event Selector */}
       <div style={styles.card}>
@@ -374,7 +371,10 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
           {submitted.length > 0 && (
             <div style={styles.card}>
               <div style={styles.cardTitleRow}>
-                <h3 style={styles.cardTitle}>✓ Submitted</h3>
+                <h3 style={styles.cardTitle}>
+                  <Check size={13} strokeWidth={2.5} style={{ marginRight: 6, verticalAlign: '-2px' }} />
+                  Submitted
+                </h3>
                 <span style={{ ...styles.badge, background: 'var(--green-xlight)', color: 'var(--green)' }}>
                   {submitted.length}
                 </span>
@@ -401,13 +401,28 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
           )}
 
           {/* Skins Calculator */}
-          <button style={styles.skinsBtn} onClick={handleCalculateSkins}>
-            🎯 Calculate Skins for This Event
-          </button>
+          <Button
+            variant="primary"
+            size="lg"
+            fullWidth
+            icon={<Target size={16} strokeWidth={2.25} />}
+            onClick={handleCalculateSkins}
+            style={{
+              background: 'var(--gold)',
+              borderColor: 'var(--gold)',
+              color: 'var(--white)',
+              boxShadow: '0 2px 8px rgba(201,168,76,0.4)',
+            }}
+          >
+            Calculate Skins for This Event
+          </Button>
 
           {skinsResult && (
             <div style={styles.card}>
-              <h3 style={styles.cardTitle}>🎯 Skins Results</h3>
+              <h3 style={styles.cardTitle}>
+                <Target size={13} strokeWidth={2.5} style={{ marginRight: 6, verticalAlign: '-2px' }} />
+                Skins Results
+              </h3>
               <p style={styles.skinsNote}>Lowest unique score per hole wins. No carryovers.</p>
               {Array.from({ length: 9 }, (_, i) => i + 1).map(hole => {
                 const winnerId = skinsResult.skins[hole]
@@ -488,11 +503,32 @@ function TeamRow({ team, holePars, isEditing, holeScores, saving, subMap = {}, o
               <span>Gross {(team.score1?.gross_total || 0) + (team.score2?.gross_total || 0)}</span>
               <span>Net {(team.score1?.net_total || 0) + (team.score2?.net_total || 0)}</span>
             </div>
-            <button style={trStyles.editBtn}>Edit</button>
+            <Button
+              variant="secondary"
+              size="sm"
+              style={{
+                background: 'var(--green-xlight)',
+                borderColor: 'var(--green-xlight)',
+                color: 'var(--green)',
+              }}
+            >
+              Edit
+            </Button>
           </div>
         )}
         {!submitted && !isEditing && (
-          <button style={trStyles.enterBtn}>+ Enter Scores</button>
+          <Button
+            variant="primary"
+            size="sm"
+            icon={<Plus size={13} strokeWidth={2.5} />}
+            style={{
+              background: 'var(--green-xlight)',
+              borderColor: 'var(--green-xlight)',
+              color: 'var(--green)',
+            }}
+          >
+            Enter Scores
+          </Button>
         )}
       </div>
 
@@ -633,10 +669,18 @@ function TeamRow({ team, holePars, isEditing, holeScores, saving, subMap = {}, o
           })()}
 
           <div style={trStyles.actions}>
-            <button style={trStyles.saveBtn} onClick={onSave} disabled={saving}>
-              {saving ? 'Saving…' : '✓ Save Scores'}
-            </button>
-            <button style={trStyles.cancelBtn} onClick={onCancel}>Cancel</button>
+            <Button
+              variant="primary"
+              loading={saving}
+              loadingText="Saving…"
+              onClick={onSave}
+              style={{ flex: 1 }}
+            >
+              Save Scores
+            </Button>
+            <Button variant="secondary" onClick={onCancel} style={{ flex: 1 }}>
+              Cancel
+            </Button>
           </div>
         </div>
       )}
@@ -670,7 +714,6 @@ function TeamRow({ team, holePars, isEditing, holeScores, saving, subMap = {}, o
 const styles = {
   container: { padding: '12px', display: 'flex', flexDirection: 'column', gap: '12px' },
   loading: { padding: '40px', textAlign: 'center', color: 'var(--gray-400)' },
-  toast: { position: 'fixed', top: '16px', left: '50%', transform: 'translateX(-50%)', color: 'white', padding: '10px 20px', borderRadius: '20px', fontSize: '13px', fontWeight: 600, zIndex: 9999, boxShadow: 'var(--shadow-lg)', whiteSpace: 'nowrap' },
   card: { background: 'var(--white)', borderRadius: 'var(--radius)', padding: '14px', boxShadow: 'var(--shadow)', border: '1px solid var(--gray-200)' },
   cardTitleRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' },
   cardTitle: { fontSize: '13px', fontWeight: 700, color: 'var(--green-dark)', textTransform: 'uppercase', letterSpacing: '0.4px' },
@@ -678,7 +721,6 @@ const styles = {
   sectionLabel: { fontSize: '11px', fontWeight: 600, color: 'var(--gray-600)', textTransform: 'uppercase', letterSpacing: '0.4px', display: 'block', marginBottom: '6px' },
   select: { width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-sm)', border: '1.5px solid var(--gray-200)', fontSize: '14px', background: 'var(--gray-100)', color: 'var(--black)' },
   eventMeta: { fontSize: '12px', color: 'var(--gray-400)', marginTop: '8px' },
-  skinsBtn: { width: '100%', padding: '12px', background: 'var(--gold)', color: 'var(--white)', borderRadius: 'var(--radius-sm)', fontSize: '14px', fontWeight: 700, boxShadow: '0 2px 8px rgba(201,168,76,0.4)' },
   skinsNote: { fontSize: '12px', color: 'var(--gray-400)', marginBottom: '12px' },
   skinHoleRow: { display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 0', borderBottom: '1px solid var(--gray-100)', flexWrap: 'wrap' },
   skinHoleNum: { fontSize: '12px', fontWeight: 700, background: 'var(--green-xlight)', color: 'var(--green)', padding: '3px 8px', borderRadius: '6px', flexShrink: 0 },
@@ -698,8 +740,6 @@ const trStyles = {
   players: { fontSize: '12px', color: 'var(--gray-400)' },
   headerRight: { display: 'flex', alignItems: 'center', gap: '10px' },
   teamTotals: { display: 'flex', gap: '10px', fontSize: '12px', color: 'var(--gray-600)' },
-  editBtn: { fontSize: '12px', color: 'var(--green)', fontWeight: 600, padding: '4px 10px', background: 'var(--green-xlight)', borderRadius: '6px' },
-  enterBtn: { fontSize: '12px', color: 'var(--green)', fontWeight: 700, padding: '6px 12px', background: 'var(--green-xlight)', borderRadius: '6px' },
   scorecard: { marginTop: '10px' },
   scorecardScroll: { overflowX: 'auto', WebkitOverflowScrolling: 'touch', marginBottom: '10px' },
   table: { width: '100%', borderCollapse: 'collapse', fontSize: '13px', minWidth: '520px' },
@@ -734,8 +774,6 @@ const trStyles = {
   summaryLabel: { fontSize: '10px', color: 'var(--green)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.3px' },
   summaryValue: { fontSize: '16px', fontWeight: 800, color: 'var(--green-dark)' },
   actions: { display: 'flex', gap: '10px' },
-  saveBtn: { flex: 1, padding: '11px', background: 'var(--green)', color: 'var(--white)', borderRadius: 'var(--radius-sm)', fontSize: '14px', fontWeight: 700 },
-  cancelBtn: { flex: 1, padding: '11px', background: 'var(--gray-100)', color: 'var(--gray-600)', borderRadius: 'var(--radius-sm)', fontSize: '14px' },
   submittedSummary: { paddingTop: '6px', display: 'flex', gap: '12px', flexWrap: 'wrap' },
   submittedRow: { display: 'flex', gap: '8px', alignItems: 'center' },
   submittedName: { fontSize: '12px', fontWeight: 600, color: 'var(--black)' },

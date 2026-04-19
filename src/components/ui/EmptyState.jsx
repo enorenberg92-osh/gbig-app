@@ -26,6 +26,7 @@ export default function EmptyState({
       alignItems:     'center',
       gap:            10,
       color:          'var(--gray-500)',
+      animation:      'uiFadeUp 0.3s cubic-bezier(0.2, 0.8, 0.2, 1)',
       ...overrideStyle,
     }}>
       {icon && (

@@ -43,6 +43,7 @@ export default function Toast({ toast, message, type }) {
       boxShadow:    'var(--shadow-lg)',
       whiteSpace:   'nowrap',
       maxWidth:     'calc(100vw - 32px)',
+      animation:    'uiToastIn 0.28s cubic-bezier(0.2, 0.8, 0.2, 1)',
     }}>
       <Icon size={15} strokeWidth={2.5} />
       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{resolvedMsg}</span>

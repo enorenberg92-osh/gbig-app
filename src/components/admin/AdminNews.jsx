@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react'
+import { Plus, X, FileText } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useLocation } from '../../context/LocationContext'
+import { Button, Toast, EmptyState } from '../ui'
 import ConfirmDialog from '../ConfirmDialog'
 
 const EMPTY_FORM = { title: '', body: '' }
@@ -94,15 +96,21 @@ export default function AdminNews() {
           onCancel={() => setDialog(null)}
         />
       )}
-      {toast && (
-        <div style={{ ...styles.toast, background: toast.type === 'error' ? '#c53030' : 'var(--green)' }}>
-          {toast.msg}
-        </div>
-      )}
+      <Toast toast={toast} />
 
-      <button style={styles.addBtn} onClick={() => { setShowForm(true); setEditing(null); setForm(EMPTY_FORM) }}>
-        + Write New Post
-      </button>
+      <Button
+        variant="primary"
+        size="lg"
+        fullWidth
+        icon={<Plus size={16} strokeWidth={2.5} />}
+        onClick={() => { setShowForm(true); setEditing(null); setForm(EMPTY_FORM) }}
+        style={{
+          fontSize: '15px',
+          boxShadow: '0 2px 8px rgba(45,106,79,0.3)',
+        }}
+      >
+        Write New Post
+      </Button>
 
       {showForm && (
         <div style={styles.card}>
@@ -130,12 +138,23 @@ export default function AdminNews() {
               />
             </div>
             <div style={styles.formActions}>
-              <button type="submit" style={styles.saveBtn} disabled={saving}>
-                {saving ? 'Publishing…' : editing ? 'Update Post' : 'Publish Post'}
-              </button>
-              <button type="button" style={styles.cancelBtn} onClick={() => { setShowForm(false); setEditing(null) }}>
+              <Button
+                type="submit"
+                variant="primary"
+                loading={saving}
+                loadingText="Publishing…"
+                style={{ flex: 1 }}
+              >
+                {editing ? 'Update Post' : 'Publish Post'}
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => { setShowForm(false); setEditing(null) }}
+                style={{ flex: 1 }}
+              >
                 Cancel
-              </button>
+              </Button>
             </div>
           </form>
         </div>
@@ -147,7 +166,11 @@ export default function AdminNews() {
           <span style={styles.count}>{posts.length}</span>
         </div>
         {posts.length === 0 ? (
-          <p style={styles.empty}>No posts yet. Write your first update!</p>
+          <EmptyState
+            icon={<FileText size={36} strokeWidth={1.5} />}
+            title="No posts yet"
+            description="Share updates, week recaps, or league announcements with your players."
+          />
         ) : (
           posts.map(post => (
             <div key={post.id} style={styles.postRow}>
@@ -163,8 +186,26 @@ export default function AdminNews() {
                 )}
               </div>
               <div style={styles.postActions}>
-                <button style={styles.editBtn} onClick={() => startEdit(post)}>Edit</button>
-                <button style={styles.deleteBtn} onClick={() => handleDelete(post)}>✕</button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => startEdit(post)}
+                  style={{
+                    background: 'var(--green-xlight)',
+                    borderColor: 'var(--green-xlight)',
+                    color: 'var(--green)',
+                    padding: '4px 10px',
+                  }}
+                >
+                  Edit
+                </Button>
+                <Button
+                  variant="danger"
+                  size="sm"
+                  icon={<X size={13} strokeWidth={2.5} />}
+                  onClick={() => handleDelete(post)}
+                  style={{ padding: '4px 8px' }}
+                />
               </div>
             </div>
           ))
@@ -177,8 +218,6 @@ export default function AdminNews() {
 const styles = {
   container: { padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' },
   loading: { padding: '40px', textAlign: 'center', color: 'var(--gray-400)' },
-  toast: { position: 'fixed', top: '16px', left: '50%', transform: 'translateX(-50%)', color: 'white', padding: '10px 20px', borderRadius: '20px', fontSize: '13px', fontWeight: 600, zIndex: 9999, boxShadow: 'var(--shadow-lg)' },
-  addBtn: { width: '100%', padding: '13px', background: 'var(--green)', color: 'var(--white)', borderRadius: 'var(--radius-sm)', fontSize: '15px', fontWeight: 700, boxShadow: '0 2px 8px rgba(45,106,79,0.3)' },
   card: { background: 'var(--white)', borderRadius: 'var(--radius)', padding: '16px', boxShadow: 'var(--shadow)', border: '1px solid var(--gray-200)' },
   cardTitleRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' },
   cardTitle: { fontSize: '14px', fontWeight: 700, color: 'var(--green-dark)', textTransform: 'uppercase', letterSpacing: '0.4px' },
@@ -189,15 +228,10 @@ const styles = {
   input: { padding: '10px 12px', borderRadius: 'var(--radius-sm)', border: '1.5px solid var(--gray-200)', fontSize: '14px', background: 'var(--gray-100)', color: 'var(--black)' },
   textarea: { padding: '10px 12px', borderRadius: 'var(--radius-sm)', border: '1.5px solid var(--gray-200)', fontSize: '14px', background: 'var(--gray-100)', color: 'var(--black)', resize: 'vertical', lineHeight: 1.5 },
   formActions: { display: 'flex', gap: '10px' },
-  saveBtn: { flex: 1, padding: '12px', background: 'var(--green)', color: 'var(--white)', borderRadius: 'var(--radius-sm)', fontSize: '14px', fontWeight: 700 },
-  cancelBtn: { flex: 1, padding: '12px', background: 'var(--gray-100)', color: 'var(--gray-600)', borderRadius: 'var(--radius-sm)', fontSize: '14px' },
-  empty: { fontSize: '13px', color: 'var(--gray-400)', textAlign: 'center', padding: '16px 0' },
   postRow: { display: 'flex', gap: '12px', padding: '12px 0', borderBottom: '1px solid var(--gray-100)', alignItems: 'flex-start' },
   postInfo: { flex: 1, minWidth: 0 },
   postTitle: { fontSize: '14px', fontWeight: 600, color: 'var(--black)' },
   postDate: { fontSize: '11px', color: 'var(--gray-400)', marginTop: '2px' },
   postPreview: { fontSize: '12px', color: 'var(--gray-600)', marginTop: '4px', lineHeight: 1.4 },
   postActions: { display: 'flex', gap: '6px', flexShrink: 0 },
-  editBtn: { fontSize: '12px', color: 'var(--green)', fontWeight: 600, padding: '4px 8px', background: 'var(--green-xlight)', borderRadius: '6px' },
-  deleteBtn: { fontSize: '12px', color: '#c53030', fontWeight: 700, padding: '4px 8px', background: '#fff5f5', borderRadius: '6px' },
 }

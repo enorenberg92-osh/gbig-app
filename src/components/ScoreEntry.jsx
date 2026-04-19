@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react'
+import { ArrowLeft, ArrowRight, Check } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import HoleEventAnimation from './HoleEventAnimation'
 import { useLocation } from '../context/LocationContext'
 import { scoreColor, scoreBg, vsParLabel } from '../lib/scoreUtils'
+import { Button, Toast } from './ui'
 
 /**
  * ScoreEntry
@@ -256,7 +258,14 @@ export default function ScoreEntry({ session, onBack }) {
       <div style={styles.centered}>
         <div style={{ fontSize: 40, marginBottom: 16 }}>😕</div>
         <p style={styles.errorText}>{error}</p>
-        <button style={styles.backBtn} onClick={onBack}>← Back</button>
+        <Button
+          variant="primary"
+          icon={<ArrowLeft size={14} strokeWidth={2.25} />}
+          onClick={onBack}
+          style={{ marginTop: 8 }}
+        >
+          Back
+        </Button>
       </div>
     )
   }
@@ -303,7 +312,15 @@ export default function ScoreEntry({ session, onBack }) {
               </div>
             </div>
           )}
-          <button style={styles.backBtn2} onClick={onBack}>← Back to League</button>
+          <Button
+            variant="primary"
+            size="lg"
+            fullWidth
+            icon={<ArrowLeft size={15} strokeWidth={2.25} />}
+            onClick={onBack}
+          >
+            Back to League
+          </Button>
         </div>
       </div>
     )
@@ -328,11 +345,7 @@ export default function ScoreEntry({ session, onBack }) {
       )}
 
       {/* Toast */}
-      {toast && (
-        <div style={{ ...styles.toast, background: toast.type === 'error' ? '#c53030' : 'var(--green)' }}>
-          {toast.msg}
-        </div>
-      )}
+      <Toast toast={toast} />
 
       {/* Header */}
       <div style={styles.header}>
@@ -448,29 +461,53 @@ export default function ScoreEntry({ session, onBack }) {
 
       {/* Navigation */}
       <div style={styles.navRow}>
-        <button
-          style={{ ...styles.navBtn, opacity: currentHole === 0 ? 0.3 : 1 }}
+        <Button
+          variant="secondary"
+          size="lg"
+          icon={<ArrowLeft size={14} strokeWidth={2.25} />}
           onClick={goPrev}
           disabled={currentHole === 0}
+          style={{ flex: 1, padding: '12px' }}
         >
-          ← Hole {hole - 1}
-        </button>
+          Hole {hole - 1}
+        </Button>
 
         {!isLastHole ? (
-          <button
-            style={{ ...styles.nextBtn, opacity: canAdvance() ? 1 : 0.5 }}
+          <Button
+            variant="primary"
+            size="lg"
+            iconRight={<ArrowRight size={15} strokeWidth={2.25} />}
             onClick={goNext}
+            disabled={!canAdvance()}
+            style={{
+              flex: 2,
+              padding: '14px',
+              fontSize: 15,
+              boxShadow: '0 2px 8px rgba(45,106,79,0.3)',
+            }}
           >
-            Hole {hole + 1} →
-          </button>
+            Hole {hole + 1}
+          </Button>
         ) : (
-          <button
-            style={{ ...styles.submitBtn, opacity: allDone ? 1 : 0.5 }}
+          <Button
+            variant="primary"
+            size="lg"
+            icon={<Check size={16} strokeWidth={2.5} />}
+            loading={saving}
+            loadingText="Saving…"
             onClick={handleSubmit}
-            disabled={saving || !allDone}
+            disabled={!allDone}
+            style={{
+              flex: 2,
+              padding: '14px',
+              fontSize: 15,
+              background: 'var(--green-dark)',
+              borderColor: 'var(--green-dark)',
+              boxShadow: '0 2px 8px rgba(45,106,79,0.4)',
+            }}
           >
-            {saving ? 'Saving…' : '✓ Submit Scores'}
-          </button>
+            Submit Scores
+          </Button>
         )}
       </div>
 
@@ -570,9 +607,6 @@ const styles = {
 
   // Nav
   navRow: { display: 'flex', gap: 10, padding: '14px 16px', flexShrink: 0 },
-  navBtn: { flex: 1, padding: '12px', background: 'var(--white)', border: '1.5px solid var(--gray-200)', borderRadius: 'var(--radius-sm)', fontSize: 14, fontWeight: 600, color: 'var(--gray-600)' },
-  nextBtn: { flex: 2, padding: '14px', background: 'var(--green)', color: 'var(--white)', borderRadius: 'var(--radius-sm)', fontSize: 15, fontWeight: 700, boxShadow: '0 2px 8px rgba(45,106,79,0.3)' },
-  submitBtn: { flex: 2, padding: '14px', background: 'var(--green-dark)', color: 'var(--white)', borderRadius: 'var(--radius-sm)', fontSize: 15, fontWeight: 700, boxShadow: '0 2px 8px rgba(45,106,79,0.4)' },
 
   // Scorecard
   scorecardWrap: { margin: '0 16px 24px', background: 'var(--white)', borderRadius: 'var(--radius)', padding: '14px 12px', boxShadow: 'var(--shadow)', border: '1px solid var(--gray-200)', overflowX: 'auto' },
@@ -591,7 +625,4 @@ const styles = {
   doneSub: { fontSize: 15, color: 'var(--gray-400)', marginBottom: 24 },
   doneSummary: { background: 'var(--off-white)', borderRadius: 'var(--radius-sm)', padding: '14px 16px', marginBottom: 24, display: 'flex', flexDirection: 'column', gap: 10 },
   doneSummaryRow: { display: 'flex', justifyContent: 'space-between', fontSize: 14 },
-  backBtn: { marginTop: 8, padding: '10px 24px', background: 'var(--green)', color: 'var(--white)', borderRadius: 'var(--radius-sm)', fontSize: 14, fontWeight: 700 },
-  backBtn2: { width: '100%', padding: '13px', background: 'var(--green)', color: 'var(--white)', borderRadius: 'var(--radius-sm)', fontSize: 15, fontWeight: 700 },
-  toast: { position: 'fixed', top: 16, left: '50%', transform: 'translateX(-50%)', color: 'white', padding: '10px 20px', borderRadius: 20, fontSize: 13, fontWeight: 600, zIndex: 9999, boxShadow: 'var(--shadow-lg)', whiteSpace: 'nowrap' },
 }

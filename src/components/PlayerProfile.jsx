@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react'
+import { ArrowLeft, Camera, ZoomIn, ZoomOut, Inbox, Check } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useLocation } from '../context/LocationContext'
+import { Button, Callout, EmptyState, Input } from './ui'
 
 // ── Crop Modal ────────────────────────────────────────────────────────────────
 function CropModal({ file, onConfirm, onCancel }) {
@@ -85,18 +87,32 @@ function CropModal({ file, onConfirm, onCancel }) {
 
         {/* Zoom slider */}
         <div style={cs.zoomRow}>
-          <span style={cs.zoomIcon}>🔍</span>
+          <ZoomOut size={16} color="var(--gray-400)" strokeWidth={2} />
           <input type="range" style={cs.slider}
             min={minScale} max={maxScale} step={(maxScale - minScale) / 200}
             value={scale} onChange={e => onZoom(e.target.value)}
           />
-          <span style={cs.zoomIcon}>🔎</span>
+          <ZoomIn size={18} color="var(--gray-500)" strokeWidth={2} />
         </div>
         <div style={cs.hint}>Drag to reposition · slide to zoom</div>
 
         <div style={cs.btns}>
-          <button style={cs.cancelBtn} onClick={onCancel}>Cancel</button>
-          <button style={cs.confirmBtn} onClick={confirm}>Use this photo ✓</button>
+          <Button variant="secondary" size="lg" onClick={onCancel} style={{ flex: 1 }}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            size="lg"
+            icon={<Check size={14} strokeWidth={2.5} />}
+            onClick={confirm}
+            style={{
+              flex: 1,
+              background: 'var(--green-dark)',
+              borderColor: 'var(--green-dark)',
+            }}
+          >
+            Use this photo
+          </Button>
         </div>
       </div>
     </div>
@@ -110,12 +126,9 @@ const cs = {
   cropArea:   { position: 'relative', overflow: 'hidden', borderRadius: '50%', cursor: 'grab', background: '#222', flexShrink: 0, touchAction: 'none' },
   ring:       { position: 'absolute', inset: -4, borderRadius: '50%', boxShadow: '0 0 0 9999px rgba(0,0,0,0.55)', pointerEvents: 'none' },
   zoomRow:    { display: 'flex', alignItems: 'center', gap: 10, width: '100%' },
-  zoomIcon:   { fontSize: 16 },
   slider:     { flex: 1, accentColor: 'var(--green-dark)' },
   hint:       { fontSize: 11, color: 'var(--gray-400)', marginTop: -6 },
   btns:       { display: 'flex', gap: 10, width: '100%' },
-  cancelBtn:  { flex: 1, padding: '12px', background: 'var(--gray-100)', color: 'var(--gray-600)', borderRadius: 'var(--radius-sm)', fontSize: 14, fontWeight: 600, cursor: 'pointer' },
-  confirmBtn: { flex: 1, padding: '12px', background: 'var(--green-dark)', color: '#fff', borderRadius: 'var(--radius-sm)', fontSize: 14, fontWeight: 700, cursor: 'pointer' },
 }
 
 // playerId prop: if provided (admin view), load that player directly.
@@ -407,7 +420,13 @@ export default function PlayerProfile({ session, onBack, playerId: adminPlayerId
   if (error) return (
     <div style={styles.centered}>
       <p style={{ color: '#c53030', fontSize: 14 }}>{error}</p>
-      <button style={styles.backBtn} onClick={onBack}>← Back</button>
+      <Button
+        variant="primary"
+        icon={<ArrowLeft size={14} strokeWidth={2.25} />}
+        onClick={onBack}
+      >
+        Back
+      </Button>
     </div>
   )
 
@@ -525,7 +544,9 @@ export default function PlayerProfile({ session, onBack, playerId: adminPlayerId
             {/* Camera badge — shown on own profile only */}
             {!adminPlayerId && (
               <div style={styles.cameraBadge}>
-                {avatarUploading ? '⏳' : '📷'}
+                {avatarUploading
+                  ? <span style={{ fontSize: 11 }}>⏳</span>
+                  : <Camera size={11} strokeWidth={2.25} color="#fff" />}
               </div>
             )}
           </div>
@@ -672,10 +693,12 @@ export default function PlayerProfile({ session, onBack, playerId: adminPlayerId
         )}
 
         {rounds.length === 0 && (
-          <div style={styles.empty}>
-            <div style={{ fontSize: 36, marginBottom: 10 }}>📭</div>
-            <p>No rounds recorded yet. Play your first round to see stats here!</p>
-          </div>
+          <EmptyState
+            icon={<Inbox size={44} strokeWidth={1.5} />}
+            title="No rounds recorded yet"
+            description="Play your first round to see stats here!"
+            style={{ background: 'var(--white)', borderRadius: 'var(--radius)', border: '1px solid var(--gray-200)', boxShadow: 'var(--shadow)' }}
+          />
         )}
 
         {/* ── Change Password (only for own profile, not admin view) ── */}
@@ -683,32 +706,42 @@ export default function PlayerProfile({ session, onBack, playerId: adminPlayerId
           <div style={styles.card}>
             <div style={styles.cardTitle}>CHANGE PASSWORD</div>
             <form onSubmit={handleChangePassword} style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
-              <input
+              <Input
                 type="password"
                 placeholder="New password"
                 value={pwForm.next}
                 onChange={e => setPwForm(f => ({ ...f, next: e.target.value }))}
-                style={styles.pwInput}
                 autoComplete="new-password"
                 required
               />
-              <input
+              <Input
                 type="password"
                 placeholder="Confirm new password"
                 value={pwForm.confirm}
                 onChange={e => setPwForm(f => ({ ...f, confirm: e.target.value }))}
-                style={styles.pwInput}
                 autoComplete="new-password"
                 required
               />
               {pwMsg && (
-                <div style={{ ...styles.pwMsg, background: pwMsg.type === 'error' ? '#fff5f5' : '#f0fdf4', color: pwMsg.type === 'error' ? '#c53030' : '#166534', border: `1px solid ${pwMsg.type === 'error' ? '#fecaca' : '#bbf7d0'}` }}>
+                <Callout tone={pwMsg.type === 'error' ? 'danger' : 'success'}>
                   {pwMsg.text}
-                </div>
+                </Callout>
               )}
-              <button type="submit" style={{ ...styles.pwBtn, opacity: pwSaving ? 0.7 : 1 }} disabled={pwSaving}>
-                {pwSaving ? 'Saving…' : 'Update Password'}
-              </button>
+              <Button
+                type="submit"
+                variant="primary"
+                size="lg"
+                fullWidth
+                loading={pwSaving}
+                loadingText="Saving…"
+                disabled={pwSaving}
+                style={{
+                  background: 'var(--green-dark)',
+                  borderColor: 'var(--green-dark)',
+                }}
+              >
+                Update Password
+              </Button>
             </form>
           </div>
         )}
@@ -735,7 +768,6 @@ const styles = {
   headerBack:  { color: 'rgba(255,255,255,0.8)', fontSize: 13, fontWeight: 500, width: 52 },
   headerTitle: { fontSize: 17, fontWeight: 800, color: 'var(--white)' },
   content:     { display: 'flex', flexDirection: 'column', gap: 12, padding: '16px 16px 40px' },
-  backBtn:     { padding: '10px 24px', background: 'var(--green)', color: 'var(--white)', borderRadius: 'var(--radius-sm)', fontSize: 14, fontWeight: 700 },
 
   // Hero card
   heroCard:    { background: 'var(--green-dark)', borderRadius: 'var(--radius)', padding: '20px 16px', display: 'flex', alignItems: 'center', gap: 14 },
@@ -794,10 +826,4 @@ const styles = {
   roundNet:    { fontSize: 11, color: 'var(--gray-400)' },
   roundVsPar:  { fontSize: 12, fontWeight: 700 },
 
-  empty:       { padding: 32, textAlign: 'center', color: 'var(--gray-400)', fontSize: 14, lineHeight: 1.6 },
-
-  // Change password
-  pwInput: { width: '100%', padding: '11px 12px', borderRadius: 'var(--radius-sm)', border: '1.5px solid var(--gray-200)', fontSize: 15, background: 'var(--gray-100)', color: 'var(--black)', boxSizing: 'border-box' },
-  pwMsg:   { padding: '10px 12px', borderRadius: 'var(--radius-sm)', fontSize: 13, lineHeight: 1.4 },
-  pwBtn:   { width: '100%', padding: 13, background: 'var(--green-dark)', color: 'var(--white)', borderRadius: 'var(--radius-sm)', fontSize: 14, fontWeight: 700, cursor: 'pointer' },
 }
