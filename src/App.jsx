@@ -158,7 +158,20 @@ export default function App() {
     return () => subscription.unsubscribe()
   }, [])
 
-  const isReservations = activeTab === 'reservations'
+  // Header content per tab. Title = what section you're in; subtitle
+  // = where you are. League is the only tab that shows the league name,
+  // and only once you've signed in -- otherwise we fall back to the
+  // location name so the top-level chrome stays uniform.
+  let headerTitle    = 'Reservations'
+  let headerSubtitle = appFullName
+  if (activeTab === 'league') {
+    headerTitle    = 'League'
+    headerSubtitle = session && leagueName ? leagueName : appFullName
+  } else if (activeTab === 'events') {
+    headerTitle    = 'Events'
+  } else if (activeTab === 'alerts') {
+    headerTitle    = 'Alerts'
+  }
 
   // Show splash until both auth is resolved AND splash animation is done
   const showSplash = loading || !splashDone
@@ -171,53 +184,34 @@ export default function App() {
       {/* App Shell (rendered in background while splash plays) */}
       <div style={styles.appShell}>
 
-        {/* Header */}
-        {isReservations ? (
-          <header style={styles.headerGold}>
-            <div style={styles.headerGoldInner}>
-              <span style={styles.headerGoldFlag}>
-                <img
-                  src={logoIconUrl || '/logo-icon-white.png'}
-                  alt=""
-                  aria-hidden="true"
-                  style={styles.headerGoldFlagImg}
-                />
-              </span>
-              <div style={styles.headerGoldTextWrap}>
-                <span style={styles.headerGoldTitle}>Reservations</span>
-                <span style={styles.headerGoldSub}>{appName}</span>
-              </div>
+        {/* Header — unified for every tab; content is tab-contextual */}
+        <header style={styles.header}>
+          <div style={styles.headerInner}>
+            <span style={styles.headerLogo}>
+              <img
+                src={logoIconUrl || '/logo-icon-white.png'}
+                alt=""
+                aria-hidden="true"
+                style={styles.headerLogoImg}
+              />
+            </span>
+            <div style={styles.headerTitleWrap}>
+              <span style={styles.headerTitle}>{headerTitle}</span>
+              {headerSubtitle ? <span style={styles.headerSubtitle}>{headerSubtitle}</span> : null}
             </div>
-          </header>
-        ) : (
-          <header style={styles.header}>
-            <div style={styles.headerInner}>
-              <span style={styles.headerLogo}>
-                <img
-                  src={logoIconUrl || '/logo-icon-white.png'}
-                  alt=""
-                  aria-hidden="true"
-                  style={styles.headerLogoImg}
-                />
-              </span>
-              <div style={styles.headerTitleWrap}>
-                <span style={styles.headerTitle}>{appName}</span>
-                {leagueName ? <span style={styles.headerLeague}>{leagueName}</span> : null}
-              </div>
-              {session && (
-                <button
-                  style={styles.signOutBtn}
-                  onClick={() => supabase.auth.signOut()}
-                  title="Sign out"
-                >
-                  <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-                    <path d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-                  </svg>
-                </button>
-              )}
-            </div>
-          </header>
-        )}
+            {session && (
+              <button
+                style={styles.signOutBtn}
+                onClick={() => supabase.auth.signOut()}
+                title="Sign out"
+              >
+                <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                  <path d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                </svg>
+              </button>
+            )}
+          </div>
+        </header>
 
         {/* Page Content */}
         <main style={styles.main}>
@@ -325,7 +319,7 @@ const styles = {
     lineHeight: 1.2,
     color: 'var(--white)',
   },
-  headerLeague: {
+  headerSubtitle: {
     fontSize: '11px',
     fontWeight: 500,
     color: 'rgba(255,255,255,0.65)',
@@ -338,57 +332,6 @@ const styles = {
     borderRadius: '8px',
     display: 'flex',
     alignItems: 'center',
-  },
-  // ── Gold Reservations header ────────────────────────────────────
-  headerGold: {
-    height: 'var(--header-height)',
-    background: 'linear-gradient(135deg, #1a3d2b 0%, #1e4d35 60%, #2d6a4f 100%)',
-    flexShrink: 0,
-    zIndex: 10,
-    boxShadow: '0 2px 12px rgba(0,0,0,0.25)',
-    borderBottom: '3px solid #c9a84c',
-  },
-  headerGoldInner: {
-    height: '100%',
-    display: 'flex',
-    alignItems: 'center',
-    padding: '0 18px',
-    gap: '12px',
-  },
-  headerGoldFlag: {
-    display: 'flex',
-    alignItems: 'center',
-    flexShrink: 0,
-    filter: 'drop-shadow(0 1px 3px rgba(0,0,0,0.3))',
-  },
-  headerGoldFlagImg: {
-    width: '34px',
-    height: '34px',
-    objectFit: 'contain',
-  },
-  headerGoldTextWrap: {
-    flex: 1,
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '1px',
-  },
-  headerGoldTitle: {
-    fontFamily: "'Playfair Display', Georgia, serif",
-    fontSize: '22px',
-    fontWeight: 600,
-    color: '#e8c96a',
-    letterSpacing: '0.5px',
-    lineHeight: 1.15,
-    textShadow: '0 1px 4px rgba(0,0,0,0.3)',
-  },
-  headerGoldSub: {
-    fontFamily: "'Playfair Display', Georgia, serif",
-    fontSize: '11px',
-    fontWeight: 500,
-    color: 'rgba(232,201,106,0.65)',
-    letterSpacing: '1.2px',
-    textTransform: 'uppercase',
-    lineHeight: 1.2,
   },
   // ── Main content area ───────────────────────────────────────────
   main: {
