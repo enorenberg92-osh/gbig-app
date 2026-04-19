@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect } from 'react'
+import { Routes, Route, Navigate, useLocation as useRouterLocation, useNavigate } from 'react-router-dom'
 import { Flag } from 'lucide-react'
 import { supabase } from './lib/supabase'
 import { useLocation } from './context/LocationContext'
@@ -137,14 +138,28 @@ const splash = {
   },
 }
 
+// Derive which bottom tab is active from the current URL path.
+// Sub-routes like /league/standings should still highlight the League tab.
+function activeTabFromPath(pathname) {
+  if (pathname.startsWith('/reservations')) return 'reservations'
+  if (pathname.startsWith('/league'))       return 'league'
+  if (pathname.startsWith('/events'))       return 'events'
+  if (pathname.startsWith('/alerts'))       return 'alerts'
+  if (pathname.startsWith('/admin'))        return 'league' // admin lives under the league tab
+  return 'reservations'
+}
+
 // ─── Main App ────────────────────────────────────────────────────
 export default function App() {
   const { locationId, appName, appFullName } = useLocation()
-  const [activeTab, setActiveTab]   = useState('reservations')
+  const routerLoc                   = useRouterLocation()
+  const navigate                    = useNavigate()
   const [session, setSession]       = useState(null)
   const [loading, setLoading]       = useState(true)
   const [splashDone, setSplashDone] = useState(false)
   const [leagueName, setLeagueName] = useState('')
+
+  const activeTab = activeTabFromPath(routerLoc.pathname)
 
   useEffect(() => {
     if (!locationId) return
@@ -163,16 +178,6 @@ export default function App() {
     })
     return () => subscription.unsubscribe()
   }, [])
-
-  const renderPage = () => {
-    switch (activeTab) {
-      case 'reservations': return <ReservationsPage />
-      case 'league':       return <LeaguePage session={session} />
-      case 'events':       return <EventsPage />
-      case 'alerts':       return <AlertsPage session={session} />
-      default:             return <ReservationsPage />
-    }
-  }
 
   const isReservations = activeTab === 'reservations'
 
@@ -227,7 +232,15 @@ export default function App() {
 
         {/* Page Content */}
         <main style={styles.main}>
-          {renderPage()}
+          <Routes>
+            <Route path="/"              element={<Navigate to="/reservations" replace />} />
+            <Route path="/reservations"  element={<ReservationsPage />} />
+            <Route path="/league/*"      element={<LeaguePage session={session} />} />
+            <Route path="/events"        element={<EventsPage />} />
+            <Route path="/alerts"        element={<AlertsPage session={session} />} />
+            {/* Fallback for unknown URLs */}
+            <Route path="*"              element={<Navigate to="/reservations" replace />} />
+          </Routes>
         </main>
 
         {/* Bottom Tab Bar */}
@@ -244,7 +257,10 @@ export default function App() {
                   ...styles.tabItem,
                   color: isActive ? activeColor : 'var(--gray-400)',
                 }}
-                onClick={() => setActiveTab(id)}
+                onClick={() => {
+                  // Avoid pushing a duplicate entry if we're already on this tab's root route
+                  if (!isActive) navigate('/' + id)
+                }}
               >
                 <span style={{
                   ...styles.tabIconWrap,
@@ -370,6 +386,100 @@ const styles = {
     fontSize: '11px',
     fontWeight: 500,
     color: 'rgba(232,201,106,0.65)',
+    letterSpacing: '1.2px',
+    textTransform: 'uppercase',
+    lineHeight: 1.2,
+  },
+  // ── Main content area ───────────────────────────────────────────
+  main: {
+    flex: 1,
+    overflowY: 'auto',
+    overflowX: 'hidden',
+    WebkitOverflowScrolling: 'touch',
+  },
+  // ── Bottom tab bar ──────────────────────────────────────────────
+  tabBar: {
+    height: 'var(--tab-height)',
+    display: 'flex',
+    background: 'var(--white)',
+    borderTop: '1.5px solid var(--gray-200)',
+    boxShadow: '0 -2px 12px rgba(0,0,0,0.06)',
+    flexShrink: 0,
+    zIndex: 10,
+    paddingBottom: 'env(safe-area-inset-bottom)',
+  },
+  tabItem: {
+    flex: 1,
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '3px',
+    transition: 'color 0.2s ease',
+    padding: '6px 0',
+  },
+  tabIconWrap: {
+    padding: '4px 14px',
+    borderRadius: '20px',
+    transition: 'background-color 0.2s ease, transform 0.2s ease',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tabLabel: {
+    fontSize: '10px',
+    letterSpacing: '0.2px',
+    transition: 'color 0.2s ease',
+  },
+}
+color: 'rgba(232,201,106,0.65)',
+    letterSpacing: '1.2px',
+    textTransform: 'uppercase',
+    lineHeight: 1.2,
+  },
+  // ── Main content area ───────────────────────────────────────────
+  main: {
+    flex: 1,
+    overflowY: 'auto',
+    overflowX: 'hidden',
+    WebkitOverflowScrolling: 'touch',
+  },
+  // ── Bottom tab bar ──────────────────────────────────────────────
+  tabBar: {
+    height: 'var(--tab-height)',
+    display: 'flex',
+    background: 'var(--white)',
+    borderTop: '1.5px solid var(--gray-200)',
+    boxShadow: '0 -2px 12px rgba(0,0,0,0.06)',
+    flexShrink: 0,
+    zIndex: 10,
+    paddingBottom: 'env(safe-area-inset-bottom)',
+  },
+  tabItem: {
+    flex: 1,
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '3px',
+    transition: 'color 0.2s ease',
+    padding: '6px 0',
+  },
+  tabIconWrap: {
+    padding: '4px 14px',
+    borderRadius: '20px',
+    transition: 'background-color 0.2s ease, transform 0.2s ease',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tabLabel: {
+    fontSize: '10px',
+    letterSpacing: '0.2px',
+    transition: 'color 0.2s ease',
+  },
+}
+color: 'rgba(232,201,106,0.65)',
     letterSpacing: '1.2px',
     textTransform: 'uppercase',
     lineHeight: 1.2,
