@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
-import { AlertTriangle, UserCheck, Check, X, Link2 } from 'lucide-react'
+import { UserCheck, Check, X, Link2, Inbox } from 'lucide-react'
+import { Button, Toast, Callout, EmptyState } from '../ui'
 import { supabase } from '../../lib/supabase'
 import { useLocation } from '../../context/LocationContext'
 import ConfirmDialog from '../ConfirmDialog'
@@ -108,7 +109,7 @@ export default function AdminSubs() {
       .update({ status: 'approved', sub_player_id: subPlayerId })
       .eq('id', sub.id)
     if (error) { showToast('Error: ' + error.message, 'error'); return }
-    showToast(`✓ Sub approved for ${sub.playerName} — sub profile ready`)
+    showToast(`Sub approved for ${sub.playerName} — sub profile ready`)
     load()
   }
 
@@ -122,7 +123,7 @@ export default function AdminSubs() {
       .update({ sub_player_id: subPlayerId })
       .eq('id', sub.id)
     if (error) { showToast('Error: ' + error.message, 'error'); return }
-    showToast(`✓ Profile synced for ${sub.sub_first_name} ${sub.sub_last_name}`)
+    showToast(`Profile synced for ${sub.sub_first_name} ${sub.sub_last_name}`)
     load()
   }
 
@@ -174,18 +175,13 @@ export default function AdminSubs() {
           onCancel={() => setDialog(null)}
         />
       )}
-      {toast && (
-        <div style={{ ...styles.toast, background: toast.type === 'error' ? '#c53030' : 'var(--green)' }}>
-          {toast.msg}
-        </div>
-      )}
+      <Toast toast={toast} />
 
       {/* Alert banner if pending subs exist */}
       {pendingCount > 0 && (
-        <div style={styles.alertBanner}>
-          <AlertTriangle size={16} strokeWidth={2.25} style={{ verticalAlign: '-3px', marginRight: 8, color: '#b45309' }} />
+        <Callout tone="warning">
           <strong>{pendingCount} sub request{pendingCount !== 1 ? 's' : ''}</strong> need your attention
-        </div>
+        </Callout>
       )}
 
       {/* Filter Tabs */}
@@ -219,10 +215,13 @@ export default function AdminSubs() {
         </div>
 
         {filtered.length === 0 ? (
-          <div style={styles.empty}>
-            <span style={styles.emptyIcon}>🏌️</span>
-            <p>{filter === 'pending' ? 'No pending sub requests.' : 'No sub requests found.'}</p>
-          </div>
+          <EmptyState
+            icon={<Inbox size={38} strokeWidth={1.5} />}
+            title={filter === 'pending' ? 'No pending sub requests' : 'No sub requests found'}
+            description={filter === 'pending'
+              ? "You'll see requests here when players submit them for upcoming weeks."
+              : 'Try a different filter to see past requests.'}
+          />
         ) : (
           filtered.map(sub => {
             const statusColors = {
@@ -284,28 +283,45 @@ export default function AdminSubs() {
                 {/* Actions */}
                 {sub.status === 'pending' && (
                   <div style={styles.subActions}>
-                    <button style={styles.approveBtn} onClick={() => handleApprove(sub)}>
-                      <Check size={14} strokeWidth={2.5} style={{ verticalAlign: '-2px', marginRight: 6 }} />
+                    <Button
+                      variant="primary"
+                      icon={<Check size={14} strokeWidth={2.5} />}
+                      onClick={() => handleApprove(sub)}
+                      style={{ flex: 1 }}
+                    >
                       Approve
-                    </button>
-                    <button style={styles.denyBtn} onClick={() => handleDeny(sub)}>
-                      <X size={14} strokeWidth={2.5} style={{ verticalAlign: '-2px', marginRight: 6 }} />
+                    </Button>
+                    <Button
+                      variant="danger"
+                      icon={<X size={14} strokeWidth={2.5} />}
+                      onClick={() => handleDeny(sub)}
+                      style={{ flex: 1 }}
+                    >
                       Deny
-                    </button>
+                    </Button>
                   </div>
                 )}
                 {sub.status !== 'pending' && (
                   <div style={styles.approvedActions}>
                     {/* Show sync button for approved subs missing a profile link */}
                     {sub.status === 'approved' && !sub.sub_player_id && (
-                      <button style={styles.syncBtn} onClick={() => handleSyncProfile(sub)}>
-                        <Link2 size={14} strokeWidth={2.25} style={{ verticalAlign: '-2px', marginRight: 6 }} />
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        icon={<Link2 size={14} strokeWidth={2.25} />}
+                        onClick={() => handleSyncProfile(sub)}
+                        style={{
+                          background: 'var(--green-xlight)',
+                          color: 'var(--green-dark)',
+                          borderColor: 'var(--green)',
+                        }}
+                      >
                         Sync Profile
-                      </button>
+                      </Button>
                     )}
-                    <button style={styles.removeBtn} onClick={() => handleDelete(sub)}>
+                    <Button variant="ghost" size="sm" onClick={() => handleDelete(sub)}>
                       Remove
-                    </button>
+                    </Button>
                   </div>
                 )}
               </div>
@@ -352,8 +368,6 @@ export default function AdminSubs() {
 const styles = {
   container: { padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' },
   loading: { padding: '40px', textAlign: 'center', color: 'var(--gray-400)' },
-  toast: { position: 'fixed', top: '16px', left: '50%', transform: 'translateX(-50%)', color: 'white', padding: '10px 20px', borderRadius: '20px', fontSize: '13px', fontWeight: 600, zIndex: 9999, boxShadow: 'var(--shadow-lg)' },
-  alertBanner: { background: '#fff3cd', border: '1px solid #ffc107', color: '#856404', padding: '12px 16px', borderRadius: 'var(--radius-sm)', fontSize: '14px' },
   filterRow: { display: 'flex', gap: '8px' },
   filterBtn: { flex: 1, padding: '8px 4px', borderRadius: '20px', fontSize: '13px', transition: 'all 0.15s' },
   filterCount: { fontSize: '11px' },
@@ -361,8 +375,6 @@ const styles = {
   cardTitleRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' },
   cardTitle: { fontSize: '14px', fontWeight: 700, color: 'var(--green-dark)', textTransform: 'uppercase', letterSpacing: '0.4px' },
   count: { fontSize: '13px', fontWeight: 700, color: 'var(--green)', background: 'var(--green-xlight)', padding: '2px 10px', borderRadius: '20px' },
-  empty: { padding: '24px', textAlign: 'center', color: 'var(--gray-400)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' },
-  emptyIcon: { fontSize: '32px' },
   subCard: { border: '1px solid var(--gray-200)', borderRadius: 'var(--radius-sm)', padding: '14px', marginBottom: '10px', background: 'var(--off-white)' },
   subHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' },
   subRequester: { fontSize: '14px', color: 'var(--black)' },
@@ -375,11 +387,7 @@ const styles = {
   subInfoLabel: { fontSize: '10px', fontWeight: 600, color: 'var(--gray-400)', textTransform: 'uppercase', letterSpacing: '0.4px' },
   subInfoValue: { fontSize: '13px', fontWeight: 600, color: 'var(--black)' },
   subActions: { display: 'flex', gap: '8px' },
-  approveBtn: { flex: 1, padding: '10px', background: 'var(--green)', color: 'var(--white)', borderRadius: 'var(--radius-sm)', fontSize: '13px', fontWeight: 700 },
-  denyBtn: { flex: 1, padding: '10px', background: '#fff5f5', color: '#c53030', borderRadius: 'var(--radius-sm)', fontSize: '13px', fontWeight: 700, border: '1px solid #feb2b2' },
-  removeBtn: { fontSize: '12px', color: 'var(--gray-400)', padding: '6px 12px', background: 'var(--gray-100)', borderRadius: 'var(--radius-sm)' },
   approvedActions: { display: 'flex', gap: '8px', alignItems: 'center' },
-  syncBtn: { fontSize: '12px', fontWeight: 700, color: 'var(--green-dark)', padding: '6px 12px', background: 'var(--green-xlight)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--green)' },
   profileLinked: { marginTop: '8px', fontSize: '11px', fontWeight: 600, color: 'var(--green)', background: 'var(--green-xlight)', padding: '3px 10px', borderRadius: '20px', display: 'inline-block' },
   rosterEmpty: { fontSize: '13px', color: 'var(--gray-400)', textAlign: 'center', padding: '16px 0', fontStyle: 'italic' },
   rosterRow: { display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 0', borderBottom: '1px solid var(--gray-100)' },
