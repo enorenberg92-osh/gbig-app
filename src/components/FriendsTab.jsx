@@ -401,6 +401,7 @@ function ConversationView({ myPlayer, otherPlayer, onBack }) {
   const [newMsg, setNewMsg]     = useState('')
   const [sending, setSending]   = useState(false)
   const [loading, setLoading]   = useState(true)
+  const [sendError, setSendError] = useState(null)
   const bottomRef               = useRef(null)
 
   useEffect(() => {
@@ -414,7 +415,11 @@ function ConversationView({ myPlayer, otherPlayer, onBack }) {
         const isOurs =
           (msg.sender_id === myPlayer.id    && msg.recipient_id === otherPlayer.id) ||
           (msg.sender_id === otherPlayer.id && msg.recipient_id === myPlayer.id)
-        if (isOurs) setMessages(prev => [...prev, msg])
+        if (!isOurs) return
+        // Dedupe: we already appended this message locally on send, and
+        // realtime may (or may not) echo the INSERT back to the sender
+        // depending on publication + RLS. Guard by id either way.
+        setMessages(prev => prev.some(m => m.id === msg.id) ? prev : [...prev, msg])
       })
       .subscribe()
 
@@ -425,6 +430,13 @@ function ConversationView({ myPlayer, otherPlayer, onBack }) {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  // Auto-dismiss send-error toast after 3s
+  useEffect(() => {
+    if (!sendError) return
+    const t = setTimeout(() => setSendError(null), 3000)
+    return () => clearTimeout(t)
+  }, [sendError])
 
   async function loadMessages() {
     const { data } = await supabase
@@ -443,18 +455,37 @@ function ConversationView({ myPlayer, otherPlayer, onBack }) {
     e.preventDefault()
     if (!newMsg.trim() || sending) return
     setSending(true)
+    setSendError(null)
     const text = newMsg.trim()
-    const { error } = await supabase.from('messages').insert({
-      sender_id: myPlayer.id,
-      recipient_id: otherPlayer.id,
-      content: text,
-    })
-    if (!error) {
-      setNewMsg('')
-      // Notify the recipient (best-effort)
-      const preview = text.length > 80 ? text.slice(0, 80) + '…' : text
-      sendSocialPush(otherPlayer.id, `💬 ${playerName(myPlayer)}`, preview)
+
+    // Insert and immediately pull the row back so we can render it
+    // without waiting on realtime. Realtime may still fire — the callback
+    // dedupes by id so we never double-add.
+    const { data, error } = await supabase
+      .from('messages')
+      .insert({
+        sender_id: myPlayer.id,
+        recipient_id: otherPlayer.id,
+        content: text,
+      })
+      .select()
+      .single()
+
+    if (error) {
+      // Keep the user's text so they can retry — don't make them re-type.
+      setSendError(error.message || 'Could not send message. Try again.')
+      setSending(false)
+      return
     }
+
+    // Optimistically append the server-echoed row and clear the input.
+    if (data) setMessages(prev => prev.some(m => m.id === data.id) ? prev : [...prev, data])
+    setNewMsg('')
+
+    // Notify the recipient (best-effort — never blocks UI)
+    const preview = text.length > 80 ? text.slice(0, 80) + '…' : text
+    sendSocialPush(otherPlayer.id, `💬 ${playerName(myPlayer)}`, preview)
+
     setSending(false)
   }
 
@@ -523,6 +554,9 @@ function ConversationView({ myPlayer, otherPlayer, onBack }) {
         })}
         <div ref={bottomRef} />
       </div>
+
+      {/* Send error toast (auto-dismiss handled by effect above) */}
+      {sendError && <Toast message={sendError} type="error" />}
 
       {/* Input */}
       <form style={cv.inputRow} onSubmit={handleSend}>
