@@ -25,6 +25,16 @@
   --gray-600: #6c757d;
   --gray-800: #343a40;
   --black: #1a1a1a;
+
+  /* ── Score badge palette (Eagle / Birdie / Par) ──
+     Universal across locations — scorecards read the same everywhere. */
+  --score-eagle:    #b8860b;  /* dark gold text */
+  --score-eagle-bg: #fef9c3;  /* light gold fill */
+  --score-birdie:    #dc2626; /* red text */
+  --score-birdie-bg: #fee2e2; /* light red fill */
+  --score-par:    #16a34a;    /* green text */
+  --score-par-bg: #dcfce7;    /* light green fill */
+
   --tab-height: 68px;
   --header-height: 60px;
   --radius: 12px;

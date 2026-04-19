@@ -11,10 +11,10 @@
 export function scoreColor(score, par) {
   if (!score || !par) return 'var(--black)'
   const diff = score - par
-  if (diff <= -2) return '#b8860b'   // eagle or better — gold
-  if (diff === -1) return '#dc2626'  // birdie — red
-  if (diff === 0)  return '#16a34a'  // par — green
-  return 'var(--black)'              // bogey or worse — black
+  if (diff <= -2) return 'var(--score-eagle)'   // eagle or better — gold
+  if (diff === -1) return 'var(--score-birdie)' // birdie — red
+  if (diff === 0)  return 'var(--score-par)'    // par — green
+  return 'var(--black)'                         // bogey or worse — black
 }
 
 /**
@@ -27,10 +27,10 @@ export function scoreColor(score, par) {
 export function scoreBg(score, par) {
   if (!score || !par) return 'transparent'
   const diff = score - par
-  if (diff <= -2) return '#fef9c3'   // eagle — light gold
-  if (diff === -1) return '#fee2e2'  // birdie — light red
-  if (diff === 0)  return '#dcfce7'  // par — light green
-  return 'transparent'               // bogey+ — no background
+  if (diff <= -2) return 'var(--score-eagle-bg)'   // eagle — light gold
+  if (diff === -1) return 'var(--score-birdie-bg)' // birdie — light red
+  if (diff === 0)  return 'var(--score-par-bg)'    // par — light green
+  return 'transparent'                             // bogey+ — no background
 }
 
 /**

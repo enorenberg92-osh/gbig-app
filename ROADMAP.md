@@ -74,7 +74,7 @@ Goal: safe to build on, no regressions lurking.
 
 Goal: the app _oozes class_ on every screen, for both admins and members.
 
-- **Theme layer:** a `ThemeProvider` that reads `locations.primary_color` and other per-location brand tokens, so your `locations` table actually drives the look. One place to change colors for Location #2 through #N.
+- ✅ **Theme layer (shipped 2026-04-19):** `ThemeProvider` reads `locations.primary_color` at boot and overrides `--green`, `--green-dark`, `--green-light`, `--green-xlight` at runtime. Dark/light/xlight are derived from the primary via HSL math so one DB value drives the whole brand family. Also promoted the 6 hardcoded score-badge hex values in `scoreUtils.js` to CSS vars. Onboarding Location #2 with their own brand color is now one SQL `UPDATE`.
 - **Component library (light, shared):** `Button`, `Card`, `Input`, `Modal`, `Toast`, `EmptyState`, `PageHeader`, `StatTile`, `Sheet`. Built on CSS vars we already have — no Tailwind yet unless we both want it. Kills the 22 scattered `const styles = {}` blocks.
 - **Swap emoji for SVG icons** (Lucide React) across tab bar, admin navigation, and tile grids. Keep a little playfulness where it suits (splash flag is fine), but nothing that reads as "amateur."
 - **Real URLs with React Router:** `/`, `/league`, `/standings`, `/profile`, `/admin`, `/admin/players`, etc. Browser back button works. Shareable links. Deep-link into a specific admin tab.
