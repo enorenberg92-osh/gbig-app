@@ -43,7 +43,7 @@ export default function LoginScreen() {
     <div style={styles.container}>
       {/* Hero */}
       <div style={styles.hero}>
-        <div style={styles.heroLogo}>⛳</div>
+        <img src="/logo-full-white.png" alt="" aria-hidden="true" style={styles.heroLogo} />
         <h1 style={styles.heroTitle}>League Portal</h1>
         <p style={styles.heroSubtitle}>{appName}</p>
       </div>
@@ -117,7 +117,13 @@ const styles = {
     background: 'linear-gradient(180deg, var(--green-dark) 0%, var(--green-dark) 200px, var(--off-white) 200px)',
   },
   hero:         { paddingTop: '48px', paddingBottom: '28px', textAlign: 'center', width: '100%' },
-  heroLogo:     { fontSize: '56px', marginBottom: '10px' },
+  heroLogo: {
+    display: 'block',
+    margin: '0 auto 14px',
+    width: 'min(62vw, 260px)',
+    height: 'auto',
+    filter: 'drop-shadow(0 4px 14px rgba(0,0,0,0.25))',
+  },
   heroTitle:    { fontSize: '26px', fontWeight: 800, color: 'var(--white)', letterSpacing: '0.3px' },
   heroSubtitle: { fontSize: '14px', color: 'rgba(255,255,255,0.70)', marginTop: '4px' },
 

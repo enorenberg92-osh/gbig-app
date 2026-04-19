@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react'
 import { Routes, Route, Navigate, useLocation as useRouterLocation, useNavigate } from 'react-router-dom'
-import { Flag } from 'lucide-react'
 import { supabase } from './lib/supabase'
 import { useLocation } from './context/LocationContext'
 
@@ -61,15 +60,12 @@ function SplashScreen({ onDone, appFullName }) {
       ...splash.screen,
       animation: phase === 'out' ? 'splashFadeOut 0.5s ease forwards' : undefined,
     }}>
-      {/* Logo */}
-      <div style={splash.logoWrap}>
-        <span style={splash.logo}>⛳</span>
-      </div>
-
-      {/* Title */}
-      <div style={splash.titleWrap}>
-        <h1 style={splash.title}>{appFullName}</h1>
-      </div>
+      {/* Full wordmark logo — white on the deep-green splash gradient */}
+      <img
+        src="/logo-full-white.png"
+        alt={appFullName}
+        style={splash.wordmark}
+      />
 
       {/* Gold divider line */}
       <div style={splash.line} />
@@ -92,33 +88,13 @@ const splash = {
     justifyContent: 'center',
     gap: '8px',
   },
-  logoWrap: {
-    animation: 'splashLogoIn 0.7s cubic-bezier(0.34, 1.56, 0.64, 1) 0.1s both',
-    marginBottom: '8px',
-  },
-  logo: {
-    fontSize: '72px',
-    lineHeight: 1,
-    filter: 'drop-shadow(0 4px 16px rgba(0,0,0,0.4))',
+  wordmark: {
     display: 'block',
-  },
-  titleWrap: {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    gap: '2px',
-    maxWidth: '280px',
-    textAlign: 'center',
-  },
-  title: {
-    fontFamily: "'Playfair Display', Georgia, serif",
-    fontSize: '32px',
-    fontWeight: 700,
-    color: '#e8c96a',
-    letterSpacing: '1px',
-    lineHeight: 1.2,
-    animation: 'splashTitleIn 0.6s ease 0.55s both',
-    textShadow: '0 2px 12px rgba(0,0,0,0.4)',
+    width: 'min(72vw, 320px)',
+    height: 'auto',
+    marginBottom: '10px',
+    filter: 'drop-shadow(0 6px 24px rgba(0,0,0,0.35))',
+    animation: 'splashLogoIn 0.7s cubic-bezier(0.34, 1.56, 0.64, 1) 0.1s both',
   },
   line: {
     height: '2px',
@@ -197,7 +173,12 @@ export default function App() {
           <header style={styles.headerGold}>
             <div style={styles.headerGoldInner}>
               <span style={styles.headerGoldFlag}>
-                <Flag size={26} strokeWidth={2} color="var(--gold)" />
+                <img
+                  src="/logo-icon-white.png"
+                  alt=""
+                  aria-hidden="true"
+                  style={styles.headerGoldFlagImg}
+                />
               </span>
               <div style={styles.headerGoldTextWrap}>
                 <span style={styles.headerGoldTitle}>Reservations</span>
@@ -209,7 +190,12 @@ export default function App() {
           <header style={styles.header}>
             <div style={styles.headerInner}>
               <span style={styles.headerLogo}>
-                <Flag size={22} strokeWidth={2} color="var(--gold)" />
+                <img
+                  src="/logo-icon-white.png"
+                  alt=""
+                  aria-hidden="true"
+                  style={styles.headerLogoImg}
+                />
               </span>
               <div style={styles.headerTitleWrap}>
                 <span style={styles.headerTitle}>{appName}</span>
@@ -316,6 +302,12 @@ const styles = {
     gap: '10px',
   },
   headerLogo: { display: 'flex', alignItems: 'center', flexShrink: 0 },
+  headerLogoImg: {
+    width: '28px',
+    height: '28px',
+    objectFit: 'contain',
+    filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.35))',
+  },
   headerTitleWrap: {
     flex: 1,
     display: 'flex',
@@ -366,6 +358,11 @@ const styles = {
     flexShrink: 0,
     filter: 'drop-shadow(0 1px 3px rgba(0,0,0,0.3))',
   },
+  headerGoldFlagImg: {
+    width: '34px',
+    height: '34px',
+    objectFit: 'contain',
+  },
   headerGoldTextWrap: {
     flex: 1,
     display: 'flex',
@@ -386,100 +383,6 @@ const styles = {
     fontSize: '11px',
     fontWeight: 500,
     color: 'rgba(232,201,106,0.65)',
-    letterSpacing: '1.2px',
-    textTransform: 'uppercase',
-    lineHeight: 1.2,
-  },
-  // ── Main content area ───────────────────────────────────────────
-  main: {
-    flex: 1,
-    overflowY: 'auto',
-    overflowX: 'hidden',
-    WebkitOverflowScrolling: 'touch',
-  },
-  // ── Bottom tab bar ──────────────────────────────────────────────
-  tabBar: {
-    height: 'var(--tab-height)',
-    display: 'flex',
-    background: 'var(--white)',
-    borderTop: '1.5px solid var(--gray-200)',
-    boxShadow: '0 -2px 12px rgba(0,0,0,0.06)',
-    flexShrink: 0,
-    zIndex: 10,
-    paddingBottom: 'env(safe-area-inset-bottom)',
-  },
-  tabItem: {
-    flex: 1,
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: '3px',
-    transition: 'color 0.2s ease',
-    padding: '6px 0',
-  },
-  tabIconWrap: {
-    padding: '4px 14px',
-    borderRadius: '20px',
-    transition: 'background-color 0.2s ease, transform 0.2s ease',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  tabLabel: {
-    fontSize: '10px',
-    letterSpacing: '0.2px',
-    transition: 'color 0.2s ease',
-  },
-}
-color: 'rgba(232,201,106,0.65)',
-    letterSpacing: '1.2px',
-    textTransform: 'uppercase',
-    lineHeight: 1.2,
-  },
-  // ── Main content area ───────────────────────────────────────────
-  main: {
-    flex: 1,
-    overflowY: 'auto',
-    overflowX: 'hidden',
-    WebkitOverflowScrolling: 'touch',
-  },
-  // ── Bottom tab bar ──────────────────────────────────────────────
-  tabBar: {
-    height: 'var(--tab-height)',
-    display: 'flex',
-    background: 'var(--white)',
-    borderTop: '1.5px solid var(--gray-200)',
-    boxShadow: '0 -2px 12px rgba(0,0,0,0.06)',
-    flexShrink: 0,
-    zIndex: 10,
-    paddingBottom: 'env(safe-area-inset-bottom)',
-  },
-  tabItem: {
-    flex: 1,
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: '3px',
-    transition: 'color 0.2s ease',
-    padding: '6px 0',
-  },
-  tabIconWrap: {
-    padding: '4px 14px',
-    borderRadius: '20px',
-    transition: 'background-color 0.2s ease, transform 0.2s ease',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  tabLabel: {
-    fontSize: '10px',
-    letterSpacing: '0.2px',
-    transition: 'color 0.2s ease',
-  },
-}
-color: 'rgba(232,201,106,0.65)',
     letterSpacing: '1.2px',
     textTransform: 'uppercase',
     lineHeight: 1.2,
