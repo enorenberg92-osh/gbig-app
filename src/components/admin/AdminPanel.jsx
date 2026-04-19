@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import { Routes, Route, Navigate, useLocation as useRouterLocation, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard, Flag, Medal, Users, Trophy, Activity,
   Calendar, Repeat2, Map, Target, Bell,
@@ -31,18 +32,31 @@ const SECTIONS = [
   { id: 'alerts',     label: 'Alerts',       Icon: Bell },
 ]
 
+// Derive the active section id from /league/admin/<section>. Anything that
+// isn't a known section (or the bare /league/admin) falls back to 'dashboard'
+// so the UI always has a sensible current tab to highlight.
+function sectionFromPath(pathname) {
+  const m = pathname.match(/\/league\/admin\/?([^/?#]*)/)
+  const id = m && m[1] ? m[1] : 'dashboard'
+  return SECTIONS.some(s => s.id === id) ? id : 'dashboard'
+}
+
 export default function AdminPanel({ session, onBack }) {
   const { locationId, appName } = useLocation()
-  const [activeSection, setActiveSection] = useState('dashboard')
+  const routerLocation = useRouterLocation()
+  const navigate = useNavigate()
+  const activeSection = sectionFromPath(routerLocation.pathname)
+
   const [isDesktop, setIsDesktop] = useState(() => window.innerWidth >= 768)
 
   // ── Shared active event across all tabs ──────────────────────────────────
-  const [activeEventId, setActiveEventId]   = useState(null)
+  const [activeEventId, setActiveEventId]       = useState(null)
   const [activeEventLabel, setActiveEventLabel] = useState(null)
-  const [allEvents, setAllEvents]           = useState([])
+  const [allEvents, setAllEvents]               = useState([])
 
   useEffect(() => {
     loadActiveEvent()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   async function loadActiveEvent() {
@@ -81,28 +95,40 @@ export default function AdminPanel({ session, onBack }) {
     })
   }
 
+  // Navigate to a section. Guard against clicks on the already-active tab so
+  // we don't push duplicate history entries for repeat clicks.
+  function goToSection(id) {
+    if (id !== activeSection) navigate('/league/admin/' + id)
+  }
+
   useEffect(() => {
     const handle = () => setIsDesktop(window.innerWidth >= 768)
     window.addEventListener('resize', handle)
     return () => window.removeEventListener('resize', handle)
   }, [])
 
-  const renderSection = () => {
-    switch (activeSection) {
-      case 'dashboard': return <AdminDashboard onWeekClosed={handleWeekClosed} />
-      case 'scores':    return <AdminScores    activeEventId={activeEventId} onEventChange={handleEventChange} />
-      case 'players':   return <AdminPlayers />
-      case 'league':    return <AdminLeague />
-      case 'handicap':  return <AdminHandicap />
-      case 'subs':      return <AdminSubs />
-      case 'schedule':  return <AdminSchedule />
-      case 'courses':   return <AdminCourses />
-      case 'skins':     return <AdminSkins     activeEventId={activeEventId} onEventChange={handleEventChange} />
-      case 'alerts':    return <AdminAlerts />
-      case 'standings': return <AdminStandings session={session} />
-      default:          return <AdminDashboard onWeekClosed={handleWeekClosed} />
-    }
-  }
+  // Centralised route table — rendered inside the main content pane for both
+  // desktop and mobile layouts. The index route keeps /league/admin (no
+  // trailing segment) landing on the dashboard, and the catch-all rewrites
+  // unknown sub-paths back to the dashboard so we never get stuck on a
+  // blank admin screen.
+  const sectionRoutes = (
+    <Routes>
+      <Route index             element={<AdminDashboard onWeekClosed={handleWeekClosed} />} />
+      <Route path="dashboard"  element={<AdminDashboard onWeekClosed={handleWeekClosed} />} />
+      <Route path="scores"     element={<AdminScores    activeEventId={activeEventId} onEventChange={handleEventChange} />} />
+      <Route path="standings"  element={<AdminStandings session={session} />} />
+      <Route path="players/*"  element={<AdminPlayers />} />
+      <Route path="league"     element={<AdminLeague />} />
+      <Route path="handicap"   element={<AdminHandicap />} />
+      <Route path="schedule"   element={<AdminSchedule />} />
+      <Route path="subs"       element={<AdminSubs />} />
+      <Route path="courses"    element={<AdminCourses />} />
+      <Route path="skins"      element={<AdminSkins     activeEventId={activeEventId} onEventChange={handleEventChange} />} />
+      <Route path="alerts"     element={<AdminAlerts />} />
+      <Route path="*"          element={<Navigate to="/league/admin/dashboard" replace />} />
+    </Routes>
+  )
 
   const current = SECTIONS.find(s => s.id === activeSection) || SECTIONS[0]
   const CurrentIcon = current.Icon
@@ -138,7 +164,7 @@ export default function AdminPanel({ session, onBack }) {
                     fontWeight: active ? 700 : 400,
                     borderLeft: active ? '3px solid #fff' : '3px solid transparent',
                   }}
-                  onClick={() => setActiveSection(id)}
+                  onClick={() => goToSection(id)}
                 >
                   <span style={ds.navIcon}>
                     <Icon size={17} strokeWidth={active ? 2.25 : 1.75} />
@@ -175,7 +201,7 @@ export default function AdminPanel({ session, onBack }) {
 
           {/* Scrollable content */}
           <div style={ds.content}>
-            {renderSection()}
+            {sectionRoutes}
           </div>
         </div>
       </div>
@@ -222,7 +248,7 @@ export default function AdminPanel({ session, onBack }) {
                   border:     active ? '1.5px solid var(--green)' : '1.5px solid var(--gray-200)',
                   fontWeight: active ? 700 : 400,
                 }}
-                onClick={() => setActiveSection(id)}
+                onClick={() => goToSection(id)}
               >
                 <Icon size={14} strokeWidth={2} style={{ verticalAlign: '-2px', marginRight: 5 }} />
                 {label}
@@ -234,7 +260,7 @@ export default function AdminPanel({ session, onBack }) {
 
       {/* Section Content */}
       <div style={ms.content}>
-        {renderSection()}
+        {sectionRoutes}
       </div>
     </div>
   )
