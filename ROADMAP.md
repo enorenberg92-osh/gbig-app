@@ -113,6 +113,12 @@ Goal: the second manager's day-one experience feels incredible.
 
 ---
 
+## Polish backlog (drive-by items, not a phase)
+
+- **Friends chat: optimistic send.** When you send a message, it doesn't appear in the chat view until the realtime subscription catches it (or a refresh). Users expect their own message to appear instantly. Fix: append the message to local state immediately after the INSERT succeeds, then reconcile with realtime when it arrives. Noticed 2026-04-19.
+
+---
+
 ## Open questions I'll bring up as we go
 
 - Is the WordPress-iframe booking flow permanent, or is `AdminBookings.jsx` the intended replacement? That file's size suggests real work was started.

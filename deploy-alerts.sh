@@ -51,11 +51,21 @@ echo "▶  Logging in to Supabase..."
 supabase login
 
 # 3. Deploy the functions
+#
+#    --no-verify-jwt is REQUIRED. User session access_tokens are signed
+#    with ES256, which the Edge Functions gateway can't verify. Our
+#    functions do their own JWT check via auth.getUser(jwt) — that's the
+#    real security layer. Moving it from gateway → function is equivalent
+#    protection and works around the algorithm mismatch.
+#
 echo "▶  Deploying send-alert function..."
-supabase functions deploy send-alert --project-ref "$PROJECT_REF"
+supabase functions deploy send-alert --no-verify-jwt --project-ref "$PROJECT_REF"
 
 echo "▶  Deploying send-social-push function..."
-supabase functions deploy send-social-push --project-ref "$PROJECT_REF"
+supabase functions deploy send-social-push --no-verify-jwt --project-ref "$PROJECT_REF"
+
+echo "▶  Deploying create-player-account function..."
+supabase functions deploy create-player-account --no-verify-jwt --project-ref "$PROJECT_REF"
 
 # 4. Set VAPID secrets
 echo "▶  Setting VAPID secrets..."
