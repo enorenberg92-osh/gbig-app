@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { recalcPlayerHandicap } from '../../lib/handicapCalc'
+import { useLocation } from '../../context/LocationContext'
+import { scoreColor } from '../../lib/scoreUtils'
 
 // ─── Skins calculation ───────────────────────────────────────────────────────
 // For each hole: find the lowest score. If exactly one player shot it → skin won.
@@ -24,17 +26,8 @@ function calcSkins(playerScoreMap) {
   return skins
 }
 
-// ─── Score colour (vs par) ───────────────────────────────────────────────────
-function scoreColor(score, par) {
-  if (!score || !par) return 'var(--black)'
-  const diff = score - par
-  if (diff <= -2) return '#b8860b'   // eagle or better — gold
-  if (diff === -1) return '#dc2626'  // birdie — red
-  if (diff === 0)  return '#16a34a'  // par — green
-  return 'var(--black)'              // bogey or worse — black
-}
-
 export default function AdminScores({ activeEventId = null, onEventChange = () => {} }) {
+  const { locationId } = useLocation()
   const [events, setEvents]         = useState([])
   const [selectedEvent, setSelectedEvent] = useState(activeEventId || '')
   const [eventData, setEventData]   = useState(null)   // { course, pars[] }
@@ -48,8 +41,8 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
   const [subMap, setSubMap]           = useState({})  // { player_id: { sub_first_name, sub_last_name, sub_handicap } }
 
   useEffect(() => {
-    loadEvents()
-  }, [])
+    if (locationId) loadEvents()
+  }, [locationId])
 
   // Sync when parent changes the active event (tab switch or week close)
   useEffect(() => {
@@ -66,6 +59,7 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
     const { data, error } = await supabase
       .from('events')
       .select('id, name, event_date, start_date, status, course_id, week_number, is_bye')
+      .eq('location_id', locationId)
       .order('week_number', { ascending: true, nullsFirst: false })
 
     // Filter bye weeks client-side (safe even if is_bye column doesn't exist yet)
@@ -120,10 +114,10 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
 
     // Load teams, players, scores, and approved subs independently
     const [{ data: teamRows }, { data: allPlayers }, { data: scoreRows }, { data: subRows }] = await Promise.all([
-      supabase.from('teams').select('id, name, player1_id, player2_id').order('created_at', { ascending: true }),
-      supabase.from('players').select('id, name, handicap, in_skins'),
-      supabase.from('scores').select('*').eq('event_id', eventId),
-      supabase.from('subs').select('player_id, sub_first_name, sub_last_name, sub_handicap, sub_player_id').eq('event_id', eventId).eq('status', 'approved'),
+      supabase.from('teams').select('id, name, player1_id, player2_id').eq('location_id', locationId).order('created_at', { ascending: true }),
+      supabase.from('players').select('id, name, handicap, in_skins').eq('location_id', locationId),
+      supabase.from('scores').select('*').eq('event_id', eventId).eq('location_id', locationId),
+      supabase.from('subs').select('player_id, sub_first_name, sub_last_name, sub_handicap, sub_player_id').eq('event_id', eventId).eq('location_id', locationId).eq('status', 'approved'),
     ])
 
     // Build sub lookup map: player_id → sub info
@@ -216,6 +210,7 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
         net_total:     net,
         handicap_used: Math.round(effectiveHandicap),
         sub_played:    sub != null,  // true = player sat out; don't count toward their history
+        location_id:   locationId,
       }
 
       let error
@@ -236,6 +231,7 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
           net_total:     net,
           handicap_used: Math.round(effectiveHandicap),
           sub_played:    false,  // from the sub's perspective, they actually played
+          location_id:   locationId,
         }
         // Upsert: update if a record already exists for this sub + event, else insert
         const { data: existingSubScore } = await supabase
@@ -261,7 +257,7 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
     // Silently recalculate handicaps for both players now that new scores are in.
     // Fire-and-forget — never blocks the UI or shows an error to the admin.
     const playerIds = [team.p1?.id, team.p2?.id].filter(Boolean)
-    Promise.all(playerIds.map(id => recalcPlayerHandicap(supabase, id)))
+    Promise.all(playerIds.map(id => recalcPlayerHandicap(supabase, id, locationId)))
       .then(results => {
         results.forEach((r, i) => {
           if (r.updated) console.log(`Handicap updated: player ${playerIds[i]} → ${r.newHcp} (was ${r.oldHcp})`)
@@ -272,8 +268,8 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
   async function handleCalculateSkins() {
     // Load scores + all players independently (avoids FK join issues)
     const [{ data: allScores }, { data: skinPlayers }] = await Promise.all([
-      supabase.from('scores').select('player_id, hole_scores').eq('event_id', selectedEvent),
-      supabase.from('players').select('id, name, in_skins'),
+      supabase.from('scores').select('player_id, hole_scores').eq('event_id', selectedEvent).eq('location_id', locationId),
+      supabase.from('players').select('id, name, in_skins').eq('location_id', locationId),
     ])
 
     if (!allScores?.length) { showToast('No scores entered yet.', 'error'); return }

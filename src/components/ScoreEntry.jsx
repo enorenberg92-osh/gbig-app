@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import HoleEventAnimation from './HoleEventAnimation'
+import { useLocation } from '../context/LocationContext'
+import { scoreColor, scoreBg, vsParLabel } from '../lib/scoreUtils'
 
 /**
  * ScoreEntry
@@ -13,6 +15,7 @@ import HoleEventAnimation from './HoleEventAnimation'
  *   onBack    {func}    - returns to LeagueDashboard
  */
 export default function ScoreEntry({ session, onBack }) {
+  const { locationId } = useLocation()
   const [loading, setLoading]           = useState(true)
   const [team, setTeam]                 = useState(null)       // { id, player1, player2 }
   const [event, setEvent]               = useState(null)       // current open event
@@ -27,7 +30,7 @@ export default function ScoreEntry({ session, onBack }) {
 
   const NUM_HOLES = 9
 
-  useEffect(() => { init() }, [])
+  useEffect(() => { if (locationId) init() }, [locationId])
 
   async function init() {
     try {
@@ -36,6 +39,7 @@ export default function ScoreEntry({ session, onBack }) {
         .from('players')
         .select('id, name')
         .eq('user_id', session.user.id)
+        .eq('location_id', locationId)
         .single()
 
       if (pErr || !playerRow) { setError('No player record found for your account. Ask your admin.'); setLoading(false); return }
@@ -44,6 +48,7 @@ export default function ScoreEntry({ session, onBack }) {
       const { data: teamRow, error: tErr } = await supabase
         .from('teams')
         .select('id, player1_id, player2_id')
+        .eq('location_id', locationId)
         .or(`player1_id.eq.${playerRow.id},player2_id.eq.${playerRow.id}`)
         .single()
 
@@ -53,6 +58,7 @@ export default function ScoreEntry({ session, onBack }) {
       const { data: teamPlayers } = await supabase
         .from('players')
         .select('id, name, handicap')
+        .eq('location_id', locationId)
         .in('id', [teamRow.player1_id, teamRow.player2_id].filter(Boolean))
 
       const playerById = {}
@@ -70,6 +76,7 @@ export default function ScoreEntry({ session, onBack }) {
       const { data: evtRow } = await supabase
         .from('events')
         .select('*')
+        .eq('location_id', locationId)
         .eq('status', 'open')
         .lte('start_date', today)
         .gte('end_date', today)
@@ -94,7 +101,8 @@ export default function ScoreEntry({ session, onBack }) {
         .from('scores')
         .select('id')
         .eq('event_id', evtRow.id)
-        .eq('player_id', teamRow.p1.id)
+        .eq('location_id', locationId)
+        .eq('player_id', playerRow.id)
 
       if (existing && existing.length > 0) { setAlreadySubmitted(true); setLoading(false); return }
 
@@ -144,23 +152,7 @@ export default function ScoreEntry({ session, onBack }) {
     return course.hole_pars[holeIdx] ?? null
   }
 
-  function scoreColor(score, par) {
-    if (!score || !par) return 'var(--black)'
-    const diff = score - par
-    if (diff <= -2) return '#b8860b'   // eagle or better — gold
-    if (diff === -1) return '#dc2626'  // birdie — red
-    if (diff === 0)  return '#16a34a'  // par — green
-    return 'var(--black)'              // bogey or worse — black
-  }
-
-  function scoreBg(score, par) {
-    if (!score || !par) return 'transparent'
-    const diff = score - par
-    if (diff <= -2) return '#fef9c3'   // eagle — light gold
-    if (diff === -1) return '#fee2e2'  // birdie — light red
-    if (diff === 0)  return '#dcfce7'  // par — light green
-    return 'transparent'               // bogey+ — no background
-  }
+  // scoreColor, scoreBg, vsParLabel imported from ../../lib/scoreUtils
 
   function canAdvance() {
     return scores.p1[currentHole] != null && scores.p2[currentHole] != null
@@ -191,11 +183,7 @@ export default function ScoreEntry({ session, onBack }) {
     return gross - par
   }
 
-  function vsParLabel(diff) {
-    if (diff === null) return ''
-    if (diff === 0) return 'E'
-    return diff > 0 ? `+${diff}` : `${diff}`
-  }
+  // vsParLabel imported from ../lib/scoreUtils
 
   async function handleSubmit() {
     const allFilled = scores.p1.every(s => s != null) && scores.p2.every(s => s != null)
@@ -221,6 +209,7 @@ export default function ScoreEntry({ session, onBack }) {
         gross_total:   p1Gross,
         net_total:     p1Gross - p1Hcp,
         handicap_used: p1Hcp,
+        location_id:   locationId,
       },
       {
         event_id:      event.id,
@@ -229,6 +218,7 @@ export default function ScoreEntry({ session, onBack }) {
         gross_total:   p2Gross,
         net_total:     p2Gross - p2Hcp,
         handicap_used: p2Hcp,
+        location_id:   locationId,
       },
     ]
 

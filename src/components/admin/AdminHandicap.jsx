@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { DEFAULT_SETTINGS, calcHandicap, calcBreakdown } from '../../lib/handicapCalc'
+import { useLocation } from '../../context/LocationContext'
 
 // ── Component ────────────────────────────────────────────────────────────────
 export default function AdminHandicap() {
+  const { locationId } = useLocation()
   const [players,      setPlayers]      = useState([])
   const [scoreHistory, setScoreHistory] = useState({}) // { playerId: [{eventName, date, gross, par, diff}] }
   const [settings,     setSettings]     = useState(DEFAULT_SETTINGS)
@@ -12,18 +14,19 @@ export default function AdminHandicap() {
   const [expanded,     setExpanded]     = useState({}) // { playerId: bool }
   const [toast,        setToast]        = useState(null)
 
-  useEffect(() => { loadAll() }, [])
+  useEffect(() => { if (locationId) loadAll() }, [locationId])
 
   async function loadAll() {
     setLoading(true)
 
     const [{ data: plrs }, { data: scores }, { data: leagueCfg }] = await Promise.all([
-      supabase.from('players').select('*').order('name'),
+      supabase.from('players').select('*').eq('location_id', locationId).order('name'),
       supabase
         .from('scores')
         .select('player_id, gross_total, created_at, events(id, name, start_date, event_date, week_number, courses(name, hole_pars))')
+        .eq('location_id', locationId)
         .order('created_at', { ascending: true }),
-      supabase.from('league_config').select('num_weeks').limit(1).single(),
+      supabase.from('league_config').select('num_weeks').eq('location_id', locationId).limit(1).single(),
     ])
 
     // Merge league num_weeks into settings
@@ -63,19 +66,26 @@ export default function AdminHandicap() {
 
   async function handleRecalcAll() {
     setUpdating(true)
-    let updated = 0, errors = 0
 
-    for (const player of players) {
-      // Skip players with a locked handicap
-      if (player.handicap_locked) continue
+    // Compute all new handicaps in memory first (no DB calls yet)
+    const toUpdate = players
+      .filter(p => !p.handicap_locked)
+      .map(p => {
+        const diffs  = (scoreHistory[p.id] || []).filter(r => r.diff != null).map(r => r.diff)
+        const newHcp = calcHandicap(diffs, settings)
+        // Only queue a write if the value actually changed
+        return (newHcp != null && newHcp !== p.handicap) ? { id: p.id, newHcp } : null
+      })
+      .filter(Boolean)
 
-      const rounds = (scoreHistory[player.id] || []).filter(r => r.diff != null)
-      const diffs  = rounds.map(r => r.diff)
-      const newHcp = calcHandicap(diffs, settings)
-      if (newHcp == null) continue
-      const { error } = await supabase.from('players').update({ handicap: newHcp }).eq('id', player.id)
-      if (error) errors++; else updated++
-    }
+    // Fire all DB updates in parallel instead of one-by-one
+    const results = await Promise.all(
+      toUpdate.map(({ id, newHcp }) =>
+        supabase.from('players').update({ handicap: newHcp }).eq('id', id)
+      )
+    )
+    const updated = results.filter(r => !r.error).length
+    const errors  = results.filter(r =>  r.error).length
 
     setUpdating(false)
     showToast(

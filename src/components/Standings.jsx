@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
+import { useLocation } from '../context/LocationContext'
 
 // adminMode: Season shows ALL events (open + closed) so admins have full
 // visibility. Players only see closed weeks so rankings stay clean.
 export default function Standings({ session, onBack, adminMode = false }) {
+  const { locationId } = useLocation()
   const [view, setView]                   = useState('week')
   const [sortBy, setSortBy]               = useState('net')
   const [loading, setLoading]             = useState(true)
@@ -13,7 +15,7 @@ export default function Standings({ session, onBack, adminMode = false }) {
   const [error, setError]                 = useState(null)
 
   // ── 1. On mount, fetch the event list ────────────────────────────
-  useEffect(() => { loadEvents() }, [])
+  useEffect(() => { if (locationId) loadEvents() }, [locationId])
 
   // ── 2. Whenever the selected event or view changes, reload data ──
   useEffect(() => {
@@ -39,6 +41,7 @@ export default function Standings({ session, onBack, adminMode = false }) {
     const { data, error } = await supabase
       .from('events')
       .select('id, name, week_number, start_date, status')
+      .eq('location_id', locationId)
       .neq('is_bye', true)
       .in('status', ['open', 'closed'])
       .order('week_number', { ascending: false })
@@ -65,9 +68,10 @@ export default function Standings({ session, onBack, adminMode = false }) {
     const [scoresRes, playersRes, teamsRes] = await Promise.all([
       supabase.from('scores')
         .select('id, player_id, event_id, gross_total, net_total, handicap_used')
-        .eq('event_id', eventId),
-      supabase.from('players').select('id, name, first_name, last_name, handicap'),
-      supabase.from('teams').select('id, name, player1_id, player2_id'),
+        .eq('event_id', eventId)
+        .eq('location_id', locationId),
+      supabase.from('players').select('id, name, first_name, last_name, handicap').eq('location_id', locationId),
+      supabase.from('teams').select('id, name, player1_id, player2_id').eq('location_id', locationId),
     ])
 
     if (scoresRes.error) { setError(scoresRes.error.message); setLoading(false); return }
@@ -86,8 +90,8 @@ export default function Standings({ session, onBack, adminMode = false }) {
 
     // Admins see all events; players only see closed weeks
     const { data: eligibleEvents } = adminMode
-      ? await supabase.from('events').select('id').in('status', ['open', 'closed'])
-      : await supabase.from('events').select('id').eq('status', 'closed')
+      ? await supabase.from('events').select('id').eq('location_id', locationId).in('status', ['open', 'closed'])
+      : await supabase.from('events').select('id').eq('location_id', locationId).eq('status', 'closed')
 
     const ids = (eligibleEvents || []).map(e => e.id)
     if (ids.length === 0) { setRows([]); setLoading(false); return }
@@ -95,9 +99,10 @@ export default function Standings({ session, onBack, adminMode = false }) {
     const [scoresRes, playersRes, teamsRes] = await Promise.all([
       supabase.from('scores')
         .select('id, player_id, event_id, gross_total, net_total')
-        .in('event_id', ids),
-      supabase.from('players').select('id, name, first_name, last_name, handicap'),
-      supabase.from('teams').select('id, name, player1_id, player2_id'),
+        .in('event_id', ids)
+        .eq('location_id', locationId),
+      supabase.from('players').select('id, name, first_name, last_name, handicap').eq('location_id', locationId),
+      supabase.from('teams').select('id, name, player1_id, player2_id').eq('location_id', locationId),
     ])
 
     if (scoresRes.error) { setError(scoresRes.error.message); setLoading(false); return }

@@ -69,13 +69,14 @@ export function calcBreakdown(differentials, settings = DEFAULT_SETTINGS) {
 // ── One-shot recalc for a single player ───────────────────────────────────────
 // Fetches their score history, recalculates, and writes back to DB if changed.
 // Safe to call silently — never throws, returns { updated, newHcp } or { skipped }.
-export async function recalcPlayerHandicap(supabase, playerId, settings = DEFAULT_SETTINGS) {
+export async function recalcPlayerHandicap(supabase, playerId, locationId, settings = DEFAULT_SETTINGS) {
   try {
     // Check if player exists and isn't locked
     const { data: player } = await supabase
       .from('players')
       .select('id, handicap, handicap_locked')
       .eq('id', playerId)
+      .eq('location_id', locationId)
       .maybeSingle()
 
     if (!player || player.handicap_locked) return { skipped: true }
@@ -85,6 +86,7 @@ export async function recalcPlayerHandicap(supabase, playerId, settings = DEFAUL
       .from('scores')
       .select('gross_total, events(courses(hole_pars))')
       .eq('player_id', playerId)
+      .eq('location_id', locationId)
       .not('gross_total', 'is', null)
       .order('created_at', { ascending: true })
 

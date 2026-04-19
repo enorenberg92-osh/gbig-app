@@ -1,14 +1,18 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
+import { useLocation } from '../../context/LocationContext'
+import ConfirmDialog from '../ConfirmDialog'
 
 export default function AdminSubs() {
+  const { locationId } = useLocation()
   const [subs, setSubs]         = useState([])
   const [knownSubs, setKnownSubs] = useState([])  // players with is_sub = true
   const [loading, setLoading]   = useState(true)
   const [toast, setToast]     = useState(null)
   const [filter, setFilter]   = useState('pending') // 'pending' | 'approved' | 'all'
+  const [dialog, setDialog]   = useState(null)
 
-  useEffect(() => { load() }, [])
+  useEffect(() => { if (locationId) load() }, [locationId])
 
   async function load() {
     // Fetch everything independently — no FK joins (avoids PostgREST relationship issues)
@@ -18,10 +22,10 @@ export default function AdminSubs() {
       { data: allEvents },
       { data: subPlayerRows },
     ] = await Promise.all([
-      supabase.from('subs').select('*').order('created_at', { ascending: false }),
-      supabase.from('players').select('id, name, email'),
-      supabase.from('events').select('id, name, start_date'),
-      supabase.from('players').select('id, first_name, last_name, name, handicap, email').eq('is_sub', true).order('last_name', { ascending: true }),
+      supabase.from('subs').select('*').eq('location_id', locationId).order('created_at', { ascending: false }),
+      supabase.from('players').select('id, name, email').eq('location_id', locationId),
+      supabase.from('events').select('id, name, start_date').eq('location_id', locationId),
+      supabase.from('players').select('id, first_name, last_name, name, handicap, email').eq('location_id', locationId).eq('is_sub', true).order('last_name', { ascending: true }),
     ])
 
     if (subErr) console.error('AdminSubs load error:', subErr.message)
@@ -80,12 +84,13 @@ export default function AdminSubs() {
     const { data: newPlayer, error: createErr } = await supabase
       .from('players')
       .insert({
-        first_name: firstName,
-        last_name:  lastName,
-        name:       fullName,
-        handicap:   sub.sub_handicap,
-        email:      sub.sub_email || null,
-        is_sub:     true,
+        first_name:  firstName,
+        last_name:   lastName,
+        name:        fullName,
+        handicap:    sub.sub_handicap,
+        email:       sub.sub_email || null,
+        is_sub:      true,
+        location_id: locationId,
       })
       .select('id')
       .single()
@@ -120,23 +125,33 @@ export default function AdminSubs() {
     load()
   }
 
-  async function handleDeny(sub) {
-    if (!window.confirm('Deny this sub request?')) return
-    const { error } = await supabase
-      .from('subs')
-      .update({ status: 'denied' })
-      .eq('id', sub.id)
-    if (error) { showToast('Error: ' + error.message, 'error'); return }
-    showToast('Sub request denied.')
-    load()
+  function handleDeny(sub) {
+    setDialog({
+      message: 'Deny this sub request?',
+      confirmLabel: 'Deny',
+      onConfirm: async () => {
+        const { error } = await supabase
+          .from('subs')
+          .update({ status: 'denied' })
+          .eq('id', sub.id)
+        if (error) { showToast('Error: ' + error.message, 'error'); return }
+        showToast('Sub request denied.')
+        load()
+      },
+    })
   }
 
-  async function handleDelete(sub) {
-    if (!window.confirm('Remove this sub request entirely?')) return
-    const { error } = await supabase.from('subs').delete().eq('id', sub.id)
-    if (error) { showToast('Error: ' + error.message, 'error'); return }
-    showToast('Request removed.')
-    load()
+  function handleDelete(sub) {
+    setDialog({
+      message: 'Remove this sub request entirely?',
+      confirmLabel: 'Remove',
+      onConfirm: async () => {
+        const { error } = await supabase.from('subs').delete().eq('id', sub.id)
+        if (error) { showToast('Error: ' + error.message, 'error'); return }
+        showToast('Request removed.')
+        load()
+      },
+    })
   }
 
   const filtered = subs.filter(s => {
@@ -151,6 +166,13 @@ export default function AdminSubs() {
 
   return (
     <div style={styles.container}>
+      {dialog && (
+        <ConfirmDialog
+          {...dialog}
+          onConfirm={() => { dialog.onConfirm(); setDialog(null) }}
+          onCancel={() => setDialog(null)}
+        />
+      )}
       {toast && (
         <div style={{ ...styles.toast, background: toast.type === 'error' ? '#c53030' : 'var(--green)' }}>
           {toast.msg}

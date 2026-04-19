@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
+import { useLocation } from '../../context/LocationContext'
 import AdminDashboard from './AdminDashboard'
 import AdminScores    from './AdminScores'
 import AdminPlayers   from './AdminPlayers'
@@ -27,6 +28,7 @@ const SECTIONS = [
 ]
 
 export default function AdminPanel({ session, onBack }) {
+  const { locationId, appName } = useLocation()
   const [activeSection, setActiveSection] = useState('dashboard')
   const [isDesktop, setIsDesktop] = useState(() => window.innerWidth >= 768)
 
@@ -40,10 +42,11 @@ export default function AdminPanel({ session, onBack }) {
   }, [])
 
   async function loadActiveEvent() {
-    // Fetch all playable events
+    // Fetch all playable events for this location
     const { data: evts } = await supabase
       .from('events')
       .select('id, name, week_number, status, start_date, is_bye')
+      .eq('location_id', locationId)
       .order('week_number', { ascending: true, nullsFirst: false })
     const playable = (evts || []).filter(e => !e.is_bye)
     setAllEvents(playable)
@@ -109,7 +112,7 @@ export default function AdminPanel({ session, onBack }) {
           <div style={ds.sidebarTop}>
             <div style={ds.sidebarLogo}>⛳</div>
             <div>
-              <div style={ds.sidebarTitle}>GBIG Admin</div>
+              <div style={ds.sidebarTitle}>{appName} Admin</div>
               <div style={ds.sidebarSub}>League Management</div>
             </div>
           </div>

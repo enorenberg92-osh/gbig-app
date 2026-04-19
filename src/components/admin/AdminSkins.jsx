@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
+import { useLocation } from '../../context/LocationContext'
 
 const SCORE_LABELS = [
   { diff: -3, label: 'Albatross', color: '#b8860b', bg: '#fef9c3' },
@@ -18,6 +19,7 @@ function scoreLabel(score, par) {
 }
 
 export default function AdminSkins({ activeEventId = null, onEventChange = () => {} }) {
+  const { locationId } = useLocation()
   const [events, setEvents]           = useState([])
   const [selectedEvent, setSelectedEvent] = useState(activeEventId || '')
   const [eventDetails, setEventDetails] = useState(null)
@@ -28,14 +30,17 @@ export default function AdminSkins({ activeEventId = null, onEventChange = () =>
   const [skinsPlayers, setSkinsPlayers] = useState([])
 
   useEffect(() => {
+    if (!locationId) return
     async function load() {
       const [{ data: evts }, { data: plrs }] = await Promise.all([
         supabase.from('events')
           .select('id, name, week_number, start_date, course_id, status')
+          .eq('location_id', locationId)
           .neq('is_bye', true)
           .order('week_number', { ascending: true }),
         supabase.from('players')
           .select('id, name, first_name, last_name, in_skins')
+          .eq('location_id', locationId)
           .eq('in_skins', true)
           .order('name'),
       ])
@@ -50,7 +55,7 @@ export default function AdminSkins({ activeEventId = null, onEventChange = () =>
       setLoading(false)
     }
     load()
-  }, [])
+  }, [locationId])
 
   // Sync when parent changes the active event
   useEffect(() => {
@@ -84,6 +89,7 @@ export default function AdminSkins({ activeEventId = null, onEventChange = () =>
       .from('scores')
       .select('player_id, hole_scores, gross_total, net_total')
       .eq('event_id', selectedEvent)
+      .eq('location_id', locationId)
 
     if (error) {
       showToast('Error loading scores: ' + error.message, 'error')
@@ -95,6 +101,7 @@ export default function AdminSkins({ activeEventId = null, onEventChange = () =>
     const { data: allPlayers } = await supabase
       .from('players')
       .select('id, name, first_name, last_name, in_skins')
+      .eq('location_id', locationId)
 
     const playerMap = {}
     ;(allPlayers || []).forEach(p => { playerMap[p.id] = p })

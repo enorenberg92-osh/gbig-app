@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import { useIsAdmin } from '../hooks/useIsAdmin'
+import { useLocation } from '../context/LocationContext'
 import AdminPanel from './admin/AdminPanel'
 import ScoreEntry from './ScoreEntry'
 import Standings from './Standings'
@@ -10,6 +11,7 @@ import FriendsTab from './FriendsTab'
 
 export default function LeagueDashboard({ session }) {
   const { isAdmin, checking } = useIsAdmin(session)
+  const { locationId } = useLocation()
   const [showAdmin, setShowAdmin]           = useState(false)
   const [showScoreEntry, setShowScoreEntry] = useState(false)
   const [showStandings, setShowStandings]   = useState(false)
@@ -22,11 +24,13 @@ export default function LeagueDashboard({ session }) {
   const email = session?.user?.email || 'Player'
 
   useEffect(() => {
+    if (!locationId) return
     async function checkRound() {
       const today = new Date().toISOString().split('T')[0]
       const { data } = await supabase
         .from('events')
         .select('id, name, week_number')
+        .eq('location_id', locationId)
         .eq('status', 'open')
         .lte('start_date', today)
         .gte('end_date', today)
@@ -36,7 +40,7 @@ export default function LeagueDashboard({ session }) {
       setRoundChecked(true)
     }
     checkRound()
-  }, [])
+  }, [locationId])
 
   if (showAdmin && isAdmin)  return <AdminPanel    session={session} onBack={() => setShowAdmin(false)} />
   if (showScoreEntry)        return <ScoreEntry    session={session} onBack={() => setShowScoreEntry(false)} />

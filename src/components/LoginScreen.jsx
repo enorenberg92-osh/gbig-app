@@ -1,7 +1,9 @@
 import React, { useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { useLocation } from '../context/LocationContext'
 
 export default function LoginScreen() {
+  const { appName } = useLocation()
   const [email, setEmail]     = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
@@ -43,7 +45,7 @@ export default function LoginScreen() {
       <div style={styles.hero}>
         <div style={styles.heroLogo}>⛳</div>
         <h1 style={styles.heroTitle}>League Portal</h1>
-        <p style={styles.heroSubtitle}>Green Bay Indoor Golf</p>
+        <p style={styles.heroSubtitle}>{appName}</p>
       </div>
 
       {/* Card */}
@@ -100,7 +102,7 @@ export default function LoginScreen() {
         </div>
       </div>
 
-      <p style={styles.footer}>Green Bay Indoor Golf · League Members Only</p>
+      <p style={styles.footer}>{appName} · League Members Only</p>
     </div>
   )
 }

@@ -1,9 +1,12 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
+import { useLocation } from '../../context/LocationContext'
+import ConfirmDialog from '../ConfirmDialog'
 
 const EMPTY_FORM = { name: '', num_weeks: '', start_date: '', is_active: false }
 
 export default function AdminLeague() {
+  const { locationId } = useLocation()
   const [leagues, setLeagues]       = useState([])
   const [loading, setLoading]       = useState(true)
   const [showForm, setShowForm]     = useState(false)
@@ -12,8 +15,9 @@ export default function AdminLeague() {
   const [saving, setSaving]         = useState(false)
   const [toast, setToast]           = useState(null)
   const [weekPreview, setWeekPreview] = useState([])
+  const [dialog, setDialog]           = useState(null)
 
-  useEffect(() => { loadLeagues() }, [])
+  useEffect(() => { if (locationId) loadLeagues() }, [locationId])
 
   // Rebuild week preview whenever form dates/weeks change
   useEffect(() => {
@@ -38,6 +42,7 @@ export default function AdminLeague() {
     const { data } = await supabase
       .from('league_config')
       .select('*')
+      .eq('location_id', locationId)
       .order('start_date', { ascending: false })
     setLeagues(data || [])
     setLoading(false)
@@ -90,7 +95,7 @@ export default function AdminLeague() {
         const ids = leagues.map(l => l.id)
         if (ids.length) await supabase.from('league_config').update({ is_active: false }).in('id', ids)
       }
-      ;({ error } = await supabase.from('league_config').insert(payload))
+      ;({ error } = await supabase.from('league_config').insert({ ...payload, location_id: locationId }))
     }
     setSaving(false)
     if (error) { showToast('Error: ' + error.message, 'error'); return }
@@ -101,43 +106,53 @@ export default function AdminLeague() {
     loadLeagues()
   }
 
-  async function handleDelete(league) {
-    if (!window.confirm(`Delete "${league.name}"? This cannot be undone.`)) return
-    const { error } = await supabase.from('league_config').delete().eq('id', league.id)
-    if (error) { showToast('Error: ' + error.message, 'error'); return }
-    showToast('League deleted.')
-    loadLeagues()
+  function handleDelete(league) {
+    setDialog({
+      message: `Delete "${league.name}"? This cannot be undone.`,
+      confirmLabel: 'Delete',
+      onConfirm: async () => {
+        const { error } = await supabase.from('league_config').delete().eq('id', league.id)
+        if (error) { showToast('Error: ' + error.message, 'error'); return }
+        showToast('League deleted.')
+        loadLeagues()
+      },
+    })
   }
 
-  async function handleGenerateSchedule(league) {
+  function handleGenerateSchedule(league) {
     if (!weekPreview.length) return
-    if (!window.confirm(
-      `Create ${weekPreview.length} events for "${league?.name || 'this league'}"?\n\nExisting weeks won't be duplicated.`
-    )) return
+    setDialog({
+      message: `Create ${weekPreview.length} events for "${league?.name || 'this league'}"?\n\nExisting weeks won't be duplicated.`,
+      confirmLabel: 'Create Events',
+      destructive: false,
+      onConfirm: async () => {
+        const { data: existing } = await supabase
+          .from('events')
+          .select('week_number')
+          .eq('location_id', locationId)
+          .not('week_number', 'is', null)
 
-    const { data: existing } = await supabase
-      .from('events')
-      .select('week_number')
-      .not('week_number', 'is', null)
+        const existingWeeks = new Set((existing || []).map(e => e.week_number))
+        const toInsert = weekPreview
+          .filter(w => !existingWeeks.has(w.week))
+          .map(w => ({
+            name:        `Week ${w.week}`,
+            week_number: w.week,
+            start_date:  w.start,
+            end_date:    w.end,
+            status:      'draft',
+            location_id: locationId,
+          }))
 
-    const existingWeeks = new Set((existing || []).map(e => e.week_number))
-    const toInsert = weekPreview
-      .filter(w => !existingWeeks.has(w.week))
-      .map(w => ({
-        name:        `Week ${w.week}`,
-        week_number: w.week,
-        start_date:  w.start,
-        end_date:    w.end,
-        status:      'draft',   // admin opens each week manually via Schedule or Overview
-      }))
-
-    if (toInsert.length === 0) {
-      showToast('All weeks already exist in the schedule.', 'error')
-      return
-    }
-    const { error } = await supabase.from('events').insert(toInsert)
-    if (error) { showToast('Error: ' + error.message, 'error'); return }
-    showToast(`✓ ${toInsert.length} week${toInsert.length !== 1 ? 's' : ''} added to Schedule!`)
+        if (toInsert.length === 0) {
+          showToast('All weeks already exist in the schedule.', 'error')
+          return
+        }
+        const { error } = await supabase.from('events').insert(toInsert)
+        if (error) { showToast('Error: ' + error.message, 'error'); return }
+        showToast(`✓ ${toInsert.length} week${toInsert.length !== 1 ? 's' : ''} added to Schedule!`)
+      },
+    })
   }
 
   function startEdit(league) {
@@ -162,6 +177,13 @@ export default function AdminLeague() {
 
   return (
     <div style={s.page}>
+      {dialog && (
+        <ConfirmDialog
+          {...dialog}
+          onConfirm={() => { dialog.onConfirm(); setDialog(null) }}
+          onCancel={() => setDialog(null)}
+        />
+      )}
       {toast && (
         <div style={{ ...s.toast, background: toast.type === 'error' ? '#c53030' : 'var(--green)' }}>
           {toast.msg}

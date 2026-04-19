@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
+import { useLocation } from '../../context/LocationContext'
+import ConfirmDialog from '../ConfirmDialog'
 
 const STEPS = [
   { id: 'scores',  label: 'Review scores', num: 1 },
@@ -9,7 +11,7 @@ const STEPS = [
   { id: 'publish', label: 'Lock & publish', num: 5 },
 ]
 
-function generateEmail(evt, scores, teams, players, skins) {
+function generateEmail(evt, scores, teams, players, skins, appName = 'Golf League App') {
   const evtName = evt.name || evt.title || `Event ${evt.week_number || ''}`
   const date = evt.start_date
     ? new Date(evt.start_date).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
@@ -48,13 +50,14 @@ ${top3 || '  Results pending'}
 SKINS WINNERS
 ${skinLines}
 
-See the full standings and your player profile in the GBIG League app.
+See the full standings and your player profile in the ${appName}.
 
 See you next week!
-— Green Bay Indoor Golf`
+— ${appName}`
 }
 
 export default function AdminDashboard({ onWeekClosed = () => {} }) {
+  const { locationId, appName } = useLocation()
   const [stats, setStats]           = useState({ players: 0, events: 0, teams: 0 })
   const [openEvent, setOpenEvent]   = useState(null)
   const [scores, setScores]         = useState([])
@@ -67,10 +70,11 @@ export default function AdminDashboard({ onWeekClosed = () => {} }) {
   const [published, setPublished]   = useState(false)
   const [copied, setCopied]         = useState(false)
   const [loading, setLoading]       = useState(true)
+  const [dialog, setDialog]         = useState(null)
   // track which steps have been manually acknowledged
   const [acked, setAcked] = useState({ scores: false, skins: false, results: false, email: false })
 
-  useEffect(() => { load() }, [])
+  useEffect(() => { if (locationId) load() }, [locationId])
 
   async function load() {
     setLoading(true)
@@ -82,12 +86,12 @@ export default function AdminDashboard({ onWeekClosed = () => {} }) {
       { data: tms },
       { data: plrs },
     ] = await Promise.all([
-      supabase.from('players').select('*', { count: 'exact', head: true }),
-      supabase.from('events').select('*', { count: 'exact', head: true }),
-      supabase.from('teams').select('*', { count: 'exact', head: true }),
-      supabase.from('events').select('*').eq('status', 'open').order('week_number', { ascending: true }).limit(1),
-      supabase.from('teams').select('id, name, player1_id, player2_id'),
-      supabase.from('players').select('id, name, first_name, last_name, email, in_skins'),
+      supabase.from('players').select('*', { count: 'exact', head: true }).eq('location_id', locationId),
+      supabase.from('events').select('*', { count: 'exact', head: true }).eq('location_id', locationId),
+      supabase.from('teams').select('*', { count: 'exact', head: true }).eq('location_id', locationId),
+      supabase.from('events').select('*').eq('location_id', locationId).eq('status', 'open').order('week_number', { ascending: true }).limit(1),
+      supabase.from('teams').select('id, name, player1_id, player2_id').eq('location_id', locationId),
+      supabase.from('players').select('id, name, first_name, last_name, email, in_skins').eq('location_id', locationId),
     ])
 
     setStats({ players: playerCount || 0, events: eventCount || 0, teams: teamCount || 0 })
@@ -102,8 +106,8 @@ export default function AdminDashboard({ onWeekClosed = () => {} }) {
     if (evt) {
       // Load scores + course info for skins calculation
       const [{ data: scrs }, evtDetail] = await Promise.all([
-        supabase.from('scores').select('*').eq('event_id', evt.id),
-        supabase.from('events').select('*, courses(id, name, hole_pars)').eq('id', evt.id).single(),
+        supabase.from('scores').select('*').eq('event_id', evt.id).eq('location_id', locationId),
+        supabase.from('events').select('*, courses(id, name, hole_pars)').eq('id', evt.id).eq('location_id', locationId).single(),
       ])
       const s = scrs || []
       setScores(s)
@@ -129,15 +133,23 @@ export default function AdminDashboard({ onWeekClosed = () => {} }) {
         }
       }
       setSkins(computed)
-      setEmailBody(generateEmail(evt, s, tms || [], plrs || [], computed))
+      setEmailBody(generateEmail(evt, s, tms || [], plrs || [], computed, appName))
     }
 
     setLoading(false)
   }
 
-  async function handlePublish() {
+  function handlePublish() {
     if (!openEvent) return
-    if (!window.confirm('Close out this event? Scores will be locked and season standings updated.')) return
+    setDialog({
+      message: 'Close out this event? Scores will be locked and season standings updated.',
+      confirmLabel: 'Lock & Publish',
+      destructive: false,
+      onConfirm: () => doPublish(),
+    })
+  }
+
+  async function doPublish() {
     setPublishing(true)
 
     // Close the current event
@@ -148,6 +160,7 @@ export default function AdminDashboard({ onWeekClosed = () => {} }) {
     const { data: nextEvents } = await supabase
       .from('events')
       .select('id, name, week_number, is_bye, status')
+      .eq('location_id', locationId)
       .neq('is_bye', true)
       .eq('status', 'draft')
       .gt('week_number', openEvent.week_number ?? 0)
@@ -237,6 +250,13 @@ export default function AdminDashboard({ onWeekClosed = () => {} }) {
 
   return (
     <div style={s.page}>
+      {dialog && (
+        <ConfirmDialog
+          {...dialog}
+          onConfirm={() => { dialog.onConfirm(); setDialog(null) }}
+          onCancel={() => setDialog(null)}
+        />
+      )}
 
       {/* ── Stat strip ─────────────────────────────────────────────────────── */}
       <div style={s.statGrid}>

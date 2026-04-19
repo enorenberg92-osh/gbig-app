@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { supabase } from './lib/supabase'
+import { useLocation } from './context/LocationContext'
 
 // Pages
 import ReservationsPage from './pages/ReservationsPage'
@@ -42,7 +43,7 @@ const TABS = [
 ]
 
 // ─── Splash Screen ───────────────────────────────────────────────
-function SplashScreen({ onDone }) {
+function SplashScreen({ onDone, appFullName }) {
   const [phase, setPhase] = useState('in') // 'in' | 'out'
 
   useEffect(() => {
@@ -65,8 +66,7 @@ function SplashScreen({ onDone }) {
 
       {/* Title */}
       <div style={splash.titleWrap}>
-        <h1 style={splash.title}>Green Bay</h1>
-        <h1 style={{ ...splash.title, ...splash.titleSecond }}>Indoor Golf</h1>
+        <h1 style={splash.title}>{appFullName}</h1>
       </div>
 
       {/* Gold divider line */}
@@ -105,6 +105,8 @@ const splash = {
     flexDirection: 'column',
     alignItems: 'center',
     gap: '2px',
+    maxWidth: '280px',
+    textAlign: 'center',
   },
   title: {
     fontFamily: "'Playfair Display', Georgia, serif",
@@ -112,12 +114,9 @@ const splash = {
     fontWeight: 700,
     color: '#e8c96a',
     letterSpacing: '1px',
-    lineHeight: 1.15,
+    lineHeight: 1.2,
     animation: 'splashTitleIn 0.6s ease 0.55s both',
     textShadow: '0 2px 12px rgba(0,0,0,0.4)',
-  },
-  titleSecond: {
-    animation: 'splashTitleIn 0.6s ease 0.7s both',
   },
   line: {
     height: '2px',
@@ -139,6 +138,7 @@ const splash = {
 
 // ─── Main App ────────────────────────────────────────────────────
 export default function App() {
+  const { locationId, appName, appFullName } = useLocation()
   const [activeTab, setActiveTab]   = useState('reservations')
   const [session, setSession]       = useState(null)
   const [loading, setLoading]       = useState(true)
@@ -146,9 +146,11 @@ export default function App() {
   const [leagueName, setLeagueName] = useState('')
 
   useEffect(() => {
-    supabase.from('league_config').select('name').limit(1).single()
+    if (!locationId) return
+    supabase.from('league_config').select('name')
+      .eq('location_id', locationId).eq('is_active', true).limit(1).single()
       .then(({ data }) => { if (data?.name) setLeagueName(data.name) })
-  }, [])
+  }, [locationId])
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -179,7 +181,7 @@ export default function App() {
   return (
     <>
       {/* Splash — renders on top of the app shell while loading */}
-      {showSplash && <SplashScreen onDone={() => setSplashDone(true)} />}
+      {showSplash && <SplashScreen onDone={() => setSplashDone(true)} appFullName={appFullName} />}
 
       {/* App Shell (rendered in background while splash plays) */}
       <div style={styles.appShell}>
@@ -191,7 +193,7 @@ export default function App() {
               <span style={styles.headerGoldFlag}>⛳</span>
               <div style={styles.headerGoldTextWrap}>
                 <span style={styles.headerGoldTitle}>Reservations</span>
-                <span style={styles.headerGoldSub}>Green Bay Indoor Golf</span>
+                <span style={styles.headerGoldSub}>{appName}</span>
               </div>
             </div>
           </header>
@@ -200,7 +202,7 @@ export default function App() {
             <div style={styles.headerInner}>
               <span style={styles.headerLogo}>⛳</span>
               <div style={styles.headerTitleWrap}>
-                <span style={styles.headerTitle}>Green Bay Indoor Golf</span>
+                <span style={styles.headerTitle}>{appName}</span>
                 {leagueName ? <span style={styles.headerLeague}>{leagueName}</span> : null}
               </div>
               {session && (

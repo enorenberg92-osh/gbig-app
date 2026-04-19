@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
+import { useLocation } from '../../context/LocationContext'
+import ConfirmDialog from '../ConfirmDialog'
 
 const DEFAULT_HOLES = 9
 
@@ -8,6 +10,7 @@ function emptyPars(n) {
 }
 
 export default function AdminCourses() {
+  const { locationId } = useLocation()
   const [courses, setCourses]     = useState([])
   const [loading, setLoading]     = useState(true)
   const [showForm, setShowForm]   = useState(false)
@@ -15,6 +18,7 @@ export default function AdminCourses() {
   const [saving, setSaving]       = useState(false)
   const [toast, setToast]         = useState(null)
   const [expandedId, setExpandedId] = useState(null)
+  const [dialog, setDialog]         = useState(null)
 
   // Form state
   const [courseName, setCourseName] = useState('')
@@ -22,12 +26,13 @@ export default function AdminCourses() {
   const [pars, setPars]             = useState(emptyPars(DEFAULT_HOLES))
   const [startHole, setStartHole]   = useState(1) // 1 for front 9, 10 for back 9
 
-  useEffect(() => { load() }, [])
+  useEffect(() => { if (locationId) load() }, [locationId])
 
   async function load() {
     const { data } = await supabase
       .from('courses')
       .select('*')
+      .eq('location_id', locationId)
       .order('name')
     setCourses(data || [])
     setLoading(false)
@@ -94,7 +99,7 @@ export default function AdminCourses() {
     if (editing) {
       ;({ error } = await supabase.from('courses').update(payload).eq('id', editing.id))
     } else {
-      ;({ error } = await supabase.from('courses').insert(payload))
+      ;({ error } = await supabase.from('courses').insert({ ...payload, location_id: locationId }))
     }
 
     setSaving(false)
@@ -107,15 +112,20 @@ export default function AdminCourses() {
     }
   }
 
-  async function handleDelete(course) {
-    if (!window.confirm(`Delete "${course.name}"? This cannot be undone.`)) return
-    const { error } = await supabase.from('courses').delete().eq('id', course.id)
-    if (error) {
-      showToast('Error: ' + error.message, 'error')
-    } else {
-      showToast('Course deleted.')
-      load()
-    }
+  function handleDelete(course) {
+    setDialog({
+      message: `Delete "${course.name}"? This cannot be undone.`,
+      confirmLabel: 'Delete',
+      onConfirm: async () => {
+        const { error } = await supabase.from('courses').delete().eq('id', course.id)
+        if (error) {
+          showToast('Error: ' + error.message, 'error')
+        } else {
+          showToast('Course deleted.')
+          load()
+        }
+      },
+    })
   }
 
   const parCounts = pars.reduce((acc, p) => {
@@ -128,6 +138,13 @@ export default function AdminCourses() {
 
   return (
     <div style={styles.container}>
+      {dialog && (
+        <ConfirmDialog
+          {...dialog}
+          onConfirm={() => { dialog.onConfirm(); setDialog(null) }}
+          onCancel={() => setDialog(null)}
+        />
+      )}
       {toast && (
         <div style={{ ...styles.toast, background: toast.type === 'error' ? '#c53030' : 'var(--green)' }}>
           {toast.msg}

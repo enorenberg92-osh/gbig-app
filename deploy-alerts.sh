@@ -1,56 +1,75 @@
 #!/bin/bash
 # ─────────────────────────────────────────────────────────
-#  GBIG — Deploy Alerts Edge Function
-#  Run this once from inside the gbig-app folder:
-#    bash deploy-alerts.sh
+#  GBIG — Deploy Alerts Edge Functions
+#
+#  Reads VAPID_* secrets from the environment (never from this file).
+#  Generate new keys with:   npx web-push generate-vapid-keys
+#
+#  Run:
+#    PROJECT_REF=mtuzmasicpcxcvtslevm \
+#    VAPID_PUBLIC_KEY=... \
+#    VAPID_PRIVATE_KEY=... \
+#    VAPID_EMAIL=admin@your-domain.com \
+#      bash deploy-alerts.sh
 # ─────────────────────────────────────────────────────────
+set -euo pipefail
 
-PROJECT_REF="mtuzmasicpcxcvtslevm"
+PROJECT_REF="${PROJECT_REF:-mtuzmasicpcxcvtslevm}"
 
-VAPID_PUBLIC="BMGFvooGfypUObkswA1564UrONV4h3KOKcJcGojmo-v5KlnFwDX2jWpWEWCkKTGiNbHxdo0HHnhGpsk2DxBdzkw"
-VAPID_PRIVATE="ThkvK3QTx5Z_tFH9EH43vKFFIzp-OXoYqeCX8VTDGvQ"
-VAPID_EMAIL="admin@greenbayindoorgolf.com"
+require_var() {
+  if [ -z "${!1:-}" ]; then
+    echo "❌  Missing env var: $1"
+    echo "    See header of this script for required variables."
+    exit 1
+  fi
+}
+
+require_var VAPID_PUBLIC_KEY
+require_var VAPID_PRIVATE_KEY
+require_var VAPID_EMAIL
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  GBIG Alerts — Edge Function Deployment"
+echo "  Alerts — Edge Function Deployment"
+echo "  Project: $PROJECT_REF"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
 # 1. Check Supabase CLI is installed
 if ! command -v supabase &> /dev/null; then
   echo "❌  Supabase CLI not found."
-  echo ""
-  echo "   Install it first, then re-run this script:"
-  echo ""
-  echo "   Mac:     brew install supabase/tap/supabase"
-  echo "   Windows: scoop install supabase"
-  echo "            (or download from https://github.com/supabase/cli/releases)"
-  echo ""
+  echo "    Mac:     brew install supabase/tap/supabase"
+  echo "    Windows: scoop install supabase"
+  echo "             (or download from https://github.com/supabase/cli/releases)"
   exit 1
 fi
 
 echo "✅  Supabase CLI found: $(supabase --version)"
-echo ""
 
 # 2. Login (will open browser if not already logged in)
 echo "▶  Logging in to Supabase..."
 supabase login
-echo ""
 
-# 3. Deploy the function
+# 3. Deploy the functions
 echo "▶  Deploying send-alert function..."
-supabase functions deploy send-alert --project-ref $PROJECT_REF
-echo ""
+supabase functions deploy send-alert --project-ref "$PROJECT_REF"
+
+echo "▶  Deploying send-social-push function..."
+supabase functions deploy send-social-push --project-ref "$PROJECT_REF"
 
 # 4. Set VAPID secrets
 echo "▶  Setting VAPID secrets..."
-supabase secrets set VAPID_PUBLIC_KEY="$VAPID_PUBLIC" --project-ref $PROJECT_REF
-supabase secrets set VAPID_PRIVATE_KEY="$VAPID_PRIVATE" --project-ref $PROJECT_REF
-supabase secrets set VAPID_EMAIL="$VAPID_EMAIL" --project-ref $PROJECT_REF
-echo ""
+supabase secrets set \
+  VAPID_PUBLIC_KEY="$VAPID_PUBLIC_KEY" \
+  VAPID_PRIVATE_KEY="$VAPID_PRIVATE_KEY" \
+  VAPID_EMAIL="$VAPID_EMAIL" \
+  --project-ref "$PROJECT_REF"
 
+echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  ✅  All done! Push notifications are live."
+echo "  ✅  Done! Push notifications are live."
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+echo "Remember: if you rotated the VAPID keys, update VITE_VAPID_PUBLIC_KEY"
+echo "in every location's .env.local and redeploy the web app."
 echo ""

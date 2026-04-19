@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { supabase } from '../../lib/supabase'
+import { useLocation } from '../../context/LocationContext'
 
 // ── Constants ────────────────────────────────────────────────
 const ROW_HEIGHT = 60          // px per hour slot
@@ -49,6 +50,7 @@ const CATEGORY_COLORS = {
 
 // ── Main Component ───────────────────────────────────────────
 export default function AdminBookings() {
+  const { locationId } = useLocation()
   // Date navigation
   const [selectedDate, setSelectedDate] = useState(new Date())
 
@@ -110,13 +112,13 @@ export default function AdminBookings() {
       { data: blocksData },
       { data: profilesData },
     ] = await Promise.all([
-      supabase.from('bays').select('*').eq('is_active', true).order('display_order'),
-      supabase.from('services').select('*').eq('is_active', true).order('display_order'),
+      supabase.from('bays').select('*').eq('location_id', locationId).eq('is_active', true).order('display_order'),
+      supabase.from('services').select('*').eq('location_id', locationId).eq('is_active', true).order('display_order'),
       supabase.from('bay_services').select('bay_id, service_id'),
-      supabase.from('operating_hours').select('*').eq('dow', dow).maybeSingle(),
-      supabase.from('hour_overrides').select('*').eq('override_date', dateStr).maybeSingle(),
-      supabase.from('bookings').select('*, service:services(*), user:profiles(*)').eq('booking_date', dateStr).neq('status', 'cancelled'),
-      supabase.from('bay_blocks').select('*').eq('is_active', true).or(`block_date.eq.${dateStr},and(is_recurring.eq.true,dow.eq.${dow})`),
+      supabase.from('operating_hours').select('*').eq('location_id', locationId).eq('dow', dow).maybeSingle(),
+      supabase.from('hour_overrides').select('*').eq('location_id', locationId).eq('override_date', dateStr).maybeSingle(),
+      supabase.from('bookings').select('*, service:services(*), user:profiles(*)').eq('location_id', locationId).eq('booking_date', dateStr).neq('status', 'cancelled'),
+      supabase.from('bay_blocks').select('*').eq('location_id', locationId).eq('is_active', true).or(`block_date.eq.${dateStr},and(is_recurring.eq.true,dow.eq.${dow})`),
       supabase.from('profiles').select('id, full_name, email, phone').order('full_name'),
     ])
 
@@ -241,15 +243,16 @@ export default function AdminBookings() {
     const endTime = `${pad(endH)}:00`
 
     const { error } = await supabase.from('bookings').insert({
-      user_id: createUser,
-      bay_id: createSlot.bayId,
-      service_id: service.id,
+      user_id:      createUser,
+      bay_id:       createSlot.bayId,
+      service_id:   service.id,
       booking_date: dateStr,
-      start_time: createSlot.time,
-      end_time: endTime,
-      num_players: createPlayers,
-      notes: createNotes || null,
-      status: 'confirmed',
+      start_time:   createSlot.time,
+      end_time:     endTime,
+      num_players:  createPlayers,
+      notes:        createNotes || null,
+      status:       'confirmed',
+      location_id:  locationId,
     })
 
     setSubmitting(false)

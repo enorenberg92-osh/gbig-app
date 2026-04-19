@@ -1,9 +1,12 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
+import { useLocation } from '../../context/LocationContext'
+import ConfirmDialog from '../ConfirmDialog'
 
 const EMPTY_FORM = { title: '', body: '' }
 
 export default function AdminNews() {
+  const { locationId } = useLocation()
   const [posts, setPosts] = useState([])
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
@@ -11,13 +14,15 @@ export default function AdminNews() {
   const [editing, setEditing] = useState(null)
   const [saving, setSaving] = useState(false)
   const [toast, setToast] = useState(null)
+  const [dialog, setDialog] = useState(null)
 
-  useEffect(() => { load() }, [])
+  useEffect(() => { if (locationId) load() }, [locationId])
 
   async function load() {
     const { data } = await supabase
       .from('news_posts')
       .select('*')
+      .eq('location_id', locationId)
       .order('created_at', { ascending: false })
     setPosts(data || [])
     setLoading(false)
@@ -41,7 +46,7 @@ export default function AdminNews() {
     if (editing) {
       ;({ error } = await supabase.from('news_posts').update(payload).eq('id', editing.id))
     } else {
-      ;({ error } = await supabase.from('news_posts').insert(payload))
+      ;({ error } = await supabase.from('news_posts').insert({ ...payload, location_id: locationId }))
     }
 
     setSaving(false)
@@ -56,15 +61,20 @@ export default function AdminNews() {
     }
   }
 
-  async function handleDelete(post) {
-    if (!window.confirm(`Delete "${post.title}"?`)) return
-    const { error } = await supabase.from('news_posts').delete().eq('id', post.id)
-    if (error) {
-      showToast('Error: ' + error.message, 'error')
-    } else {
-      showToast('Post deleted.')
-      load()
-    }
+  function handleDelete(post) {
+    setDialog({
+      message: `Delete "${post.title}"?`,
+      confirmLabel: 'Delete',
+      onConfirm: async () => {
+        const { error } = await supabase.from('news_posts').delete().eq('id', post.id)
+        if (error) {
+          showToast('Error: ' + error.message, 'error')
+        } else {
+          showToast('Post deleted.')
+          load()
+        }
+      },
+    })
   }
 
   function startEdit(post) {
@@ -77,6 +87,13 @@ export default function AdminNews() {
 
   return (
     <div style={styles.container}>
+      {dialog && (
+        <ConfirmDialog
+          {...dialog}
+          onConfirm={() => { dialog.onConfirm(); setDialog(null) }}
+          onCancel={() => setDialog(null)}
+        />
+      )}
       {toast && (
         <div style={{ ...styles.toast, background: toast.type === 'error' ? '#c53030' : 'var(--green)' }}>
           {toast.msg}

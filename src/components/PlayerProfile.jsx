@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { supabase } from '../lib/supabase'
+import { useLocation } from '../context/LocationContext'
 
 // ── Crop Modal ────────────────────────────────────────────────────────────────
 function CropModal({ file, onConfirm, onCancel }) {
@@ -120,6 +121,7 @@ const cs = {
 // playerId prop: if provided (admin view), load that player directly.
 // Otherwise fall back to the logged-in user's player record.
 export default function PlayerProfile({ session, onBack, playerId: adminPlayerId }) {
+  const { locationId } = useLocation()
   const [loading, setLoading]       = useState(true)
   const [player, setPlayer]         = useState(null)
   const [team, setTeam]             = useState(null)
@@ -135,7 +137,7 @@ export default function PlayerProfile({ session, onBack, playerId: adminPlayerId
   const [cropFile, setCropFile] = useState(null)
   const fileInputRef = useRef(null)
 
-  useEffect(() => { load() }, [])
+  useEffect(() => { if (locationId) load() }, [locationId])
 
   async function load() {
     try {
@@ -164,11 +166,12 @@ export default function PlayerProfile({ session, onBack, playerId: adminPlayerId
 
       // 2. Load teams, all players, and this player's scores in parallel
       const [teamsRes, allPlayersRes, scoresRes] = await Promise.all([
-        supabase.from('teams').select('id, name, player1_id, player2_id'),
-        supabase.from('players').select('id, first_name, last_name, name, handicap'),
+        supabase.from('teams').select('id, name, player1_id, player2_id').eq('location_id', locationId),
+        supabase.from('players').select('id, first_name, last_name, name, handicap').eq('location_id', locationId),
         supabase.from('scores')
           .select('id, event_id, gross_total, net_total, hole_scores, handicap_used')
-          .eq('player_id', playerRow.id),
+          .eq('player_id', playerRow.id)
+          .eq('location_id', locationId),
       ])
 
       // Team + teammate

@@ -1,5 +1,6 @@
 import React, { useState, useRef } from 'react'
 import { supabase } from '../../lib/supabase'
+import { useLocation } from '../../context/LocationContext'
 
 // ── CSV helpers ───────────────────────────────────────────────────────────────
 
@@ -104,6 +105,7 @@ function parseCSV(text) {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function AdminImport() {
+  const { locationId } = useLocation()
   const [rows, setRows]         = useState([])
   const [selected, setSelected] = useState(new Set())
   const [importing, setImporting] = useState(false)
@@ -163,6 +165,7 @@ export default function AdminImport() {
           handicap:         row.p1.handicap,
           in_skins:         false,
           handicap_locked:  false,
+          location_id:      locationId,
         }
         const { data: p1Data, error: p1Err } = await supabase
           .from('players').insert(p1Payload).select('id').single()
@@ -183,6 +186,7 @@ export default function AdminImport() {
             handicap:        row.p2.handicap,
             in_skins:        false,
             handicap_locked: false,
+            location_id:     locationId,
           }
           const { data: p2Data, error: p2Err } = await supabase
             .from('players').insert(p2Payload).select('id').single()
@@ -197,7 +201,7 @@ export default function AdminImport() {
         // ── Create Team ──
         const { error: teamErr } = await supabase
           .from('teams')
-          .insert({ name: row.teamName, player1_id: p1Data.id, player2_id: p2Id })
+          .insert({ name: row.teamName, player1_id: p1Data.id, player2_id: p2Id, location_id: locationId })
 
         if (teamErr) {
           errors.push({ team: row.teamName, msg: `Team: ${teamErr.message}` })

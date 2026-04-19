@@ -1,22 +1,26 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
+import { useLocation } from '../context/LocationContext'
 
 export default function NewsPage() {
+  const { locationId } = useLocation()
   const [posts, setPosts] = useState([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    if (!locationId) return
     async function fetchNews() {
       const { data, error } = await supabase
         .from('news_posts')
         .select('*')
+        .eq('location_id', locationId)
         .order('created_at', { ascending: false })
 
       if (!error) setPosts(data || [])
       setLoading(false)
     }
     fetchNews()
-  }, [])
+  }, [locationId])
 
   return (
     <div style={styles.container}>

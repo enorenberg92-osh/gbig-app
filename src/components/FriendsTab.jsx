@@ -1,14 +1,28 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import PlayerProfile from './PlayerProfile'
+import { useLocation } from '../context/LocationContext'
 
 // ── Social push helper ────────────────────────────────────────────────────────
 // Fire-and-forget: sends a targeted push notification to one player's devices.
 // Never throws — social pings are best-effort and should never break UI flows.
+const SOCIAL_PUSH_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-social-push`
+
 async function sendSocialPush(targetPlayerId, title, body) {
   try {
-    await supabase.functions.invoke('send-social-push', {
-      body: { target_player_id: targetPlayerId, title, body },
+    // Forward the caller's access token so the Edge Function can verify
+    // both caller and target belong to the same location.
+    const { data: { session } } = await supabase.auth.getSession()
+    const accessToken = session?.access_token
+    if (!accessToken) return // best-effort; silently skip for signed-out flows
+
+    await fetch(SOCIAL_PUSH_URL, {
+      method:  'POST',
+      headers: {
+        'Content-Type':  'application/json',
+        'Authorization': `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({ target_player_id: targetPlayerId, title, body }),
     })
   } catch (e) {
     console.warn('sendSocialPush failed (non-fatal):', e)
@@ -41,6 +55,7 @@ function PlayerAvatar({ player, size = 38 }) {
 
 // ── Main component ────────────────────────────────────────────────────────────
 export default function FriendsTab({ session }) {
+  const { locationId } = useLocation()
   const [myPlayer, setMyPlayer]           = useState(null)
   const [following, setFollowing]         = useState([])   // players I follow
   const [followers, setFollowers]         = useState([])   // players who follow me
@@ -53,7 +68,7 @@ export default function FriendsTab({ session }) {
   const [loading, setLoading]             = useState(true)
   const [toast, setToast]                 = useState(null)
 
-  useEffect(() => { loadMyPlayer() }, [session])
+  useEffect(() => { if (locationId) loadMyPlayer() }, [session, locationId])
 
   async function loadMyPlayer() {
     if (!session?.user?.id) { setLoading(false); return }
@@ -61,6 +76,7 @@ export default function FriendsTab({ session }) {
       .from('players')
       .select('id, name, first_name, last_name')
       .eq('user_id', session.user.id)
+      .eq('location_id', locationId)
       .maybeSingle()
     setMyPlayer(data || null)
     if (data) await loadFollows(data.id)
@@ -78,10 +94,10 @@ export default function FriendsTab({ session }) {
 
     const [fwingRes, fwerRes] = await Promise.all([
       followingIds.length
-        ? supabase.from('players').select('id, name, first_name, last_name, handicap, avatar_url').in('id', followingIds)
+        ? supabase.from('players').select('id, name, first_name, last_name, handicap, avatar_url').eq('location_id', locationId).in('id', followingIds)
         : { data: [] },
       followerIds.length
-        ? supabase.from('players').select('id, name, first_name, last_name, handicap, avatar_url').in('id', followerIds)
+        ? supabase.from('players').select('id, name, first_name, last_name, handicap, avatar_url').eq('location_id', locationId).in('id', followerIds)
         : { data: [] },
     ])
 
@@ -157,6 +173,7 @@ export default function FriendsTab({ session }) {
       const { data } = await supabase
         .from('players')
         .select('id, name, first_name, last_name, handicap, avatar_url')
+        .eq('location_id', locationId)
         .or(`name.ilike.%${searchQuery}%,first_name.ilike.%${searchQuery}%,last_name.ilike.%${searchQuery}%`)
         .neq('id', myPlayer?.id || '00000000-0000-0000-0000-000000000000')
         .limit(8)
@@ -164,7 +181,7 @@ export default function FriendsTab({ session }) {
       setSearching(false)
     }, 300)
     return () => clearTimeout(timer)
-  }, [searchQuery, myPlayer])
+  }, [searchQuery, myPlayer, locationId])
 
   // ── Full-screen views ──────────────────────────────────────────────────────
   if (loading) return <div style={st.loading}>Loading…</div>

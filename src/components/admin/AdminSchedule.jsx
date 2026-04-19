@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { supabase } from '../../lib/supabase'
+import { useLocation } from '../../context/LocationContext'
+import ConfirmDialog from '../ConfirmDialog'
 
 const EMPTY_FORM = {
   name: '',
@@ -15,6 +17,7 @@ const EMPTY_FORM = {
 const STATUS_OPTIONS = ['open', 'closed', 'cancelled']
 
 export default function AdminSchedule() {
+  const { locationId } = useLocation()
   const [events, setEvents] = useState([])
   const [courses, setCourses] = useState([])
   const [league, setLeague] = useState(null)
@@ -24,9 +27,10 @@ export default function AdminSchedule() {
   const [editing, setEditing] = useState(null)
   const [saving, setSaving] = useState(false)
   const [toast, setToast] = useState(null)
+  const [dialog, setDialog] = useState(null)
   const formRef = useRef(null)
 
-  useEffect(() => { loadAll() }, [])
+  useEffect(() => { if (locationId) loadAll() }, [locationId])
 
   // Scroll the edit form into view whenever it opens
   useEffect(() => {
@@ -40,14 +44,17 @@ export default function AdminSchedule() {
       supabase
         .from('events')
         .select('*, courses(id, name)')
+        .eq('location_id', locationId)
         .order('week_number', { ascending: true, nullsFirst: false }),
       supabase
         .from('courses')
         .select('id, name')
+        .eq('location_id', locationId)
         .order('name'),
       supabase
         .from('league_config')
         .select('*')
+        .eq('location_id', locationId)
         .limit(1)
         .single(),
     ])
@@ -82,7 +89,7 @@ export default function AdminSchedule() {
     if (editing) {
       ;({ error } = await supabase.from('events').update(payload).eq('id', editing.id))
     } else {
-      ;({ error } = await supabase.from('events').insert(payload))
+      ;({ error } = await supabase.from('events').insert({ ...payload, location_id: locationId }))
     }
 
     setSaving(false)
@@ -121,15 +128,20 @@ export default function AdminSchedule() {
     }
   }
 
-  async function handleDelete(event) {
-    if (!window.confirm(`Delete "${event.name}"? All scores for this event will also be deleted.`)) return
-    const { error } = await supabase.from('events').delete().eq('id', event.id)
-    if (error) {
-      showToast('Error: ' + error.message, 'error')
-    } else {
-      showToast('Event deleted.')
-      loadAll()
-    }
+  function handleDelete(event) {
+    setDialog({
+      message: `Delete "${event.name}"? All scores for this event will also be deleted.`,
+      confirmLabel: 'Delete',
+      onConfirm: async () => {
+        const { error } = await supabase.from('events').delete().eq('id', event.id)
+        if (error) {
+          showToast('Error: ' + error.message, 'error')
+        } else {
+          showToast('Event deleted.')
+          loadAll()
+        }
+      },
+    })
   }
 
   function startEdit(event) {
@@ -186,6 +198,13 @@ export default function AdminSchedule() {
 
   return (
     <div style={styles.container}>
+      {dialog && (
+        <ConfirmDialog
+          {...dialog}
+          onConfirm={() => { dialog.onConfirm(); setDialog(null) }}
+          onCancel={() => setDialog(null)}
+        />
+      )}
       {toast && (
         <div style={{ ...styles.toast, background: toast.type === 'error' ? '#c53030' : 'var(--green)' }}>
           {toast.msg}

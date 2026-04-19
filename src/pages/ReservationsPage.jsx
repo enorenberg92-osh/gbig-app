@@ -1,10 +1,12 @@
 import React from 'react'
 
+const BOOKING_URL = import.meta.env.VITE_BOOKING_URL || 'https://greenbayindoorgolf.com/app-page-booking/'
+
 export default function ReservationsPage() {
   return (
     <div style={styles.container}>
       <iframe
-        src="https://greenbayindoorgolf.com/app-page-booking/"
+        src={BOOKING_URL}
         style={styles.iframe}
         title="Reserve a Bay"
         frameBorder="0"

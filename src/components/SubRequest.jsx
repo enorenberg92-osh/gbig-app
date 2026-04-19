@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
+import { useLocation } from '../context/LocationContext'
 
 /**
  * SubRequest
@@ -9,6 +10,7 @@ import { supabase } from '../lib/supabase'
  * The admin reviews and approves/denies in AdminSubs.
  */
 export default function SubRequest({ session, onBack }) {
+  const { locationId } = useLocation()
   const [loading, setLoading]   = useState(true)
   const [player, setPlayer]     = useState(null)
   const [events, setEvents]     = useState([])
@@ -23,7 +25,7 @@ export default function SubRequest({ session, onBack }) {
   const EMPTY_FORM = { event_id: '', sub_first_name: '', sub_last_name: '', sub_email: '', sub_phone: '', sub_handicap: '', sub_player_id: null }
   const [form, setForm]         = useState(EMPTY_FORM)
 
-  useEffect(() => { load() }, [])
+  useEffect(() => { if (locationId) load() }, [locationId])
 
   async function load() {
     // Find player record
@@ -40,6 +42,7 @@ export default function SubRequest({ session, onBack }) {
     const { data: evts } = await supabase
       .from('events')
       .select('id, name, start_date')
+      .eq('location_id', locationId)
       .eq('status', 'open')
       .order('start_date', { ascending: true })
 
@@ -59,6 +62,7 @@ export default function SubRequest({ session, onBack }) {
     const { data: subPlayers } = await supabase
       .from('players')
       .select('id, first_name, last_name, name, handicap, email')
+      .eq('location_id', locationId)
       .eq('is_sub', true)
       .order('last_name', { ascending: true })
 
@@ -85,8 +89,9 @@ export default function SubRequest({ session, onBack }) {
       sub_email:      form.sub_email.trim(),
       sub_phone:      form.sub_phone.trim(),
       sub_handicap:   parseFloat(form.sub_handicap),
-      sub_player_id:  form.sub_player_id || null,  // link to known sub profile if selected
+      sub_player_id:  form.sub_player_id || null,
       status:         'pending',
+      location_id:    locationId,
     })
 
     setSaving(false)

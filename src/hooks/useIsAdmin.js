@@ -1,30 +1,45 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
+import { useLocation } from '../context/LocationContext'
 
+/**
+ * Returns whether the current session user is an admin (or super_admin)
+ * for THIS deployment's location.
+ */
 export function useIsAdmin(session) {
-  const [isAdmin, setIsAdmin] = useState(false)
-  const [checking, setChecking] = useState(true)
+  const { locationId } = useLocation()
+  const [isAdmin, setIsAdmin]           = useState(false)
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false)
+  const [checking, setChecking]         = useState(true)
 
   useEffect(() => {
     if (!session?.user) {
       setIsAdmin(false)
+      setIsSuperAdmin(false)
       setChecking(false)
       return
     }
 
     async function checkAdmin() {
       const { data, error } = await supabase
-        .from('admins')
-        .select('id')
+        .from('location_admins')
+        .select('role')
         .eq('user_id', session.user.id)
+        .eq('location_id', locationId)
         .maybeSingle()
 
-      setIsAdmin(!error && !!data)
+      if (!error && data) {
+        setIsAdmin(true)
+        setIsSuperAdmin(data.role === 'super_admin')
+      } else {
+        setIsAdmin(false)
+        setIsSuperAdmin(false)
+      }
       setChecking(false)
     }
 
     checkAdmin()
-  }, [session])
+  }, [session, locationId])
 
-  return { isAdmin, checking }
+  return { isAdmin, isSuperAdmin, checking }
 }

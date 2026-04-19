@@ -1,22 +1,26 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
+import { useLocation } from '../context/LocationContext'
 
 export default function EventsPage() {
+  const { locationId } = useLocation()
   const [events, setEvents] = useState([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    if (!locationId) return
     async function fetchEvents() {
       const { data, error } = await supabase
         .from('app_events')
         .select('*')
+        .eq('location_id', locationId)
         .order('event_date', { ascending: true })
 
       if (!error) setEvents(data || [])
       setLoading(false)
     }
     fetchEvents()
-  }, [])
+  }, [locationId])
 
   return (
     <div style={styles.container}>

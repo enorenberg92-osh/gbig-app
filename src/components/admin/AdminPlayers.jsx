@@ -2,11 +2,14 @@ import React, { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import PlayerProfile from '../PlayerProfile'
 import AdminImport from './AdminImport'
+import { useLocation } from '../../context/LocationContext'
+import ConfirmDialog from '../ConfirmDialog'
 
 const EMPTY_PLAYER_FORM = { name: '', email: '', handicap: '', in_skins: false, handicap_locked: false, league_password: 'password' }
 const EMPTY_TEAM_FORM   = { name: '', player1_id: '', player2_id: '' }
 
 export default function AdminPlayers() {
+  const { locationId } = useLocation()
   const [players, setPlayers]         = useState([])
   const [teams, setTeams]             = useState([])
   const [loading, setLoading]         = useState(true)
@@ -18,16 +21,17 @@ export default function AdminPlayers() {
   const [editingTeam, setEditingTeam] = useState(null)
   const [saving, setSaving]           = useState(false)
   const [toast, setToast]             = useState(null)
+  const [dialog, setDialog]           = useState(null)
   const [search, setSearch]           = useState('')
   const [viewingProfileId, setViewingProfileId] = useState(null)
   const [activeView, setActiveView] = useState('players') // 'players' | 'import'
 
-  useEffect(() => { loadAll() }, [])
+  useEffect(() => { if (locationId) loadAll() }, [locationId])
 
   async function loadAll() {
     const [{ data: plrs, error: plrErr }, { data: tms }] = await Promise.all([
-      supabase.from('players').select('*').order('name'),
-      supabase.from('teams').select('id, name, player1_id, player2_id').order('created_at', { ascending: true }),
+      supabase.from('players').select('*').eq('location_id', locationId).order('name'),
+      supabase.from('teams').select('id, name, player1_id, player2_id').eq('location_id', locationId).order('created_at', { ascending: true }),
     ])
     if (plrErr) console.error('Players load error:', plrErr)
     setPlayers(plrs || [])
@@ -65,7 +69,7 @@ export default function AdminPlayers() {
       // Insert and get the new player's ID back so we can create their account
       const { data: newPlayer, error: insertError } = await supabase
         .from('players')
-        .insert(payload)
+        .insert({ ...payload, location_id: locationId })
         .select('id')
         .single()
 
@@ -74,18 +78,36 @@ export default function AdminPlayers() {
 
       // Automatically create a login account if an email was provided
       if (payload.email && newPlayer?.id) {
-        const { data: accountData, error: accountError } = await supabase.functions.invoke('create-player-account', {
-          body: {
-            player_id: newPlayer.id,
-            email:     payload.email,
-            password:  payload.league_password || 'password',
-          },
-        })
-        if (accountError || accountData?.error) {
-          // Account creation failed — player record still saved, surface the issue
-          showToast(`Player added, but account creation failed: ${accountData?.error || accountError?.message}`, 'error')
-        } else {
-          showToast(`✅ Player added & account created! They can sign in now.`)
+        try {
+          // Forward the caller's access token so the Edge Function verifies
+          // we're an admin for this player's location before creating anything.
+          const { data: { session } } = await supabase.auth.getSession()
+          const accessToken = session?.access_token
+          if (!accessToken) throw new Error('You are not signed in.')
+
+          const fnRes = await fetch(
+            import.meta.env.VITE_SUPABASE_URL + '/functions/v1/create-player-account',
+            {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer ' + accessToken,
+              },
+              body: JSON.stringify({
+                player_id: newPlayer.id,
+                email:     payload.email,
+                password:  payload.league_password || 'password',
+              }),
+            }
+          )
+          const fnBody = await fnRes.json()
+          if (!fnRes.ok || fnBody?.error) {
+            showToast(`Player added, but account creation failed: ${fnBody?.error || fnRes.status}`, 'error')
+          } else {
+            showToast(`✅ Player added & account created! They can sign in now.`)
+          }
+        } catch (e) {
+          showToast(`Player added, but account creation failed: ${e.message}`, 'error')
         }
       } else {
         showToast('Player added! (No email — add one later to create a login.)')
@@ -96,57 +118,71 @@ export default function AdminPlayers() {
     loadAll()
   }
 
-  async function handleDeletePlayer(player) {
-    if (!window.confirm(`Remove ${player.name}? This cannot be undone.`)) return
-    // Unlink from team
-    if (player.team_id) {
-      const team = teams.find(t => t.id === player.team_id)
-      if (team) {
-        const otherField = team.player1_id === player.id ? 'player1_id' : 'player2_id'
-        await supabase.from('teams').update({ [otherField]: null }).eq('id', team.id)
-      }
-      await supabase.from('players').update({ team_id: null }).eq('id', player.id)
-    }
-    const { error } = await supabase.from('players').delete().eq('id', player.id)
-    if (error) { showToast('Error: ' + error.message, 'error'); return }
-    showToast(`${player.name} removed.`)
-    loadAll()
+  function handleDeletePlayer(player) {
+    setDialog({
+      message: `Remove ${player.name}? This cannot be undone.`,
+      confirmLabel: 'Remove',
+      onConfirm: async () => {
+        // Unlink from team
+        if (player.team_id) {
+          const team = teams.find(t => t.id === player.team_id)
+          if (team) {
+            const otherField = team.player1_id === player.id ? 'player1_id' : 'player2_id'
+            await supabase.from('teams').update({ [otherField]: null }).eq('id', team.id)
+          }
+          await supabase.from('players').update({ team_id: null }).eq('id', player.id)
+        }
+        const { error } = await supabase.from('players').delete().eq('id', player.id)
+        if (error) { showToast('Error: ' + error.message, 'error'); return }
+        showToast(`${player.name} removed.`)
+        loadAll()
+      },
+    })
   }
 
-  async function handleCreateAccount(player) {
+  function handleCreateAccount(player) {
     if (!player.email) {
       showToast('Add an email address for this player first.', 'error'); return
     }
-    if (!window.confirm(
-      `Create a login account for ${player.name}?\n\nEmail: ${player.email}\nPassword: ${player.league_password || 'password'}\n\nThey can sign in immediately after this.`
-    )) return
+    setDialog({
+      message: `Create a login account for ${player.name}?\n\nEmail: ${player.email}\nPassword: ${player.league_password || 'password'}\n\nThey can sign in immediately after this.`,
+      confirmLabel: 'Create Account',
+      destructive: false,
+      onConfirm: async () => {
+        try {
+          // Forward the caller's access token so the Edge Function can verify
+          // we're an admin for this player's location.
+          const { data: { session } } = await supabase.auth.getSession()
+          const accessToken = session?.access_token
+          if (!accessToken) throw new Error('You are not signed in.')
 
-    const { data, error } = await supabase.functions.invoke('create-player-account', {
-      body: {
-        player_id: player.id,
-        email:     player.email,
-        password:  player.league_password || 'password',
+          const fnRes = await fetch(
+            import.meta.env.VITE_SUPABASE_URL + '/functions/v1/create-player-account',
+            {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer ' + accessToken,
+              },
+              body: JSON.stringify({
+                player_id: player.id,
+                email:     player.email,
+                password:  player.league_password || 'password',
+              }),
+            }
+          )
+          const fnBody = await fnRes.json()
+          if (!fnRes.ok || fnBody?.error) {
+            showToast('Error: ' + (fnBody?.error || fnRes.status), 'error')
+          } else {
+            showToast(`✅ Account created for ${player.name}! They can now sign in.`)
+            loadAll()
+          }
+        } catch (e) {
+          showToast('Error: ' + e.message, 'error')
+        }
       },
     })
-
-    // Extract the real error message from the function response body if possible
-    let errMsg = null
-    if (error) {
-      try {
-        const body = await error.context?.json()
-        errMsg = body?.error || error.message
-      } catch {
-        errMsg = error.message
-      }
-    }
-    if (data?.error) errMsg = data.error
-
-    if (errMsg) {
-      showToast('Error: ' + errMsg, 'error')
-    } else {
-      showToast(`✅ Account created for ${player.name}! They can now sign in.`)
-      loadAll()
-    }
   }
 
   function startEditPlayer(player) {
@@ -192,7 +228,7 @@ export default function AdminPlayers() {
         if (added.length) await supabase.from('players').update({ team_id: editingTeam.id }).in('id', added)
       }
     } else {
-      ;({ error, data } = await supabase.from('teams').insert(payload).select().single())
+      ;({ error, data } = await supabase.from('teams').insert({ ...payload, location_id: locationId }).select().single())
       if (!error && data) {
         const toAssign = [payload.player1_id, payload.player2_id].filter(Boolean)
         if (toAssign.length) await supabase.from('players').update({ team_id: data.id }).in('id', toAssign)
@@ -206,16 +242,21 @@ export default function AdminPlayers() {
     loadAll()
   }
 
-  async function handleDeleteTeam(team) {
+  function handleDeleteTeam(team) {
     const p1 = players.find(p => p.id === team.player1_id)
     const p2 = players.find(p => p.id === team.player2_id)
     const names = [p1?.name, p2?.name].filter(Boolean).join(' & ')
-    if (!window.confirm(`Delete Team ${teamNumber(team)} "${team.name}"${names ? ` (${names})` : ''}? Players will become unassigned.`)) return
-    const ids = [team.player1_id, team.player2_id].filter(Boolean)
-    if (ids.length) await supabase.from('players').update({ team_id: null }).in('id', ids)
-    await supabase.from('teams').delete().eq('id', team.id)
-    showToast('Team deleted.')
-    loadAll()
+    setDialog({
+      message: `Delete Team ${teamNumber(team)} "${team.name}"${names ? ` (${names})` : ''}? Players will become unassigned.`,
+      confirmLabel: 'Delete Team',
+      onConfirm: async () => {
+        const ids = [team.player1_id, team.player2_id].filter(Boolean)
+        if (ids.length) await supabase.from('players').update({ team_id: null }).in('id', ids)
+        await supabase.from('teams').delete().eq('id', team.id)
+        showToast('Team deleted.')
+        loadAll()
+      },
+    })
   }
 
   function startEditTeam(team) {
@@ -296,6 +337,13 @@ export default function AdminPlayers() {
 
   return (
     <div style={styles.container}>
+      {dialog && (
+        <ConfirmDialog
+          {...dialog}
+          onConfirm={() => { dialog.onConfirm(); setDialog(null) }}
+          onCancel={() => setDialog(null)}
+        />
+      )}
       {/* Sub-nav toggle */}
       <div style={styles.subNav}>
         <button

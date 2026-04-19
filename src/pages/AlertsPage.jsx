@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
+import { useLocation } from '../context/LocationContext'
 
 const VAPID_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY
 
@@ -23,6 +24,7 @@ function timeAgo(dateStr) {
 }
 
 export default function AlertsPage({ session }) {
+  const { locationId } = useLocation()
   const [alerts, setAlerts]             = useState([])
   const [loading, setLoading]           = useState(true)
   const [notifStatus, setNotifStatus]   = useState('unknown') // 'unknown'|'unsupported'|'denied'|'prompt'|'subscribed'
@@ -30,24 +32,32 @@ export default function AlertsPage({ session }) {
 
   // ── Load past alerts ─────────────────────────────────────────
   useEffect(() => {
+    if (!locationId) return
     supabase
       .from('alerts')
       .select('*')
+      .eq('location_id', locationId)
       .order('created_at', { ascending: false })
       .limit(50)
       .then(({ data }) => { setAlerts(data || []); setLoading(false) })
-  }, [])
+  }, [locationId])
 
-  // ── Realtime: new alerts appear instantly ────────────────────
+  // ── Realtime: new alerts appear instantly (scoped to this location) ─────────
   useEffect(() => {
+    if (!locationId) return
     const channel = supabase
-      .channel('alerts-feed')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'alerts' }, payload => {
+      .channel(`alerts-feed-${locationId}`)
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'alerts',
+        filter: `location_id=eq.${locationId}`,
+      }, payload => {
         setAlerts(prev => [payload.new, ...prev])
       })
       .subscribe()
     return () => supabase.removeChannel(channel)
-  }, [])
+  }, [locationId])
 
   // ── Check current notification permission state ──────────────
   const checkStatus = useCallback(async () => {
@@ -78,10 +88,11 @@ export default function AlertsPage({ session }) {
       })
       const json = sub.toJSON()
       await supabase.from('push_subscriptions').upsert({
-        endpoint: json.endpoint,
-        p256dh:   json.keys.p256dh,
-        auth_key: json.keys.auth,
-        user_id:  session?.user?.id || null,
+        endpoint:    json.endpoint,
+        p256dh:      json.keys.p256dh,
+        auth_key:    json.keys.auth,
+        user_id:     session?.user?.id || null,
+        location_id: locationId,
       }, { onConflict: 'endpoint' })
       setNotifStatus('subscribed')
     } catch (err) {

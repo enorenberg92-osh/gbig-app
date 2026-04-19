@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
+import { useLocation } from '../../context/LocationContext'
 
 const EDGE_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-alert`
-const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
 
 function timeAgo(dateStr) {
   const diff  = Date.now() - new Date(dateStr).getTime()
@@ -17,6 +17,7 @@ function timeAgo(dateStr) {
 }
 
 export default function AdminAlerts() {
+  const { locationId, appName } = useLocation()
   const [alerts, setAlerts]       = useState([])
   const [subCount, setSubCount]   = useState(null)
   const [loading, setLoading]     = useState(true)
@@ -32,27 +33,33 @@ export default function AdminAlerts() {
 
   const load = async () => {
     const [{ data: alertRows }, { count }] = await Promise.all([
-      supabase.from('alerts').select('*').order('created_at', { ascending: false }).limit(20),
-      supabase.from('push_subscriptions').select('*', { count: 'exact', head: true }),
+      supabase.from('alerts').select('*').eq('location_id', locationId).order('created_at', { ascending: false }).limit(20),
+      supabase.from('push_subscriptions').select('*', { count: 'exact', head: true }).eq('location_id', locationId),
     ])
     setAlerts(alertRows || [])
     setSubCount(count ?? 0)
     setLoading(false)
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => { if (locationId) load() }, [locationId])
 
   const handleSend = async () => {
     if (!title.trim() || !body.trim()) { showToast('Title and message are both required.', 'error'); return }
     setSending(true)
     try {
+      // Forward the caller's access token so the Edge Function can resolve
+      // the caller's location from their `location_admins` row.
+      const { data: { session } } = await supabase.auth.getSession()
+      const accessToken = session?.access_token
+      if (!accessToken) throw new Error('You are not signed in.')
+
       const res = await fetch(EDGE_URL, {
         method:  'POST',
         headers: {
           'Content-Type':  'application/json',
-          'Authorization': `Bearer ${ANON_KEY}`,
+          'Authorization': `Bearer ${accessToken}`,
         },
-        body: JSON.stringify({ title: title.trim(), body: body.trim(), sentBy: 'GBIG Admin' }),
+        body: JSON.stringify({ title: title.trim(), body: body.trim(), sentBy: `${appName} Admin` }),
       })
       const json = await res.json()
       if (!res.ok) throw new Error(json.error || 'Send failed')
@@ -127,7 +134,7 @@ export default function AdminAlerts() {
             <div style={styles.previewCard}>
               <div style={styles.previewHeader}>
                 <span style={styles.previewIcon}>⛳</span>
-                <span style={styles.previewApp}>Green Bay Indoor Golf</span>
+                <span style={styles.previewApp}>{appName}</span>
                 <span style={styles.previewTime}>now</span>
               </div>
               <p style={styles.previewTitle}>{title || '—'}</p>
