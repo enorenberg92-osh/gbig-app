@@ -1,4 +1,5 @@
 import React, { useState, useRef } from 'react'
+import { Check } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useLocation } from '../../context/LocationContext'
 
@@ -300,7 +301,7 @@ export default function AdminImport() {
               >
                 <div style={styles.previewCheck}>
                   <div style={{ ...styles.checkbox, ...(isSelected ? styles.checkboxChecked : {}) }}>
-                    {isSelected && '✓'}
+                    {isSelected && <Check size={13} strokeWidth={3} color="#fff" />}
                   </div>
                 </div>
                 <div style={styles.previewContent}>

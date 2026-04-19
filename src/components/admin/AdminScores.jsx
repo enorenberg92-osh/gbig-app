@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import { AlertTriangle } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { recalcPlayerHandicap } from '../../lib/handicapCalc'
 import { useLocation } from '../../context/LocationContext'
@@ -538,7 +539,14 @@ function TeamRow({ team, holePars, isEditing, holeScores, saving, subMap = {}, o
                         )}
                         <div style={trStyles.playerHcp}>
                           HCP {hcp ?? '—'}
-                          {sName && ' ⚠️'}
+                          {sName && (
+                            <AlertTriangle
+                              size={12}
+                              strokeWidth={2.25}
+                              color="#b45309"
+                              style={{ verticalAlign: '-1px', marginLeft: 4 }}
+                            />
+                          )}
                         </div>
                       </td>
                       {holePars.map((par, i) => {

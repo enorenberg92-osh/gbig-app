@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import { AlertTriangle, Target } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useLocation } from '../../context/LocationContext'
 
@@ -227,8 +228,14 @@ export default function AdminSkins({ activeEventId = null, onEventChange = () =>
         {/* Skins players note */}
         <div style={st.skinsNote}>
           {skinsPlayers.length === 0
-            ? '⚠️ No players are marked as "In Skins" — go to Players tab to enroll them.'
-            : `🎯 ${skinsPlayers.length} player${skinsPlayers.length !== 1 ? 's' : ''} enrolled in skins: ${skinsPlayers.map(p => p.first_name || p.name).join(', ')}`
+            ? <>
+                <AlertTriangle size={15} strokeWidth={2.25} style={{ verticalAlign: '-3px', marginRight: 6, color: '#b45309' }} />
+                No players are marked as "In Skins" — go to Players tab to enroll them.
+              </>
+            : <>
+                <Target size={15} strokeWidth={2} style={{ verticalAlign: '-3px', marginRight: 6, color: 'var(--green-dark)' }} />
+                {skinsPlayers.length} player{skinsPlayers.length !== 1 ? 's' : ''} enrolled in skins: {skinsPlayers.map(p => p.first_name || p.name).join(', ')}
+              </>
           }
         </div>
       </div>
@@ -239,13 +246,17 @@ export default function AdminSkins({ activeEventId = null, onEventChange = () =>
         onClick={runSkinReport}
         disabled={calculating || !selectedEvent}
       >
-        {calculating ? '⏳ Calculating…' : '🎯 Run Skin Report'}
+        {calculating
+          ? 'Calculating…'
+          : <><Target size={16} strokeWidth={2.25} style={{ verticalAlign: '-3px', marginRight: 8 }} />Run Skin Report</>}
       </button>
 
       {/* Results */}
       {skinResults === null && !calculating && (
         <div style={st.promptCard}>
-          <div style={{ fontSize: '36px', marginBottom: '10px' }}>🎯</div>
+          <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '10px' }}>
+            <Target size={44} strokeWidth={1.75} color="var(--green)" />
+          </div>
           <div style={st.promptTitle}>Ready to calculate</div>
           <div style={st.promptSub}>
             Select an event above and click <strong>Run Skin Report</strong> to see who won each hole.

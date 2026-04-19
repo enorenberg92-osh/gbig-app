@@ -1,4 +1,8 @@
 import React, { useState, useEffect } from 'react'
+import {
+  Users, Handshake, Calendar, Zap,
+  CheckCircle2, Square, Check, Clipboard, Mail, Lock,
+} from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useLocation } from '../../context/LocationContext'
 import ConfirmDialog from '../ConfirmDialog'
@@ -261,13 +265,15 @@ export default function AdminDashboard({ onWeekClosed = () => {} }) {
       {/* ── Stat strip ─────────────────────────────────────────────────────── */}
       <div style={s.statGrid}>
         {[
-          { label: 'Players',       value: stats.players, emoji: '👤' },
-          { label: 'Teams',         value: stats.teams,   emoji: '🤝' },
-          { label: 'Total Events',  value: stats.events,  emoji: '📅' },
-          { label: 'Active Round',  value: openEvent ? 1 : 0, emoji: '🟢' },
-        ].map(({ label, value, emoji }) => (
+          { label: 'Players',       value: stats.players, Icon: Users },
+          { label: 'Teams',         value: stats.teams,   Icon: Handshake },
+          { label: 'Total Events',  value: stats.events,  Icon: Calendar },
+          { label: 'Active Round',  value: openEvent ? 1 : 0, Icon: Zap },
+        ].map(({ label, value, Icon }) => (
           <div key={label} style={s.statCard}>
-            <span style={s.statEmoji}>{emoji}</span>
+            <span style={s.statIcon}>
+              <Icon size={20} strokeWidth={2} color="var(--green)" />
+            </span>
             <span style={s.statValue}>{value}</span>
             <span style={s.statLabel}>{label}</span>
           </div>
@@ -277,7 +283,9 @@ export default function AdminDashboard({ onWeekClosed = () => {} }) {
       {/* ── No active event ─────────────────────────────────────────────────── */}
       {!openEvent ? (
         <div style={s.noEvent}>
-          <div style={{ fontSize: '36px', marginBottom: '10px' }}>✅</div>
+          <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '10px' }}>
+            <CheckCircle2 size={44} strokeWidth={1.75} color="var(--green)" />
+          </div>
           <div style={s.noEventTitle}>No active event</div>
           <div style={s.noEventSub}>All events are closed. Create a new event in the Schedule tab to start tracking scores.</div>
         </div>
@@ -316,7 +324,7 @@ export default function AdminDashboard({ onWeekClosed = () => {} }) {
                   ...s.stepNum,
                   background: done ? 'var(--green)' : active ? 'var(--green-dark)' : '#ccc',
                 }}>
-                  {done ? '✓' : num}
+                  {done ? <Check size={13} strokeWidth={3} color="#fff" /> : num}
                 </span>
                 <span style={s.stepLabel}>{label}</span>
               </button>
@@ -357,7 +365,9 @@ export default function AdminDashboard({ onWeekClosed = () => {} }) {
               }
               <div style={s.stepActions}>
                 <button style={s.nextBtn} onClick={() => ack('scores', 'skins')}>
-                  {scoresOk ? '✓ Scores look good — Next: Skins' : 'Mark reviewed & continue →'}
+                  {scoresOk
+                    ? <><Check size={15} strokeWidth={2.5} style={{ verticalAlign: '-3px', marginRight: 6 }} />Scores look good — Next: Skins</>
+                    : 'Mark reviewed & continue →'}
                 </button>
               </div>
             </div>
@@ -439,14 +449,16 @@ export default function AdminDashboard({ onWeekClosed = () => {} }) {
               />
               <div style={s.emailBtns}>
                 <button style={s.copyBtn} onClick={copyEmail}>
-                  {copied ? '✓ Copied!' : '📋 Copy to Clipboard'}
+                  {copied
+                    ? <><Check size={15} strokeWidth={2.5} style={{ verticalAlign: '-3px', marginRight: 6 }} />Copied!</>
+                    : <><Clipboard size={15} strokeWidth={2} style={{ verticalAlign: '-3px', marginRight: 6 }} />Copy to Clipboard</>}
                 </button>
                 <a
                   style={s.mailtoBtn}
                   href={`mailto:?bcc=${emailPlayerList}&subject=${emailSubject}&body=${emailBodyEncoded}`}
                   onClick={() => setAcked(prev => ({ ...prev, email: true }))}
                 >
-                  ✉️ Open in Mail App
+                  <Mail size={15} strokeWidth={2} style={{ verticalAlign: '-3px', marginRight: 6 }} />Open in Mail App
                 </a>
               </div>
               <p style={s.emailNote}>
@@ -474,7 +486,11 @@ export default function AdminDashboard({ onWeekClosed = () => {} }) {
                   { done: stepDone.email,   text: 'Weekly email composed and ready to send' },
                 ].map(({ done, text }) => (
                   <div key={text} style={s.checkRow}>
-                    <span style={s.checkIcon}>{done ? '✅' : '⬜'}</span>
+                    <span style={s.checkIcon}>
+                      {done
+                        ? <CheckCircle2 size={20} strokeWidth={2} color="var(--green)" />
+                        : <Square size={20} strokeWidth={1.75} color="var(--gray-400)" />}
+                    </span>
                     <span style={{ ...s.checkText, color: done ? 'var(--black)' : 'var(--gray-400)' }}>{text}</span>
                   </div>
                 ))}
@@ -495,7 +511,9 @@ export default function AdminDashboard({ onWeekClosed = () => {} }) {
                   onClick={handlePublish}
                   disabled={publishing}
                 >
-                  {publishing ? 'Publishing…' : '🔒 Lock & Publish Event'}
+                  {publishing
+                    ? 'Publishing…'
+                    : <><Lock size={16} strokeWidth={2.25} style={{ verticalAlign: '-3px', marginRight: 8 }} />Lock & Publish Event</>}
                 </button>
               )}
             </div>
@@ -517,7 +535,7 @@ const s = {
   // stat strip
   statGrid: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '14px' },
   statCard: { background: '#fff', borderRadius: 'var(--radius)', padding: '18px 12px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', boxShadow: 'var(--shadow)', border: '1px solid var(--gray-200)' },
-  statEmoji: { fontSize: '22px' },
+  statIcon: { display: 'flex', alignItems: 'center', justifyContent: 'center', height: '22px' },
   statValue: { fontSize: '30px', fontWeight: 800, color: 'var(--green-dark)', lineHeight: 1 },
   statLabel: { fontSize: '11px', color: 'var(--gray-500)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.4px', marginTop: '2px' },
 
@@ -582,7 +600,7 @@ const s = {
   // publish checklist
   checklist:   { display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '20px' },
   checkRow:    { display: 'flex', alignItems: 'flex-start', gap: '10px' },
-  checkIcon:   { fontSize: '18px', flexShrink: 0, lineHeight: 1.3 },
+  checkIcon:   { display: 'flex', alignItems: 'center', flexShrink: 0 },
   checkText:   { fontSize: '14px', fontWeight: 500 },
   publishInfo: { background: '#e8f4fd', border: '1px solid #bee3f8', borderRadius: 'var(--radius-sm)', padding: '14px 16px', fontSize: '13px', color: '#2b6cb0', marginBottom: '20px', lineHeight: '1.5' },
   publishBtn:  { width: '100%', padding: '16px', background: 'var(--green-dark)', color: '#fff', borderRadius: 'var(--radius-sm)', fontSize: '15px', fontWeight: 800, cursor: 'pointer', letterSpacing: '0.2px', transition: 'opacity 0.2s' },
