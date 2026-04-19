@@ -1,71 +1,23 @@
-import React, { useState, useEffect } from 'react'
+import React from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Trophy, User, Repeat2, Users, Flag, Lock, Shield } from 'lucide-react'
-import { supabase } from '../lib/supabase'
-import { useIsAdmin } from '../hooks/useIsAdmin'
-import { useLocation } from '../context/LocationContext'
-import AdminPanel from './admin/AdminPanel'
-import ScoreEntry from './ScoreEntry'
-import Standings from './Standings'
-import PlayerProfile from './PlayerProfile'
-import SubRequest from './SubRequest'
-import FriendsTab from './FriendsTab'
 import { Button, StatTile } from './ui'
 
-export default function LeagueDashboard({ session }) {
-  const { isAdmin, checking } = useIsAdmin(session)
-  const { locationId } = useLocation()
-  const [showAdmin, setShowAdmin]           = useState(false)
-  const [showScoreEntry, setShowScoreEntry] = useState(false)
-  const [showStandings, setShowStandings]   = useState(false)
-  const [showProfile, setShowProfile]       = useState(false)
-  const [showSubRequest, setShowSubRequest] = useState(false)
-  const [showFriends, setShowFriends]       = useState(false)
-  const [activeRound, setActiveRound]       = useState(null)
-  const [roundChecked, setRoundChecked]     = useState(false)
-
+export default function LeagueDashboard({
+  session,
+  isAdmin = false,
+  adminChecking = false,
+  activeRound = null,
+  roundChecked = false,
+}) {
+  const navigate = useNavigate()
   const email = session?.user?.email || 'Player'
 
-  useEffect(() => {
-    if (!locationId) return
-    async function checkRound() {
-      const today = new Date().toISOString().split('T')[0]
-      const { data } = await supabase
-        .from('events')
-        .select('id, name, week_number')
-        .eq('location_id', locationId)
-        .eq('status', 'open')
-        .lte('start_date', today)
-        .gte('end_date', today)
-        .limit(1)
-        .single()
-      setActiveRound(data || null)
-      setRoundChecked(true)
-    }
-    checkRound()
-  }, [locationId])
-
-  if (showAdmin && isAdmin)  return <AdminPanel    session={session} onBack={() => setShowAdmin(false)} />
-  if (showScoreEntry)        return <ScoreEntry    session={session} onBack={() => setShowScoreEntry(false)} />
-  if (showStandings)         return <Standings     session={session} onBack={() => setShowStandings(false)} />
-  if (showProfile)           return <PlayerProfile  session={session} onBack={() => setShowProfile(false)} />
-  if (showSubRequest)        return <SubRequest    session={session} onBack={() => setShowSubRequest(false)} />
-  if (showFriends)           return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <div style={{ display: 'flex', alignItems: 'center', padding: '12px 16px', background: 'var(--green-dark)', flexShrink: 0 }}>
-        <button style={{ color: 'rgba(255,255,255,0.8)', fontSize: '13px', fontWeight: 500, cursor: 'pointer' }} onClick={() => setShowFriends(false)}>← Back</button>
-        <div style={{ flex: 1, textAlign: 'center', fontSize: '17px', fontWeight: 800, color: '#fff', marginRight: '52px' }}>Friends</div>
-      </div>
-      <div style={{ flex: 1, overflowY: 'auto' }}>
-        <FriendsTab session={session} />
-      </div>
-    </div>
-  )
-
   const tiles = [
-    { Icon: Trophy,  label: 'Standings',    action: () => setShowStandings(true)  },
-    { Icon: User,    label: 'My Profile',   action: () => setShowProfile(true)    },
-    { Icon: Repeat2, label: 'Request Sub',  action: () => setShowSubRequest(true) },
-    { Icon: Users,   label: 'Friends',      action: () => setShowFriends(true)    },
+    { Icon: Trophy,  label: 'Standings',    path: '/league/standings'   },
+    { Icon: User,    label: 'My Profile',   path: '/league/profile'     },
+    { Icon: Repeat2, label: 'Request Sub',  path: '/league/sub-request' },
+    { Icon: Users,   label: 'Friends',      path: '/league/friends'     },
   ]
 
   return (
@@ -78,8 +30,8 @@ export default function LeagueDashboard({ session }) {
           <p style={styles.welcomeLabel}>Welcome back!</p>
           <p style={styles.welcomeEmail}>{email}</p>
         </div>
-        {!checking && isAdmin && (
-          <button style={styles.adminBadge} onClick={() => setShowAdmin(true)}>
+        {!adminChecking && isAdmin && (
+          <button style={styles.adminBadge} onClick={() => navigate('/league/admin')}>
             <Shield size={14} strokeWidth={2.25} style={{ marginRight: 4, verticalAlign: '-2px' }} />
             Admin
           </button>
@@ -94,7 +46,7 @@ export default function LeagueDashboard({ session }) {
             background: activeRound ? 'var(--green-dark)' : 'var(--gray-100)',
             cursor: activeRound ? 'pointer' : 'default',
           }}
-          onClick={activeRound ? () => setShowScoreEntry(true) : undefined}
+          onClick={activeRound ? () => navigate('/league/score-entry') : undefined}
           disabled={!activeRound}
         >
           <span style={styles.scoresBannerIcon}>
@@ -116,13 +68,13 @@ export default function LeagueDashboard({ session }) {
 
       {/* 2×2 tile grid */}
       <div style={styles.grid}>
-        {tiles.map(({ Icon, label, action, soon }) => (
+        {tiles.map(({ Icon, label, path, soon }) => (
           <StatTile
             key={label}
             size="md"
             icon={<Icon size={30} strokeWidth={1.75} color="var(--green)" />}
             label={label}
-            onClick={soon ? null : action}
+            onClick={soon ? null : () => navigate(path)}
             disabled={!!soon}
             badge={soon ? 'Soon' : null}
           />
@@ -135,7 +87,7 @@ export default function LeagueDashboard({ session }) {
           size="lg"
           fullWidth
           icon={<Shield size={16} strokeWidth={2.25} />}
-          onClick={() => setShowAdmin(true)}
+          onClick={() => navigate('/league/admin')}
           style={{
             background: 'var(--green-dark)',
             borderColor: 'var(--green-dark)',
