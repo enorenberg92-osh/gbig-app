@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import { AlertTriangle, UserCheck, Check, X, Link2 } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useLocation } from '../../context/LocationContext'
 import ConfirmDialog from '../ConfirmDialog'
@@ -182,7 +183,8 @@ export default function AdminSubs() {
       {/* Alert banner if pending subs exist */}
       {pendingCount > 0 && (
         <div style={styles.alertBanner}>
-          ⚠️ <strong>{pendingCount} sub request{pendingCount !== 1 ? 's' : ''}</strong> need your attention
+          <AlertTriangle size={16} strokeWidth={2.25} style={{ verticalAlign: '-3px', marginRight: 8, color: '#b45309' }} />
+          <strong>{pendingCount} sub request{pendingCount !== 1 ? 's' : ''}</strong> need your attention
         </div>
       )}
 
@@ -272,7 +274,10 @@ export default function AdminSubs() {
                     </div>
                   </div>
                   {sub.sub_player_id && (
-                    <div style={styles.profileLinked}>🧑 Sub profile on file</div>
+                    <div style={styles.profileLinked}>
+                      <UserCheck size={13} strokeWidth={2.25} style={{ verticalAlign: '-2px', marginRight: 6 }} />
+                      Sub profile on file
+                    </div>
                   )}
                 </div>
 
@@ -280,10 +285,12 @@ export default function AdminSubs() {
                 {sub.status === 'pending' && (
                   <div style={styles.subActions}>
                     <button style={styles.approveBtn} onClick={() => handleApprove(sub)}>
-                      ✓ Approve
+                      <Check size={14} strokeWidth={2.5} style={{ verticalAlign: '-2px', marginRight: 6 }} />
+                      Approve
                     </button>
                     <button style={styles.denyBtn} onClick={() => handleDeny(sub)}>
-                      ✕ Deny
+                      <X size={14} strokeWidth={2.5} style={{ verticalAlign: '-2px', marginRight: 6 }} />
+                      Deny
                     </button>
                   </div>
                 )}
@@ -292,7 +299,8 @@ export default function AdminSubs() {
                     {/* Show sync button for approved subs missing a profile link */}
                     {sub.status === 'approved' && !sub.sub_player_id && (
                       <button style={styles.syncBtn} onClick={() => handleSyncProfile(sub)}>
-                        🔗 Sync Profile
+                        <Link2 size={14} strokeWidth={2.25} style={{ verticalAlign: '-2px', marginRight: 6 }} />
+                        Sync Profile
                       </button>
                     )}
                     <button style={styles.removeBtn} onClick={() => handleDelete(sub)}>

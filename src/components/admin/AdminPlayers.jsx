@@ -1,4 +1,8 @@
 import React, { useState, useEffect } from 'react'
+import {
+  Users, Upload, User, Lock, Unlock, Target, KeyRound,
+  CheckCircle2, BarChart3, Handshake, X,
+} from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import PlayerProfile from '../PlayerProfile'
 import AdminImport from './AdminImport'
@@ -319,13 +323,15 @@ export default function AdminPlayers() {
             style={{ ...styles.subNavBtn, ...(activeView === 'players' ? styles.subNavActive : {}) }}
             onClick={() => setActiveView('players')}
           >
-            👥 Players &amp; Teams
+            <Users size={15} strokeWidth={2.25} style={{ verticalAlign: '-3px', marginRight: 6 }} />
+            Players &amp; Teams
           </button>
           <button
             style={{ ...styles.subNavBtn, ...(activeView === 'import' ? styles.subNavActive : {}) }}
             onClick={() => setActiveView('import')}
           >
-            📥 Import from CSV
+            <Upload size={15} strokeWidth={2.25} style={{ verticalAlign: '-3px', marginRight: 6 }} />
+            Import from CSV
           </button>
         </div>
         <div style={{ flex: 1, overflowY: 'auto' }}>
@@ -350,13 +356,15 @@ export default function AdminPlayers() {
           style={{ ...styles.subNavBtn, ...(activeView === 'players' ? styles.subNavActive : {}) }}
           onClick={() => setActiveView('players')}
         >
-          👥 Players &amp; Teams
+          <Users size={15} strokeWidth={2.25} style={{ verticalAlign: '-3px', marginRight: 6 }} />
+          Players &amp; Teams
         </button>
         <button
           style={{ ...styles.subNavBtn, ...(activeView === 'import' ? styles.subNavActive : {}) }}
           onClick={() => setActiveView('import')}
         >
-          📥 Import from CSV
+          <Upload size={15} strokeWidth={2.25} style={{ verticalAlign: '-3px', marginRight: 6 }} />
+          Import from CSV
         </button>
       </div>
       {toast && (
@@ -367,7 +375,10 @@ export default function AdminPlayers() {
 
       {/* ── PLAYERS SECTION ── */}
       <div style={styles.sectionHeader}>
-        <h2 style={styles.sectionTitle}>👤 Players</h2>
+        <h2 style={styles.sectionTitle}>
+          <User size={18} strokeWidth={2} style={{ verticalAlign: '-4px', marginRight: 8, color: 'var(--green-dark)' }} />
+          Players
+        </h2>
         <button style={styles.addBtn} onClick={() => { setShowPlayerForm(true); setEditingPlayer(null); setPlayerForm(EMPTY_PLAYER_FORM); setShowTeamForm(false) }}>
           + Add Player
         </button>
@@ -412,7 +423,11 @@ export default function AdminPlayers() {
               onClick={() => setPlayerForm(f => ({ ...f, handicap_locked: !f.handicap_locked }))}
             >
               <div style={styles.skinsToggleLeft}>
-                <span style={{ fontSize: '18px' }}>{playerForm.handicap_locked ? '🔒' : '🔓'}</span>
+                <span style={{ display: 'flex', alignItems: 'center', color: playerForm.handicap_locked ? '#c53030' : 'var(--gray-500)' }}>
+                  {playerForm.handicap_locked
+                    ? <Lock size={18} strokeWidth={2} />
+                    : <Unlock size={18} strokeWidth={2} />}
+                </span>
                 <div>
                   <div style={styles.skinsToggleLabel}>Lock Handicap</div>
                   <div style={styles.skinsToggleSub}>
@@ -437,7 +452,9 @@ export default function AdminPlayers() {
               onClick={() => setPlayerForm(f => ({ ...f, in_skins: !f.in_skins }))}
             >
               <div style={styles.skinsToggleLeft}>
-                <span style={{ fontSize: '18px' }}>🎯</span>
+                <span style={{ display: 'flex', alignItems: 'center', color: playerForm.in_skins ? '#b45309' : 'var(--gray-500)' }}>
+                  <Target size={18} strokeWidth={2} />
+                </span>
                 <div>
                   <div style={styles.skinsToggleLabel}>In Skins Game</div>
                   <div style={styles.skinsToggleSub}>Player's scores count toward weekly skins</div>
@@ -481,7 +498,11 @@ export default function AdminPlayers() {
                     {player.handicap != null && (
                       <span>
                         · HCP {player.handicap}
-                        {player.handicap_locked && <span style={styles.lockBadge}>🔒</span>}
+                        {player.handicap_locked && (
+                          <span style={styles.lockBadge} title="Handicap locked">
+                            <Lock size={11} strokeWidth={2.5} />
+                          </span>
+                        )}
                       </span>
                     )}
                     {team
@@ -489,28 +510,39 @@ export default function AdminPlayers() {
                       : <span style={styles.unpairPill}>Unassigned</span>
                     }
                     {player.in_skins
-                      ? <span style={styles.skinsPill}>🎯 Skins</span>
+                      ? <span style={styles.skinsPill}>
+                          <Target size={11} strokeWidth={2.5} style={{ verticalAlign: '-1px', marginRight: 4 }} />
+                          Skins
+                        </span>
                       : <span style={styles.noSkinsPill}>No Skins</span>
                     }
                   </div>
                   <div style={styles.playerMeta}>
                     {player.user_id
-                      ? <span style={styles.loginPill}>✅ Account active</span>
+                      ? <span style={styles.loginPill}>
+                          <CheckCircle2 size={12} strokeWidth={2.5} style={{ verticalAlign: '-2px', marginRight: 4 }} />
+                          Account active
+                        </span>
                       : (
                         <button
                           style={styles.createAccountBtn}
                           onClick={() => handleCreateAccount(player)}
                         >
-                          🔑 Create Account
+                          <KeyRound size={13} strokeWidth={2.25} style={{ verticalAlign: '-2px', marginRight: 6 }} />
+                          Create Account
                         </button>
                       )
                     }
                   </div>
                 </div>
                 <div style={styles.rowActions}>
-                  <button style={styles.profileBtn} onClick={() => setViewingProfileId(player.id)}>📊</button>
+                  <button style={styles.profileBtn} onClick={() => setViewingProfileId(player.id)} aria-label="View profile">
+                    <BarChart3 size={16} strokeWidth={2} />
+                  </button>
                   <button style={styles.editBtn} onClick={() => startEditPlayer(player)}>Edit</button>
-                  <button style={styles.deleteBtn} onClick={() => handleDeletePlayer(player)}>✕</button>
+                  <button style={styles.deleteBtn} onClick={() => handleDeletePlayer(player)} aria-label="Delete player">
+                    <X size={15} strokeWidth={2.5} />
+                  </button>
                 </div>
               </div>
             )
@@ -520,7 +552,10 @@ export default function AdminPlayers() {
 
       {/* ── TEAMS SECTION ── */}
       <div style={styles.sectionHeader}>
-        <h2 style={styles.sectionTitle}>🤝 Teams</h2>
+        <h2 style={styles.sectionTitle}>
+          <Handshake size={18} strokeWidth={2} style={{ verticalAlign: '-4px', marginRight: 8, color: 'var(--green-dark)' }} />
+          Teams
+        </h2>
         <button style={styles.addBtn} onClick={() => { setShowTeamForm(true); setEditingTeam(null); setTeamForm(EMPTY_TEAM_FORM); setShowPlayerForm(false) }}>
           + Create Team
         </button>
@@ -596,7 +631,9 @@ export default function AdminPlayers() {
                 </div>
                 <div style={styles.rowActions}>
                   <button style={styles.editBtn} onClick={() => startEditTeam(team)}>Edit</button>
-                  <button style={styles.deleteBtn} onClick={() => handleDeleteTeam(team)}>✕</button>
+                  <button style={styles.deleteBtn} onClick={() => handleDeleteTeam(team)} aria-label="Delete team">
+                    <X size={15} strokeWidth={2.5} />
+                  </button>
                 </div>
               </div>
             )
@@ -643,9 +680,9 @@ const styles = {
   teamPill: { fontSize: '11px', fontWeight: 600, color: 'var(--green-dark)', background: 'var(--green-xlight)', padding: '1px 7px', borderRadius: '10px' },
   unpairPill: { fontSize: '11px', fontWeight: 600, color: '#7a5c00', background: '#fff8e1', padding: '1px 7px', borderRadius: '10px' },
   rowActions: { display: 'flex', gap: '6px', flexShrink: 0 },
-  profileBtn: { fontSize: '14px', padding: '4px 7px', background: 'var(--gray-100)', borderRadius: '6px', border: '1px solid var(--gray-200)' },
+  profileBtn: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '5px 8px', background: 'var(--gray-100)', borderRadius: '6px', border: '1px solid var(--gray-200)', color: 'var(--gray-600)', cursor: 'pointer' },
   editBtn: { fontSize: '12px', color: 'var(--green)', fontWeight: 600, padding: '4px 8px', background: 'var(--green-xlight)', borderRadius: '6px' },
-  deleteBtn: { fontSize: '12px', color: '#c53030', fontWeight: 700, padding: '4px 8px', background: '#fff5f5', borderRadius: '6px' },
+  deleteBtn: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: '#c53030', padding: '5px 8px', background: '#fff5f5', border: '1px solid #fecaca', borderRadius: '6px', cursor: 'pointer' },
   teamRow: { display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 0', borderBottom: '1px solid var(--gray-100)' },
   teamNum: { width: '28px', height: '28px', background: 'var(--green)', color: 'var(--white)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', fontWeight: 800, flexShrink: 0 },
   teamInfo: { flex: 1, minWidth: 0 },
@@ -664,5 +701,5 @@ const styles = {
   skinsToggleSwitch: { width: '38px', height: '20px', borderRadius: '20px', padding: '2px', flexShrink: 0, transition: 'background 0.2s', position: 'relative' },
   skinsToggleKnob:   { width: '16px', height: '16px', background: 'white', borderRadius: '50%', boxShadow: '0 1px 3px rgba(0,0,0,0.2)', transition: 'transform 0.2s' },
   lockToggleRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 14px', borderRadius: 'var(--radius-sm)', cursor: 'pointer', userSelect: 'none', gap: '12px' },
-  lockBadge: { fontSize: '10px', marginLeft: '4px' },
+  lockBadge: { display: 'inline-flex', alignItems: 'center', marginLeft: '6px', color: '#c53030' },
 }

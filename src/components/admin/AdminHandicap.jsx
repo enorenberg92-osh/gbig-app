@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import { Settings, RefreshCw, Lock } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { DEFAULT_SETTINGS, calcHandicap, calcBreakdown } from '../../lib/handicapCalc'
 import { useLocation } from '../../context/LocationContext'
@@ -121,7 +122,10 @@ export default function AdminHandicap() {
 
       {/* Settings Summary */}
       <div style={styles.settingsCard}>
-        <h3 style={styles.settingsTitle}>⚙️ Handicap Rules</h3>
+        <h3 style={styles.settingsTitle}>
+          <Settings size={17} strokeWidth={2} style={{ verticalAlign: '-3px', marginRight: 8 }} />
+          Handicap Rules
+        </h3>
         <div style={styles.settingsGrid}>
           <div style={styles.settingItem}>
             <span style={styles.settingLabel}>Handicap %</span>
@@ -159,7 +163,9 @@ export default function AdminHandicap() {
         onClick={handleRecalcAll}
         disabled={updating}
       >
-        {updating ? 'Updating…' : '🔄 Recalculate & Update All Handicaps'}
+        {updating
+          ? 'Updating…'
+          : <><RefreshCw size={16} strokeWidth={2.25} style={{ verticalAlign: '-3px', marginRight: 8 }} />Recalculate &amp; Update All Handicaps</>}
       </button>
 
       {/* Players With Scores */}
@@ -190,7 +196,10 @@ export default function AdminHandicap() {
                     <div style={styles.playerName}>
                       {player.name}
                       {player.handicap_locked && (
-                        <span style={styles.lockedBadge}>🔒 Locked</span>
+                        <span style={styles.lockedBadge}>
+                          <Lock size={11} strokeWidth={2.5} style={{ verticalAlign: '-1px', marginRight: 4 }} />
+                          Locked
+                        </span>
                       )}
                     </div>
                     <div style={styles.playerMeta}>{rounds.length} round{rounds.length !== 1 ? 's' : ''} on record</div>

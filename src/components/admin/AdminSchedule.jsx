@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
+import { Target, Lock, Flag, Ban, X } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useLocation } from '../../context/LocationContext'
 import ConfirmDialog from '../ConfirmDialog'
@@ -243,7 +244,9 @@ export default function AdminSchedule() {
               onClick={() => setForm(f => ({ ...f, is_bye: !f.is_bye }))}
             >
               <div style={styles.byeToggleLeft}>
-                <span style={styles.byeToggleEmoji}>🚫</span>
+                <span style={styles.byeToggleEmoji}>
+                  <Ban size={20} strokeWidth={2} color={form.is_bye ? '#b45309' : 'var(--gray-500)'} />
+                </span>
                 <div>
                   <div style={styles.byeToggleLabel}>Bye Week</div>
                   <div style={styles.byeToggleSub}>No play this week — removes from score entry &amp; handicap</div>
@@ -324,7 +327,10 @@ export default function AdminSchedule() {
 
             {/* Hole Event Section (hidden for bye weeks) */}
             {!form.is_bye && <div style={styles.holeEventBox}>
-              <div style={styles.holeEventTitle}>🎯 Weekly Hole Event</div>
+              <div style={styles.holeEventTitle}>
+                <Target size={15} strokeWidth={2.25} style={{ verticalAlign: '-2px', marginRight: 7, color: 'var(--green-dark)' }} />
+                Weekly Hole Event
+              </div>
               <div style={styles.holeEventSub}>Players will see this displayed on the designated hole during score entry.</div>
               <div style={styles.row}>
                 <div style={{ ...styles.fieldGroup, width: '90px' }}>
@@ -405,16 +411,33 @@ export default function AdminSchedule() {
                       <span style={styles.weekBadge}>Wk {evt.week_number}</span>
                     )}
                     {isBye
-                      ? <span style={styles.byeLabel}>🚫 BYE WEEK</span>
+                      ? <span style={styles.byeLabel}>
+                          <Ban size={13} strokeWidth={2.25} style={{ verticalAlign: '-2px', marginRight: 5 }} />
+                          BYE WEEK
+                        </span>
                       : (evt.name || 'Unnamed Event')
                     }
-                    {upcoming && <span style={styles.lockIcon}>🔒</span>}
+                    {upcoming && (
+                      <span style={styles.lockIcon} title="Hidden from players until this week arrives">
+                        <Lock size={13} strokeWidth={2.25} />
+                      </span>
+                    )}
                   </div>
                   {!isBye && (
                     <div style={styles.eventMeta}>
                       {formatDateRange(evt.start_date, evt.end_date)}
-                      {courseName && !upcoming && <span style={styles.coursePill}>⛳ {courseName}</span>}
-                      {courseName && upcoming  && <span style={styles.coursePillLocked}>⛳ {courseName} — hidden from players</span>}
+                      {courseName && !upcoming && (
+                        <span style={styles.coursePill}>
+                          <Flag size={11} strokeWidth={2.25} style={{ verticalAlign: '-1px', marginRight: 5 }} />
+                          {courseName}
+                        </span>
+                      )}
+                      {courseName && upcoming && (
+                        <span style={styles.coursePillLocked}>
+                          <Flag size={11} strokeWidth={2.25} style={{ verticalAlign: '-1px', marginRight: 5 }} />
+                          {courseName} — hidden from players
+                        </span>
+                      )}
                     </div>
                   )}
                   {isBye && (
@@ -425,7 +448,8 @@ export default function AdminSchedule() {
                   )}
                   {!isBye && evt.hole_event_name && (
                     <div style={styles.holeEventTag}>
-                      🎯 Hole {evt.hole_event_hole}: {evt.hole_event_name}
+                      <Target size={12} strokeWidth={2.25} style={{ verticalAlign: '-2px', marginRight: 6 }} />
+                      Hole {evt.hole_event_hole}: {evt.hole_event_name}
                     </div>
                   )}
                 </div>
@@ -442,7 +466,9 @@ export default function AdminSchedule() {
                       <button style={styles.reopenBtn} onClick={() => handleStatusChange(evt, 'open')}>Reopen</button>
                     )}
                     <button style={styles.editBtn} onClick={() => startEdit(evt)}>Edit</button>
-                    <button style={styles.deleteBtn} onClick={() => handleDelete(evt)}>✕</button>
+                    <button style={styles.deleteBtn} onClick={() => handleDelete(evt)} aria-label="Delete event">
+                      <X size={15} strokeWidth={2.5} />
+                    </button>
                   </div>
                 </div>
               </div>
@@ -480,7 +506,7 @@ const styles = {
   eventMeta: { fontSize: '12px', color: 'var(--gray-400)', marginTop: '3px', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '6px' },
   coursePill:       { fontSize: '11px', color: 'var(--green-dark)', fontWeight: 600, background: 'var(--green-xlight)', padding: '1px 7px', borderRadius: '10px' },
   coursePillLocked: { fontSize: '11px', color: 'var(--gray-400)', fontWeight: 500, background: 'var(--gray-100)', padding: '1px 7px', borderRadius: '10px', fontStyle: 'italic' },
-  lockIcon:         { fontSize: '12px', marginLeft: '6px', opacity: 0.6 },
+  lockIcon:         { display: 'inline-flex', alignItems: 'center', marginLeft: '6px', color: 'var(--gray-500)', opacity: 0.7 },
   notesLine: { fontSize: '11px', color: 'var(--gray-400)', marginTop: '2px', fontStyle: 'italic' },
   eventRight: { display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '6px', flexShrink: 0 },
   badge: { fontSize: '10px', fontWeight: 700, padding: '2px 8px', borderRadius: '20px', textTransform: 'uppercase', letterSpacing: '0.3px' },
@@ -488,7 +514,7 @@ const styles = {
   closeBtn: { fontSize: '11px', color: '#7a5c00', fontWeight: 700, padding: '4px 8px', background: 'var(--gold-light)', borderRadius: '6px' },
   reopenBtn: { fontSize: '11px', color: 'var(--green)', fontWeight: 700, padding: '4px 8px', background: 'var(--green-xlight)', borderRadius: '6px' },
   editBtn: { fontSize: '11px', color: 'var(--green)', fontWeight: 600, padding: '4px 8px', background: 'var(--green-xlight)', borderRadius: '6px' },
-  deleteBtn: { fontSize: '11px', color: '#c53030', fontWeight: 700, padding: '4px 8px', background: '#fff5f5', borderRadius: '6px' },
+  deleteBtn: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: '#c53030', padding: '5px 8px', background: '#fff5f5', border: '1px solid #fecaca', borderRadius: '6px', cursor: 'pointer' },
   holeEventBox: { background: 'var(--green-xlight)', border: '1.5px solid var(--green)', borderRadius: 'var(--radius-sm)', padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: '10px' },
   holeEventTitle: { fontSize: '13px', fontWeight: 700, color: 'var(--green-dark)' },
   holeEventSub: { fontSize: '11px', color: 'var(--green-dark)', opacity: 0.8, marginTop: '-6px' },
@@ -497,7 +523,7 @@ const styles = {
   byeLabel: { fontSize: '14px', fontWeight: 700, color: '#7a5c00', fontStyle: 'italic' },
   byeToggleRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 14px', borderRadius: 'var(--radius-sm)', cursor: 'pointer', userSelect: 'none', gap: '12px' },
   byeToggleLeft: { display: 'flex', alignItems: 'center', gap: '10px' },
-  byeToggleEmoji: { fontSize: '18px', flexShrink: 0 },
+  byeToggleEmoji: { display: 'flex', alignItems: 'center', flexShrink: 0 },
   byeToggleLabel: { fontSize: '13px', fontWeight: 700, color: 'var(--black)' },
   byeToggleSub: { fontSize: '11px', color: 'var(--gray-400)', marginTop: '1px' },
   byeToggleSwitch: { width: '38px', height: '20px', borderRadius: '20px', padding: '2px', flexShrink: 0, transition: 'background 0.2s', position: 'relative' },

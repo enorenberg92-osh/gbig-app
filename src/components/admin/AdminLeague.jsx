@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import { Calendar, Globe, Check, X } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useLocation } from '../../context/LocationContext'
 import ConfirmDialog from '../ConfirmDialog'
@@ -247,7 +248,9 @@ export default function AdminLeague() {
                   {/* Working with column */}
                   <div style={s.colWorking}>
                     {isWorking ? (
-                      <span style={s.workingCheck}>✓</span>
+                      <span style={s.workingCheck}>
+                        <Check size={16} strokeWidth={3} />
+                      </span>
                     ) : (
                       <button style={s.loadBtn} onClick={() => handleSetWorking(league)}>
                         Load League
@@ -274,7 +277,9 @@ export default function AdminLeague() {
                   {/* Actions */}
                   <div style={s.colActions}>
                     <button style={s.editBtn} onClick={() => startEdit(league)}>Edit</button>
-                    <button style={s.deleteBtn} onClick={() => handleDelete(league)}>✕</button>
+                    <button style={s.deleteBtn} onClick={() => handleDelete(league)} aria-label="Delete league">
+                      <X size={15} strokeWidth={2.5} />
+                    </button>
                   </div>
                 </div>
               )
@@ -335,7 +340,9 @@ export default function AdminLeague() {
               onClick={() => setForm(f => ({ ...f, is_active: !f.is_active }))}
             >
               <div style={s.toggleLeft}>
-                <span style={{ fontSize: '18px' }}>🌐</span>
+                <span style={{ display: 'flex', alignItems: 'center' }}>
+                  <Globe size={20} strokeWidth={1.75} color="var(--green-dark)" />
+                </span>
                 <div>
                   <div style={s.toggleLabel}>Display on Website</div>
                   <div style={s.toggleSub}>
@@ -353,7 +360,10 @@ export default function AdminLeague() {
             {/* Schedule preview (only when dates are set) */}
             {weekPreview.length > 0 && (
               <div style={s.previewBox}>
-                <div style={s.previewTitle}>📅 Schedule Preview — {weekPreview.length} Weeks</div>
+                <div style={s.previewTitle}>
+                  <Calendar size={16} strokeWidth={2} style={{ verticalAlign: '-3px', marginRight: 8 }} />
+                  Schedule Preview — {weekPreview.length} Weeks
+                </div>
                 <p style={s.previewNote}>
                   Click <strong>Generate Schedule</strong> to add these weeks to the Schedule tab.
                 </p>
@@ -372,7 +382,8 @@ export default function AdminLeague() {
                   style={s.generateBtn}
                   onClick={() => handleGenerateSchedule(editing)}
                 >
-                  📅 Generate {weekPreview.length}-Week Schedule
+                  <Calendar size={16} strokeWidth={2.25} style={{ verticalAlign: '-3px', marginRight: 8 }} />
+                  Generate {weekPreview.length}-Week Schedule
                 </button>
               </div>
             )}
@@ -428,7 +439,7 @@ const s = {
   leagueName:  { fontSize: '14px', fontWeight: 700, color: 'var(--black)' },
   leagueMeta:  { fontSize: '12px', color: 'var(--gray-400)', marginTop: '3px' },
 
-  workingCheck: { fontSize: '20px', color: 'var(--green)', fontWeight: 800 },
+  workingCheck: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: 'var(--green)' },
   loadBtn:      { fontSize: '12px', fontWeight: 600, color: 'var(--green-dark)', background: 'var(--green-xlight)', padding: '5px 10px', borderRadius: '6px', cursor: 'pointer', border: '1px solid var(--green)', whiteSpace: 'nowrap' },
 
   radioWrap: { background: 'transparent', cursor: 'pointer', display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '4px' },
@@ -436,7 +447,7 @@ const s = {
   radioDot:  { width: '10px', height: '10px', borderRadius: '50%', background: 'var(--green)' },
 
   editBtn:   { fontSize: '12px', color: 'var(--green)', fontWeight: 600, padding: '4px 8px', background: 'var(--green-xlight)', borderRadius: '6px', cursor: 'pointer' },
-  deleteBtn: { fontSize: '12px', color: '#c53030', fontWeight: 700, padding: '4px 8px', background: '#fff5f5', borderRadius: '6px', cursor: 'pointer' },
+  deleteBtn: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: '#c53030', padding: '5px 8px', background: '#fff5f5', border: '1px solid #fecaca', borderRadius: '6px', cursor: 'pointer' },
 
   // form
   formTitle:   { fontSize: '15px', fontWeight: 800, color: 'var(--green-dark)', padding: '18px 20px 0', letterSpacing: '-0.1px' },
