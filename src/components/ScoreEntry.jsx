@@ -100,13 +100,16 @@ export default function ScoreEntry({ session, onBack }) {
         if (courseRow) setCourse(courseRow)
       }
 
-      // 4. Check if already submitted
+      // 4. Check if already submitted — only 'played' entries count.
+      // A missed-week penalty row shouldn't block a player from retro-entering
+      // their actual score (admin-driven edge case, but cheap to get right).
       const { data: existing } = await supabase
         .from('scores')
         .select('id')
         .eq('event_id', evtRow.id)
         .eq('location_id', locationId)
         .eq('player_id', playerRow.id)
+        .eq('entry_type', 'played')
 
       if (existing && existing.length > 0) { setAlreadySubmitted(true); setLoading(false); return }
 

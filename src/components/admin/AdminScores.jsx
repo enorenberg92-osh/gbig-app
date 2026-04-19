@@ -270,7 +270,7 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
   async function handleCalculateSkins() {
     // Load scores + all players independently (avoids FK join issues)
     const [{ data: allScores }, { data: skinPlayers }] = await Promise.all([
-      supabase.from('scores').select('player_id, hole_scores').eq('event_id', selectedEvent).eq('location_id', locationId),
+      supabase.from('scores').select('player_id, hole_scores').eq('event_id', selectedEvent).eq('location_id', locationId).eq('entry_type', 'played'),
       supabase.from('players').select('id, name, in_skins').eq('location_id', locationId),
     ])
 

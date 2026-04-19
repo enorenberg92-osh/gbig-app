@@ -27,6 +27,7 @@ export default function AdminHandicap() {
         .from('scores')
         .select('player_id, gross_total, created_at, events(id, name, start_date, event_date, week_number, courses(name, hole_pars))')
         .eq('location_id', locationId)
+        .eq('entry_type', 'played')
         .order('created_at', { ascending: true }),
       supabase.from('league_config').select('num_weeks').eq('location_id', locationId).limit(1).single(),
     ])

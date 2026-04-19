@@ -87,6 +87,7 @@ export async function recalcPlayerHandicap(supabase, playerId, locationId, setti
       .select('gross_total, events(courses(hole_pars))')
       .eq('player_id', playerId)
       .eq('location_id', locationId)
+      .eq('entry_type', 'played')
       .not('gross_total', 'is', null)
       .order('created_at', { ascending: true })
 

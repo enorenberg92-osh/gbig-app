@@ -67,7 +67,7 @@ export default function Standings({ session, onBack, adminMode = false }) {
 
     const [scoresRes, playersRes, teamsRes] = await Promise.all([
       supabase.from('scores')
-        .select('id, player_id, event_id, gross_total, net_total, handicap_used')
+        .select('id, player_id, event_id, gross_total, net_total, handicap_used, entry_type')
         .eq('event_id', eventId)
         .eq('location_id', locationId),
       supabase.from('players').select('id, name, first_name, last_name, handicap').eq('location_id', locationId),
@@ -98,7 +98,7 @@ export default function Standings({ session, onBack, adminMode = false }) {
 
     const [scoresRes, playersRes, teamsRes] = await Promise.all([
       supabase.from('scores')
-        .select('id, player_id, event_id, gross_total, net_total')
+        .select('id, player_id, event_id, gross_total, net_total, entry_type')
         .in('event_id', ids)
         .eq('location_id', locationId),
       supabase.from('players').select('id, name, first_name, last_name, handicap').eq('location_id', locationId),
@@ -168,17 +168,23 @@ export default function Standings({ session, onBack, adminMode = false }) {
         const p2Gross = s2?.gross_total ?? null
         const p1Net   = s1?.net_total   ?? null
         const p2Net   = s2?.net_total   ?? null
+        // Penalty rows carry net_total but no gross_total. Surface the flag so the UI
+        // can tag the round without dropping its contribution to the team score.
+        const p1IsPenalty = s1?.entry_type === 'missed_penalty'
+        const p2IsPenalty = s2?.entry_type === 'missed_penalty'
 
         teamRows.push({
           teamId: team.id,
           teamName: team.name || `${p1Name.split(' ')[0]}/${p2Name.split(' ')[0]}`,
-          p1Name, p1Gross, p1Net,
-          p2Name, p2Gross, p2Net,
+          p1Name, p1Gross, p1Net, p1IsPenalty,
+          p2Name, p2Gross, p2Net, p2IsPenalty,
           teamGross: (p1Gross ?? 0) + (p2Gross ?? 0),
           teamNet:   (p1Net   ?? 0) + (p2Net   ?? 0),
           p1Hcp: p1?.handicap ?? null,
           p2Hcp: p2?.handicap ?? null,
-          hasScore: p1Gross != null || p2Gross != null,
+          // A submitted-or-penalty entry both count as "has a result" — the team
+          // should rank above teams with no scores at all.
+          hasScore: s1 != null || s2 != null,
         })
       }
     }
@@ -318,12 +324,18 @@ export default function Standings({ session, onBack, adminMode = false }) {
                     {view === 'week' && row.p1Gross != null && (
                       <span style={styles.chipScore}> {row.p1Gross}</span>
                     )}
+                    {view === 'week' && row.p1IsPenalty && (
+                      <span style={styles.penaltyPill}>Missed</span>
+                    )}
                   </span>
                   <span style={styles.ampersand}>&</span>
                   <span style={styles.playerChip}>
                     {row.p2Name.split(' ')[0]}
                     {view === 'week' && row.p2Gross != null && (
                       <span style={styles.chipScore}> {row.p2Gross}</span>
+                    )}
+                    {view === 'week' && row.p2IsPenalty && (
+                      <span style={styles.penaltyPill}>Missed</span>
                     )}
                   </span>
                   {view === 'season' && row.rounds != null && (
@@ -377,6 +389,7 @@ const styles = {
   teamName:     { fontSize: 14, fontWeight: 700, color: 'var(--black)', marginBottom: 3 },
   playerLine:   { display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' },
   playerChip:   { fontSize: 11, color: 'var(--gray-600)', background: 'var(--gray-100)', padding: '2px 7px', borderRadius: 10, fontWeight: 500 },
+  penaltyPill:  { display: 'inline-block', marginLeft: 6, fontSize: 9, fontWeight: 700, letterSpacing: '0.5px', textTransform: 'uppercase', color: '#8a6d1f', background: '#fef3c7', border: '1px solid #f6e27a', padding: '1px 6px', borderRadius: 10 },
   chipScore:    { fontWeight: 700, color: 'var(--green-dark)' },
   ampersand:    { fontSize: 10, color: 'var(--gray-400)' },
   roundsBadge:  { fontSize: 10, color: 'var(--green)', background: 'var(--green-xlight)', padding: '2px 7px', borderRadius: 10, fontWeight: 600 },

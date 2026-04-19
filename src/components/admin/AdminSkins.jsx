@@ -86,12 +86,14 @@ export default function AdminSkins({ activeEventId = null, onEventChange = () =>
     setCalculating(true)
     setSkinResults(null)
 
-    // 1. Load all scores for this event
+    // 1. Load all scores for this event — played entries only.
+    // Missed-week penalty rows carry no hole_scores and are excluded from skins.
     const { data: allScores, error } = await supabase
       .from('scores')
       .select('player_id, hole_scores, gross_total, net_total')
       .eq('event_id', selectedEvent)
       .eq('location_id', locationId)
+      .eq('entry_type', 'played')
 
     if (error) {
       showToast('Error loading scores: ' + error.message, 'error')

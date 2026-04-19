@@ -182,7 +182,7 @@ export default function PlayerProfile({ session, onBack, playerId: adminPlayerId
         supabase.from('teams').select('id, name, player1_id, player2_id').eq('location_id', locationId),
         supabase.from('players').select('id, first_name, last_name, name, handicap').eq('location_id', locationId),
         supabase.from('scores')
-          .select('id, event_id, gross_total, net_total, hole_scores, handicap_used')
+          .select('id, event_id, gross_total, net_total, hole_scores, handicap_used, entry_type')
           .eq('player_id', playerRow.id)
           .eq('location_id', locationId),
       ])
@@ -230,6 +230,7 @@ export default function PlayerProfile({ session, onBack, playerId: adminPlayerId
         const holePars  = course.hole_pars || null
         const gross = s.gross_total
         const net   = s.net_total
+        const isPenalty = s.entry_type === 'missed_penalty'
         return {
           id:           s.id,
           eventName:    evt.name || 'Round',
@@ -237,6 +238,7 @@ export default function PlayerProfile({ session, onBack, playerId: adminPlayerId
           startDate:    evt.start_date || null,
           gross,
           net,
+          isPenalty,
           handicapUsed: s.handicap_used,
           coursePar,
           vsPar:        gross != null ? gross - coursePar : null,
@@ -669,23 +671,30 @@ export default function PlayerProfile({ session, onBack, playerId: adminPlayerId
           <div style={styles.card}>
             <div style={styles.cardTitle}>RECENT ROUNDS</div>
             {[...rounds].reverse().slice(0, 8).map(rd => (
-              <div key={rd.id} style={styles.roundRow}>
+              <div key={rd.id} style={{ ...styles.roundRow, ...(rd.isPenalty ? styles.roundRowPenalty : {}) }}>
                 <div style={styles.roundInfo}>
                   <div style={styles.roundName}>
                     {rd.weekNumber ? `Wk ${rd.weekNumber} — ` : ''}{rd.eventName}
+                    {rd.isPenalty && (
+                      <span style={styles.roundPenaltyPill}>Missed</span>
+                    )}
                   </div>
                   <div style={styles.roundDate}>
-                    {rd.startDate
-                      ? new Date(rd.startDate).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
-                      : 'No date'}
+                    {rd.isPenalty
+                      ? 'Missed week — penalty applied'
+                      : (rd.startDate
+                          ? new Date(rd.startDate).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+                          : 'No date')}
                   </div>
                 </div>
                 <div style={styles.roundScores}>
                   <div style={styles.roundGross}>{rd.gross ?? '—'}</div>
                   <div style={styles.roundNet}>Net {rd.net ?? '—'}</div>
-                  <div style={{ ...styles.roundVsPar, color: vsParColor(rd.vsPar) }}>
-                    {vsParLabel(rd.vsPar)}
-                  </div>
+                  {!rd.isPenalty && (
+                    <div style={{ ...styles.roundVsPar, color: vsParColor(rd.vsPar) }}>
+                      {vsParLabel(rd.vsPar)}
+                    </div>
+                  )}
                 </div>
               </div>
             ))}
@@ -818,6 +827,8 @@ const styles = {
 
   // Recent rounds
   roundRow:    { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid var(--gray-100)' },
+  roundRowPenalty: { background: '#fffbeb', borderLeft: '3px solid #f6e27a' },
+  roundPenaltyPill: { display: 'inline-block', marginLeft: 8, fontSize: 9, fontWeight: 700, letterSpacing: '0.5px', textTransform: 'uppercase', color: '#8a6d1f', background: '#fef3c7', border: '1px solid #f6e27a', padding: '1px 6px', borderRadius: 10, verticalAlign: 'middle' },
   roundInfo:   { flex: 1 },
   roundName:   { fontSize: 13, fontWeight: 600, color: 'var(--black)' },
   roundDate:   { fontSize: 11, color: 'var(--gray-400)', marginTop: 2 },

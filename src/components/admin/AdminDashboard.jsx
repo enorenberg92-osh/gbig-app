@@ -73,6 +73,10 @@ export default function AdminDashboard({ onWeekClosed = () => {} }) {
   const [emailBody, setEmailBody]   = useState('')
   const [publishing, setPublishing] = useState(false)
   const [published, setPublished]   = useState(false)
+  // Close-week penalty — on by default so a missing player is never
+  // silently omitted from the season totals. Admin can untick if
+  // they want to handle it manually.
+  const [applyPenalty, setApplyPenalty] = useState(true)
   const [copied, setCopied]         = useState(false)
   const [loading, setLoading]       = useState(true)
   const [dialog, setDialog]         = useState(null)
@@ -96,7 +100,7 @@ export default function AdminDashboard({ onWeekClosed = () => {} }) {
       supabase.from('teams').select('*', { count: 'exact', head: true }).eq('location_id', locationId),
       supabase.from('events').select('*').eq('location_id', locationId).eq('status', 'open').order('week_number', { ascending: true }).limit(1),
       supabase.from('teams').select('id, name, player1_id, player2_id').eq('location_id', locationId),
-      supabase.from('players').select('id, name, first_name, last_name, email, in_skins').eq('location_id', locationId),
+      supabase.from('players').select('id, name, first_name, last_name, email, in_skins, handicap, team_id').eq('location_id', locationId),
     ])
 
     setStats({ players: playerCount || 0, events: eventCount || 0, teams: teamCount || 0 })
@@ -118,8 +122,14 @@ export default function AdminDashboard({ onWeekClosed = () => {} }) {
       setScores(s)
 
       // ── Calculate skins from hole_scores (same logic as AdminSkins tab) ──
+      // Penalty rows carry no hole_scores so the per-hole loop below skips them
+      // naturally — but filter explicitly by entry_type so the intent is
+      // unambiguous and the set size is tight.
       const skinsPlayerIds = new Set((plrs || []).filter(p => p.in_skins).map(p => p.id))
-      const skinsScores    = s.filter(sc => skinsPlayerIds.has(sc.player_id))
+      const skinsScores    = s.filter(sc =>
+        skinsPlayerIds.has(sc.player_id) &&
+        (!sc.entry_type || sc.entry_type === 'played')
+      )
       const holePars       = evtDetail?.data?.courses?.hole_pars || null
 
       const computed = []
@@ -156,6 +166,30 @@ export default function AdminDashboard({ onWeekClosed = () => {} }) {
 
   async function doPublish() {
     setPublishing(true)
+
+    // Missed-week penalties — insert BEFORE closing so the penalty
+    // rows are in place when the event flips to 'closed' and the
+    // season standings refresh. Each row: net_total = handicap + 7,
+    // no hole_scores, no gross_total. Handicap/skins/hole-level
+    // queries filter entry_type='played' and ignore these rows.
+    if (applyPenalty && missingPlayers.length > 0) {
+      const penaltyRows = missingPlayers.map(pl => ({
+        event_id:      openEvent.id,
+        player_id:     pl.id,
+        hole_scores:   null,
+        gross_total:   null,
+        net_total:     (pl.handicap ?? 0) + 7,
+        handicap_used: pl.handicap ?? 0,
+        entry_type:    'missed_penalty',
+        location_id:   locationId,
+      }))
+      const { error: penErr } = await supabase.from('scores').insert(penaltyRows)
+      if (penErr) {
+        alert('Error applying missed-week penalty: ' + penErr.message)
+        setPublishing(false)
+        return
+      }
+    }
 
     // Close the current event
     const { error } = await supabase.from('events').update({ status: 'closed' }).eq('id', openEvent.id)
@@ -223,6 +257,21 @@ export default function AdminDashboard({ onWeekClosed = () => {} }) {
     totalGross: ts.reduce((a, s) => a + (s.gross_total || 0), 0),
     totalNet:   ts.reduce((a, s) => a + (s.net_total   || 0), 0),
   })).sort((a, b) => a.totalNet - b.totalNet)
+
+  // ── Missed-week penalty: who needs one? ────────────────────────────────
+  // Rostered player = any player assigned to a team (team_id set, and that
+  // team still exists at this location). They're the 'should have played'
+  // roster for league purposes.
+  const teamIdSet = new Set(teams.map(t => t.id))
+  const rosteredPlayers = players.filter(pl => pl.team_id && teamIdSet.has(pl.team_id))
+  // A 'played' entry counts as submitted. Treat missing entry_type as
+  // 'played' for backward compat with pre-migration data.
+  const submittedPlayerIds = new Set(
+    scores
+      .filter(sc => !sc.entry_type || sc.entry_type === 'played')
+      .map(sc => sc.player_id)
+  )
+  const missingPlayers = rosteredPlayers.filter(pl => !submittedPlayerIds.has(pl.id))
 
   const expectedScores  = teams.length
   const submittedScores = Object.keys(scoresByTeam).length   // count teams, not rows
@@ -502,6 +551,56 @@ export default function AdminDashboard({ onWeekClosed = () => {} }) {
                 recalculate all handicaps, and update season standings.
               </div>
 
+              {/* Missed-week penalty toggle + live preview ────────────────── */}
+              {!published && (
+                <div style={s.penaltyCard}>
+                  <label style={s.penaltyToggle}>
+                    <input
+                      type="checkbox"
+                      checked={applyPenalty}
+                      onChange={e => setApplyPenalty(e.target.checked)}
+                      style={s.penaltyCheckbox}
+                    />
+                    <div style={s.penaltyTextWrap}>
+                      <span style={s.penaltyTitle}>Apply missed-week penalty</span>
+                      <span style={s.penaltyDesc}>
+                        Players with no submitted score get a net of handicap + 7.
+                        Penalty rows count toward standings but are excluded from
+                        handicap and skins.
+                      </span>
+                    </div>
+                  </label>
+
+                  {missingPlayers.length === 0 ? (
+                    <div style={s.penaltyEmpty}>
+                      All rostered players submitted a score — no penalties needed.
+                    </div>
+                  ) : applyPenalty ? (
+                    <div style={s.penaltyList}>
+                      <div style={s.penaltyListHeader}>
+                        {missingPlayers.length} player{missingPlayers.length === 1 ? '' : 's'} will receive a penalty:
+                      </div>
+                      {missingPlayers.map(pl => {
+                        const name = pl.first_name
+                          ? `${pl.first_name} ${pl.last_name || ''}`.trim()
+                          : (pl.name || 'Unknown')
+                        const net = (pl.handicap ?? 0) + 7
+                        return (
+                          <div key={pl.id} style={s.penaltyRow}>
+                            <span style={s.penaltyName}>{name}</span>
+                            <span style={s.penaltyScore}>Net {net}</span>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  ) : (
+                    <div style={s.penaltyWarning}>
+                      {missingPlayers.length} rostered player{missingPlayers.length === 1 ? '' : 's'} did not submit a score and will be omitted from standings.
+                    </div>
+                  )}
+                </div>
+              )}
+
               {published ? (
                 <div style={s.successBanner}>
                   🎉 Event published! Season standings have been updated.
@@ -607,6 +706,21 @@ const s = {
   checkIcon:   { display: 'flex', alignItems: 'center', flexShrink: 0 },
   checkText:   { fontSize: '14px', fontWeight: 500 },
   publishInfo: { background: '#e8f4fd', border: '1px solid #bee3f8', borderRadius: 'var(--radius-sm)', padding: '14px 16px', fontSize: '13px', color: '#2b6cb0', marginBottom: '20px', lineHeight: '1.5' },
+
+  // missed-week penalty card
+  penaltyCard:         { background: '#fffbeb', border: '1px solid #f6e27a', borderRadius: 'var(--radius-sm)', padding: '14px 16px', marginBottom: '18px' },
+  penaltyToggle:       { display: 'flex', alignItems: 'flex-start', gap: '10px', cursor: 'pointer' },
+  penaltyCheckbox:     { marginTop: '3px', width: '16px', height: '16px', accentColor: '#b8860b', cursor: 'pointer', flexShrink: 0 },
+  penaltyTextWrap:     { display: 'flex', flexDirection: 'column', gap: '3px' },
+  penaltyTitle:        { fontSize: '13px', fontWeight: 700, color: '#5a4200' },
+  penaltyDesc:         { fontSize: '12px', color: '#8a6d1f', lineHeight: 1.45 },
+  penaltyEmpty:        { marginTop: '10px', fontSize: '12px', color: '#6b7280', fontStyle: 'italic' },
+  penaltyList:         { marginTop: '12px', background: '#fff', borderRadius: '8px', border: '1px solid #f6e27a', padding: '8px 4px' },
+  penaltyListHeader:   { fontSize: '11px', fontWeight: 700, color: '#8a6d1f', textTransform: 'uppercase', letterSpacing: '0.5px', padding: '4px 12px 6px' },
+  penaltyRow:          { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '7px 12px', borderTop: '1px solid var(--gray-100)' },
+  penaltyName:         { fontSize: '13px', color: 'var(--black)' },
+  penaltyScore:        { fontSize: '12px', fontWeight: 700, color: '#b8860b', background: '#fef3c7', padding: '2px 8px', borderRadius: '10px' },
+  penaltyWarning:      { marginTop: '10px', fontSize: '12px', color: '#8a6d1f', fontStyle: 'italic', padding: '8px 12px', background: '#fff', borderRadius: '8px', border: '1px dashed #f6e27a' },
   successBanner: { background: '#d8f3dc', border: '1px solid #95d5a8', borderRadius: 'var(--radius-sm)', padding: '16px', fontSize: '15px', fontWeight: 700, color: '#2d6a4f', textAlign: 'center' },
 
   // shared
