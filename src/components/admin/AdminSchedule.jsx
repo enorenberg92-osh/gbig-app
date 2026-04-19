@@ -16,7 +16,7 @@ const EMPTY_FORM = {
   hole_event_name: '',
   is_bye: false,
 }
-const STATUS_OPTIONS = ['open', 'closed', 'cancelled']
+const STATUS_OPTIONS = ['draft', 'open', 'closed', 'cancelled']
 
 export default function AdminSchedule() {
   const { locationId } = useLocation()
@@ -192,6 +192,7 @@ export default function AdminSchedule() {
     if (evt.status === 'cancelled') return { label: 'cancelled', bg: '#fff5f5', color: '#c53030' }
     if (evt.status === 'closed')    return { label: 'closed',    bg: '#f1f3f5', color: '#6c757d' }
     if (evt.status === 'open')      return { label: 'open',      bg: '#d8f3dc', color: '#2d6a4f' }
+    if (evt.status === 'draft')     return { label: 'draft',     bg: '#e7f0ff', color: '#1c4a8c' }
     if (isUpcoming(evt))            return { label: 'upcoming',  bg: '#f1f3f5', color: '#6c757d' }
     return                                 { label: 'active',    bg: '#d8f3dc', color: '#2d6a4f' }
   }
@@ -466,8 +467,17 @@ export default function AdminSchedule() {
                     {statusInfo.label}
                   </span>
                   <div style={styles.eventActions}>
-                    {/* Close Out only available once the week has arrived */}
-                    {!isBye && !upcoming && evt.status === 'open' && (
+                    {/* Open a draft event -- admins flip the switch manually
+                        regardless of calendar dates. Status is the single
+                        source of truth for which round is active. */}
+                    {!isBye && evt.status === 'draft' && (
+                      <Button variant="secondary" size="sm" onClick={() => handleStatusChange(evt, 'open')} style={{ background: 'var(--green-dark)', color: '#fff', borderColor: 'var(--green-dark)', fontWeight: 700 }}>
+                        Open
+                      </Button>
+                    )}
+                    {/* Admins can close an open event at any time, including
+                        events whose start_date is still in the future. */}
+                    {!isBye && evt.status === 'open' && (
                       <Button variant="secondary" size="sm" onClick={() => handleStatusChange(evt, 'closed')} style={{ background: 'var(--gold-light)', color: '#7a5c00', borderColor: 'var(--gold-light)', fontWeight: 700 }}>
                         Close Out
                       </Button>

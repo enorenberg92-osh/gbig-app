@@ -27,16 +27,18 @@ export default function LeaguePage({ session }) {
 
   useEffect(() => {
     if (!locationId) return
-    const today = new Date().toISOString().split('T')[0]
+    // Status is the single source of truth. An event is active iff an
+    // admin has opened it. We intentionally don't filter by start_date /
+    // end_date so admins can schedule events weeks in advance and flip
+    // them open on their own timeline, independent of calendar dates.
     supabase
       .from('events')
       .select('id, name, week_number')
       .eq('location_id', locationId)
       .eq('status', 'open')
-      .lte('start_date', today)
-      .gte('end_date', today)
+      .order('week_number', { ascending: true })
       .limit(1)
-      .single()
+      .maybeSingle()
       .then(({ data }) => {
         setActiveRound(data || null)
         setRoundChecked(true)

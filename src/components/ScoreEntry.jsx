@@ -73,19 +73,21 @@ export default function ScoreEntry({ session, onBack }) {
       }
       setTeam(hydratedTeam)
 
-      // 3. Find the current open event that falls within this calendar week
-      const today = new Date().toISOString().split('T')[0]
+      // 3. Find the current open event. Status is the single source of
+      // truth -- an event is active iff an admin has flipped it to
+      // 'open'. We do NOT filter by calendar dates so admins can stage
+      // events weeks in advance and control activation on their own
+      // timeline.
       const { data: evtRow } = await supabase
         .from('events')
         .select('*')
         .eq('location_id', locationId)
         .eq('status', 'open')
-        .lte('start_date', today)
-        .gte('end_date', today)
+        .order('week_number', { ascending: true })
         .limit(1)
-        .single()
+        .maybeSingle()
 
-      if (!evtRow) { setError('No open event this week. Check back soon!'); setLoading(false); return }
+      if (!evtRow) { setError('No active round right now. Check back soon!'); setLoading(false); return }
       setEvent(evtRow)
 
       // Load course separately to avoid FK join issues
