@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
+import { Flag } from 'lucide-react'
 import { supabase } from './lib/supabase'
 import { useLocation } from './context/LocationContext'
 
@@ -190,7 +191,9 @@ export default function App() {
         {isReservations ? (
           <header style={styles.headerGold}>
             <div style={styles.headerGoldInner}>
-              <span style={styles.headerGoldFlag}>⛳</span>
+              <span style={styles.headerGoldFlag}>
+                <Flag size={26} strokeWidth={2} color="var(--gold)" />
+              </span>
               <div style={styles.headerGoldTextWrap}>
                 <span style={styles.headerGoldTitle}>Reservations</span>
                 <span style={styles.headerGoldSub}>{appName}</span>
@@ -200,7 +203,9 @@ export default function App() {
         ) : (
           <header style={styles.header}>
             <div style={styles.headerInner}>
-              <span style={styles.headerLogo}>⛳</span>
+              <span style={styles.headerLogo}>
+                <Flag size={22} strokeWidth={2} color="var(--gold)" />
+              </span>
               <div style={styles.headerTitleWrap}>
                 <span style={styles.headerTitle}>{appName}</span>
                 {leagueName ? <span style={styles.headerLeague}>{leagueName}</span> : null}
@@ -294,7 +299,7 @@ const styles = {
     padding: '0 16px',
     gap: '10px',
   },
-  headerLogo: { fontSize: '24px' },
+  headerLogo: { display: 'flex', alignItems: 'center', flexShrink: 0 },
   headerTitleWrap: {
     flex: 1,
     display: 'flex',
@@ -340,8 +345,9 @@ const styles = {
     gap: '12px',
   },
   headerGoldFlag: {
-    fontSize: '28px',
-    lineHeight: 1,
+    display: 'flex',
+    alignItems: 'center',
+    flexShrink: 0,
     filter: 'drop-shadow(0 1px 3px rgba(0,0,0,0.3))',
   },
   headerGoldTextWrap: {

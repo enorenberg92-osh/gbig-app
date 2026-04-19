@@ -1,4 +1,8 @@
 import React, { useState, useEffect } from 'react'
+import {
+  LayoutDashboard, Flag, Medal, Users, Trophy, Activity,
+  Calendar, Repeat2, Map, Target, Bell,
+} from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useLocation } from '../../context/LocationContext'
 import AdminDashboard from './AdminDashboard'
@@ -14,17 +18,17 @@ import AdminLeague    from './AdminLeague'
 import AdminStandings from './AdminStandings'
 
 const SECTIONS = [
-  { id: 'dashboard',  label: 'Overview',     emoji: '📊' },
-  { id: 'scores',     label: 'Scores',       emoji: '⛳' },
-  { id: 'standings',  label: 'Standings',    emoji: '🏅' },
-  { id: 'players',    label: 'Players',      emoji: '👥' },
-  { id: 'league',     label: 'Leagues',      emoji: '🏆' },
-  { id: 'handicap',   label: 'Handicap',     emoji: '🏌️' },
-  { id: 'schedule',   label: 'Schedule',     emoji: '📅' },
-  { id: 'subs',       label: 'Subs',         emoji: '🔄' },
-  { id: 'courses',    label: 'Courses',      emoji: '🗺️' },
-  { id: 'skins',      label: 'Skins',        emoji: '🎯' },
-  { id: 'alerts',     label: 'Alerts',       emoji: '🔔' },
+  { id: 'dashboard',  label: 'Overview',     Icon: LayoutDashboard },
+  { id: 'scores',     label: 'Scores',       Icon: Flag },
+  { id: 'standings',  label: 'Standings',    Icon: Medal },
+  { id: 'players',    label: 'Players',      Icon: Users },
+  { id: 'league',     label: 'Leagues',      Icon: Trophy },
+  { id: 'handicap',   label: 'Handicap',     Icon: Activity },
+  { id: 'schedule',   label: 'Schedule',     Icon: Calendar },
+  { id: 'subs',       label: 'Subs',         Icon: Repeat2 },
+  { id: 'courses',    label: 'Courses',      Icon: Map },
+  { id: 'skins',      label: 'Skins',        Icon: Target },
+  { id: 'alerts',     label: 'Alerts',       Icon: Bell },
 ]
 
 export default function AdminPanel({ session, onBack }) {
@@ -101,6 +105,7 @@ export default function AdminPanel({ session, onBack }) {
   }
 
   const current = SECTIONS.find(s => s.id === activeSection) || SECTIONS[0]
+  const CurrentIcon = current.Icon
 
   // ── DESKTOP LAYOUT ──────────────────────────────────────────────────────
   if (isDesktop) {
@@ -110,7 +115,9 @@ export default function AdminPanel({ session, onBack }) {
         <div style={ds.sidebar}>
           {/* Sidebar header */}
           <div style={ds.sidebarTop}>
-            <div style={ds.sidebarLogo}>⛳</div>
+            <div style={ds.sidebarLogo}>
+              <Flag size={26} strokeWidth={2} color="var(--gold)" />
+            </div>
             <div>
               <div style={ds.sidebarTitle}>{appName} Admin</div>
               <div style={ds.sidebarSub}>League Management</div>
@@ -119,7 +126,7 @@ export default function AdminPanel({ session, onBack }) {
 
           {/* Nav items */}
           <nav style={ds.nav}>
-            {SECTIONS.map(({ id, label, emoji }) => {
+            {SECTIONS.map(({ id, label, Icon }) => {
               const active = activeSection === id
               return (
                 <button
@@ -133,7 +140,9 @@ export default function AdminPanel({ session, onBack }) {
                   }}
                   onClick={() => setActiveSection(id)}
                 >
-                  <span style={ds.navEmoji}>{emoji}</span>
+                  <span style={ds.navIcon}>
+                    <Icon size={17} strokeWidth={active ? 2.25 : 1.75} />
+                  </span>
                   <span>{label}</span>
                 </button>
               )
@@ -152,11 +161,14 @@ export default function AdminPanel({ session, onBack }) {
         <div style={ds.main}>
           {/* Top bar */}
           <div style={ds.topBar}>
-            <span style={ds.topBarEmoji}>{current.emoji}</span>
+            <span style={ds.topBarIcon}>
+              <CurrentIcon size={22} strokeWidth={2} color="var(--green-dark)" />
+            </span>
             <h1 style={ds.topBarTitle}>{current.label}</h1>
             {activeEventLabel && (
               <div style={ds.activeWeekPill}>
-                🟢 {activeEventLabel} active
+                <span style={ds.statusDot} />
+                {activeEventLabel} active
               </div>
             )}
           </div>
@@ -179,11 +191,18 @@ export default function AdminPanel({ session, onBack }) {
           ← League
         </button>
         <div style={ms.headerCenter}>
-          <span style={ms.headerEmoji}>{current.emoji}</span>
+          <span style={ms.headerIcon}>
+            <CurrentIcon size={18} strokeWidth={2} color="#fff" />
+          </span>
           <span style={ms.headerTitle}>Admin — {current.label}</span>
         </div>
         {activeEventLabel
-          ? <div style={ms.activeWeekPill}>🟢 {activeEventLabel}</div>
+          ? (
+            <div style={ms.activeWeekPill}>
+              <span style={ms.statusDot} />
+              {activeEventLabel}
+            </div>
+          )
           : <div style={{ width: 60 }} />
         }
       </div>
@@ -191,7 +210,7 @@ export default function AdminPanel({ session, onBack }) {
       {/* Horizontal scrolling section nav */}
       <div style={ms.navScroll}>
         <div style={ms.navInner}>
-          {SECTIONS.map(({ id, label, emoji }) => {
+          {SECTIONS.map(({ id, label, Icon }) => {
             const active = activeSection === id
             return (
               <button
@@ -205,7 +224,8 @@ export default function AdminPanel({ session, onBack }) {
                 }}
                 onClick={() => setActiveSection(id)}
               >
-                {emoji} {label}
+                <Icon size={14} strokeWidth={2} style={{ verticalAlign: '-2px', marginRight: 5 }} />
+                {label}
               </button>
             )
           })}
@@ -246,8 +266,14 @@ const ds = {
     borderBottom: '1px solid rgba(255,255,255,0.12)',
   },
   sidebarLogo: {
-    fontSize: '28px',
-    lineHeight: 1,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '40px',
+    height: '40px',
+    borderRadius: '10px',
+    background: 'rgba(255,255,255,0.08)',
+    flexShrink: 0,
   },
   sidebarTitle: {
     fontSize: '15px',
@@ -282,10 +308,11 @@ const ds = {
     width: '100%',
     letterSpacing: '0.1px',
   },
-  navEmoji: {
-    fontSize: '16px',
+  navIcon: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
     width: '22px',
-    textAlign: 'center',
     flexShrink: 0,
   },
   sidebarFooter: {
@@ -319,8 +346,9 @@ const ds = {
     flexShrink: 0,
     boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
   },
-  topBarEmoji: {
-    fontSize: '22px',
+  topBarIcon: {
+    display: 'flex',
+    alignItems: 'center',
   },
   topBarTitle: {
     fontSize: '20px',
@@ -337,6 +365,9 @@ const ds = {
   },
   activeWeekPill: {
     marginLeft: 'auto',
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '6px',
     fontSize: '12px',
     fontWeight: 700,
     color: 'var(--green-dark)',
@@ -345,6 +376,14 @@ const ds = {
     borderRadius: '20px',
     border: '1px solid var(--green)',
     whiteSpace: 'nowrap',
+  },
+  statusDot: {
+    display: 'inline-block',
+    width: '8px',
+    height: '8px',
+    borderRadius: '50%',
+    background: 'var(--green)',
+    boxShadow: '0 0 0 2px rgba(45,106,79,0.18)',
   },
 }
 
@@ -375,6 +414,9 @@ const ms = {
     flexShrink: 0,
   },
   activeWeekPill: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '5px',
     fontSize: '10px',
     fontWeight: 700,
     color: 'var(--green-dark)',
@@ -384,12 +426,19 @@ const ms = {
     whiteSpace: 'nowrap',
     flexShrink: 0,
   },
+  statusDot: {
+    display: 'inline-block',
+    width: '7px',
+    height: '7px',
+    borderRadius: '50%',
+    background: 'var(--green)',
+  },
   headerCenter: {
     display: 'flex',
     alignItems: 'center',
     gap: '8px',
   },
-  headerEmoji: { fontSize: '18px' },
+  headerIcon: { display: 'flex', alignItems: 'center' },
   headerTitle: {
     fontSize: '15px',
     fontWeight: 700,

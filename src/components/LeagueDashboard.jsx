@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import { Trophy, User, Repeat2, Users, Flag, Lock, Shield } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useIsAdmin } from '../hooks/useIsAdmin'
 import { useLocation } from '../context/LocationContext'
@@ -60,10 +61,10 @@ export default function LeagueDashboard({ session }) {
   )
 
   const tiles = [
-    { emoji: '🏆', label: 'Standings',    action: () => setShowStandings(true)  },
-    { emoji: '👤', label: 'My Profile',   action: () => setShowProfile(true)    },
-    { emoji: '🔄', label: 'Request Sub',  action: () => setShowSubRequest(true) },
-    { emoji: '👥', label: 'Friends',      action: () => setShowFriends(true)    },
+    { Icon: Trophy,  label: 'Standings',    action: () => setShowStandings(true)  },
+    { Icon: User,    label: 'My Profile',   action: () => setShowProfile(true)    },
+    { Icon: Repeat2, label: 'Request Sub',  action: () => setShowSubRequest(true) },
+    { Icon: Users,   label: 'Friends',      action: () => setShowFriends(true)    },
   ]
 
   return (
@@ -78,7 +79,8 @@ export default function LeagueDashboard({ session }) {
         </div>
         {!checking && isAdmin && (
           <button style={styles.adminBadge} onClick={() => setShowAdmin(true)}>
-            ⚙️ Admin
+            <Shield size={14} strokeWidth={2.25} style={{ marginRight: 4, verticalAlign: '-2px' }} />
+            Admin
           </button>
         )}
       </div>
@@ -94,7 +96,11 @@ export default function LeagueDashboard({ session }) {
           onClick={activeRound ? () => setShowScoreEntry(true) : undefined}
           disabled={!activeRound}
         >
-          <span style={styles.scoresBannerEmoji}>{activeRound ? '⛳' : '🔒'}</span>
+          <span style={styles.scoresBannerIcon}>
+            {activeRound
+              ? <Flag size={26} strokeWidth={2} color="#fff" />
+              : <Lock size={24} strokeWidth={2} color="var(--gray-500)" />}
+          </span>
           <div style={styles.scoresBannerText}>
             <span style={{ ...styles.scoresBannerTitle, color: activeRound ? '#fff' : 'var(--gray-500)' }}>
               {activeRound ? `Week ${activeRound.week_number} — Submit Scores` : 'No active round this week'}
@@ -109,14 +115,14 @@ export default function LeagueDashboard({ session }) {
 
       {/* 2×2 tile grid */}
       <div style={styles.grid}>
-        {tiles.map(({ emoji, label, action, soon }) => (
+        {tiles.map(({ Icon, label, action, soon }) => (
           <button
             key={label}
             style={{ ...styles.tile, ...(soon ? styles.tileDimmed : {}) }}
             disabled={soon || !action}
             onClick={action || undefined}
           >
-            <span style={styles.tileEmoji}>{emoji}</span>
+            <Icon size={30} strokeWidth={1.75} color="var(--green)" />
             <span style={styles.tileLabel}>{label}</span>
             {soon && <span style={styles.comingSoon}>Soon</span>}
           </button>
@@ -125,7 +131,8 @@ export default function LeagueDashboard({ session }) {
 
       {isAdmin && (
         <button style={styles.adminPanelBtn} onClick={() => setShowAdmin(true)}>
-          ⚙️ Open Admin Panel
+          <Shield size={16} strokeWidth={2.25} style={{ marginRight: 6, verticalAlign: '-3px' }} />
+          Open Admin Panel
         </button>
       )}
 
@@ -155,7 +162,7 @@ const styles = {
     borderRadius: 'var(--radius)', border: 'none', textAlign: 'left',
     boxSizing: 'border-box', boxShadow: 'var(--shadow)',
   },
-  scoresBannerEmoji: { fontSize: '26px', flexShrink: 0 },
+  scoresBannerIcon:  { display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   scoresBannerText:  { flex: 1, display: 'flex', flexDirection: 'column', gap: '3px' },
   scoresBannerTitle: { fontSize: '14px', fontWeight: 700 },
   scoresBannerSub:   { fontSize: '12px' },
@@ -173,7 +180,6 @@ const styles = {
     cursor: 'pointer',
   },
   tileDimmed:  { opacity: 0.55 },
-  tileEmoji:   { fontSize: '32px' },
   tileLabel:   { fontSize: '14px', fontWeight: 600, color: 'var(--green-dark)' },
   comingSoon: {
     position: 'absolute', top: '8px', right: '8px',
