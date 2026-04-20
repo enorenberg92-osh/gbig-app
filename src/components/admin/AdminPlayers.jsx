@@ -67,7 +67,6 @@ export default function AdminPlayers() {
 
   async function handleSavePlayer(e) {
     e.preventDefault()
-    setSaving(true)
 
     const payload = {
       name: playerForm.name.trim(),
@@ -78,71 +77,176 @@ export default function AdminPlayers() {
       league_password: playerForm.league_password.trim() || 'password',
     }
 
-    let error
     if (editingPlayer) {
-      ;({ error } = await supabase.from('players').update(payload).eq('id', editingPlayer.id))
+      setSaving(true)
+      const { error } = await supabase.from('players').update(payload).eq('id', editingPlayer.id)
       setSaving(false)
       if (error) { showToast('Error: ' + error.message, 'error'); return }
       showToast('Player updated!')
-    } else {
-      // Insert and get the new player's ID back so we can create their account
-      const { data: newPlayer, error: insertError } = await supabase
-        .from('players')
-        .insert({ ...payload, location_id: locationId })
-        .select('id')
-        .single()
+      setShowPlayerForm(false); setEditingPlayer(null); setPlayerForm(EMPTY_PLAYER_FORM)
+      loadAll()
+      return
+    }
 
-      setSaving(false)
-      if (insertError) { showToast('Error: ' + insertError.message, 'error'); return }
+    // ── New-player duplicate check ──────────────────────────────────────────
+    // Bugs this prevents: admin accidentally adds "Mike" when "Michael" already
+    // exists, or re-types a name a second time thinking the first try failed.
+    // We match against state (already loaded in loadAll), so no extra DB round
+    // trip for the 99% of cases where there's no duplicate.
+    //
+    // Match rules (either one triggers the warning):
+    //   • Email exact match, case-insensitive (stored lowercased, so this is
+    //     effectively ==).
+    //   • Name match after lowercase + collapsed whitespace.
+    const trimmedName = payload.name.toLowerCase().replace(/\s+/g, ' ').trim()
+    const matches = players.filter(p => {
+      if (payload.email && p.email && p.email.toLowerCase().trim() === payload.email) return true
+      if (trimmedName && p.name && p.name.toLowerCase().replace(/\s+/g, ' ').trim() === trimmedName) return true
+      return false
+    })
 
-      // Automatically create a login account if an email was provided
-      if (payload.email && newPlayer?.id) {
-        try {
-          // Forward the caller's access token so the Edge Function verifies
-          // we're an admin for this player's location before creating anything.
-          const { data: { session } } = await supabase.auth.getSession()
-          const accessToken = session?.access_token
-          if (!accessToken) throw new Error('You are not signed in.')
+    if (matches.length) {
+      const matchList = matches.map(p => {
+        const parts = [p.name]
+        if (p.email) parts.push(p.email)
+        if (p.handicap != null) parts.push(`HCP ${p.handicap}`)
+        return `• ${parts.join(' — ')}`
+      }).join('\n')
 
-          const fnRes = await fetch(
-            import.meta.env.VITE_SUPABASE_URL + '/functions/v1/create-player-account',
-            {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': 'Bearer ' + accessToken,
-              },
-              body: JSON.stringify({
-                player_id: newPlayer.id,
-                email:     payload.email,
-                password:  payload.league_password || 'password',
-              }),
-            }
-          )
-          const fnBody = await fnRes.json()
-          if (!fnRes.ok || fnBody?.error) {
-            showToast(`Player added, but account creation failed: ${fnBody?.error || fnRes.status}`, 'error')
-          } else {
-            showToast(`Player added & account created! They can sign in now.`)
+      setDialog({
+        message:
+          `Heads up: a player with a matching name or email already exists in this league:\n\n` +
+          `${matchList}\n\n` +
+          `Add ${payload.name} anyway?`,
+        confirmLabel: 'Add Anyway',
+        destructive: false,
+        onConfirm: () => doInsertNewPlayer(payload),
+      })
+      return
+    }
+
+    await doInsertNewPlayer(payload)
+  }
+
+  // Extracted insert path — called either directly (no duplicate) or from
+  // the "Add Anyway" branch of the duplicate-detection dialog. Keeps the
+  // Edge Function call, toast choice, and form reset all in one place.
+  async function doInsertNewPlayer(payload) {
+    setSaving(true)
+
+    const { data: newPlayer, error: insertError } = await supabase
+      .from('players')
+      .insert({ ...payload, location_id: locationId })
+      .select('id')
+      .single()
+
+    setSaving(false)
+    if (insertError) { showToast('Error: ' + insertError.message, 'error'); return }
+
+    // Automatically create a login account if an email was provided
+    if (payload.email && newPlayer?.id) {
+      try {
+        // Forward the caller's access token so the Edge Function verifies
+        // we're an admin for this player's location before creating anything.
+        const { data: { session } } = await supabase.auth.getSession()
+        const accessToken = session?.access_token
+        if (!accessToken) throw new Error('You are not signed in.')
+
+        const fnRes = await fetch(
+          import.meta.env.VITE_SUPABASE_URL + '/functions/v1/create-player-account',
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer ' + accessToken,
+            },
+            body: JSON.stringify({
+              player_id: newPlayer.id,
+              email:     payload.email,
+              password:  payload.league_password || 'password',
+            }),
           }
-        } catch (e) {
-          showToast(`Player added, but account creation failed: ${e.message}`, 'error')
+        )
+        const fnBody = await fnRes.json()
+        if (!fnRes.ok || fnBody?.error) {
+          showToast(`Player added, but account creation failed: ${fnBody?.error || fnRes.status}`, 'error')
+        } else {
+          showToast(`Player added & account created! They can sign in now.`)
         }
-      } else {
-        showToast('Player added! (No email — add one later to create a login.)')
+      } catch (e) {
+        showToast(`Player added, but account creation failed: ${e.message}`, 'error')
       }
+    } else {
+      showToast('Player added! (No email — add one later to create a login.)')
     }
 
     setShowPlayerForm(false); setEditingPlayer(null); setPlayerForm(EMPTY_PLAYER_FORM)
     loadAll()
   }
 
-  function handleDeletePlayer(player) {
+  // Cascaded player delete.
+  //
+  // Previously this only unlinked team membership and attempted `.delete()` on
+  // the player row — which Postgres refused because `scores.player_id`,
+  // `subs.player_id`, `follows.*_id`, and `messages.*_id` all FK into
+  // `players` with ON DELETE NO ACTION. That left admins with "update or
+  // delete on table players violates foreign key constraint …" errors and no
+  // way forward short of hand-running SQL.
+  //
+  // New flow: count children up front so the confirm dialog tells the admin
+  // exactly what's about to vanish, then delete them in dependency order
+  // inside the confirm handler. Each step checks for an error and aborts on
+  // failure — we never want a half-deleted player row.
+  async function handleDeletePlayer(player) {
+    // Count every child table that references this player. `head: true, count: 'exact'`
+    // asks Postgres for the row count without returning the rows themselves.
+    let counts = { scores: 0, subs: 0, follows: 0, messages: 0 }
+    try {
+      const [scoresRes, subsRes, followsRes, messagesRes] = await Promise.all([
+        supabase.from('scores')
+          .select('id', { count: 'exact', head: true })
+          .eq('player_id', player.id),
+        supabase.from('subs')
+          .select('id', { count: 'exact', head: true })
+          .or(`player_id.eq.${player.id},sub_player_id.eq.${player.id}`),
+        supabase.from('follows')
+          .select('follower_id', { count: 'exact', head: true })
+          .or(`follower_id.eq.${player.id},following_id.eq.${player.id}`),
+        supabase.from('messages')
+          .select('id', { count: 'exact', head: true })
+          .or(`sender_id.eq.${player.id},recipient_id.eq.${player.id}`),
+      ])
+      counts = {
+        scores:   scoresRes.count   ?? 0,
+        subs:     subsRes.count     ?? 0,
+        follows:  followsRes.count  ?? 0,
+        messages: messagesRes.count ?? 0,
+      }
+    } catch (e) {
+      // If the pre-count fails (RLS, network), fall through with zeros; the
+      // admin still gets a confirm dialog and the delete will attempt anyway.
+      console.warn('Pre-delete child count failed:', e)
+    }
+
+    const childLines = []
+    if (counts.scores)   childLines.push(`${counts.scores} score row${counts.scores === 1 ? '' : 's'}`)
+    if (counts.subs)     childLines.push(`${counts.subs} sub request${counts.subs === 1 ? '' : 's'}`)
+    if (counts.follows)  childLines.push(`${counts.follows} friendship link${counts.follows === 1 ? '' : 's'}`)
+    if (counts.messages) childLines.push(`${counts.messages} message${counts.messages === 1 ? '' : 's'}`)
+
+    const preamble = `Remove ${player.name}? This cannot be undone.`
+    const message  = childLines.length
+      ? `${preamble}\n\nThe following will also be permanently deleted:\n• ${childLines.join('\n• ')}`
+      : `${preamble}\n\nNo scores, subs, or social activity are attached to this player.`
+
     setDialog({
-      message: `Remove ${player.name}? This cannot be undone.`,
-      confirmLabel: 'Remove',
+      message,
+      confirmLabel: 'Remove Player',
+      destructive: true,
       onConfirm: async () => {
-        // Unlink from team
+        // 1. Unlink from team (nullify the slot on the team row, clear team_id
+        //    on the player). Doing this before the row delete keeps the team
+        //    display sane even if a later step fails.
         if (player.team_id) {
           const team = teams.find(t => t.id === player.team_id)
           if (team) {
@@ -151,9 +255,28 @@ export default function AdminPlayers() {
           }
           await supabase.from('players').update({ team_id: null }).eq('id', player.id)
         }
+
+        // 2. Delete children in FK-dependency order. Any error here aborts and
+        //    surfaces to the admin so they can investigate — we do NOT try to
+        //    press through a partial delete.
+        const steps = [
+          { label: 'scores',   q: supabase.from('scores').delete().eq('player_id', player.id) },
+          { label: 'subs',     q: supabase.from('subs').delete().or(`player_id.eq.${player.id},sub_player_id.eq.${player.id}`) },
+          { label: 'follows',  q: supabase.from('follows').delete().or(`follower_id.eq.${player.id},following_id.eq.${player.id}`) },
+          { label: 'messages', q: supabase.from('messages').delete().or(`sender_id.eq.${player.id},recipient_id.eq.${player.id}`) },
+        ]
+        for (const step of steps) {
+          const { error } = await step.q
+          if (error) {
+            showToast(`Error deleting ${step.label}: ${error.message}`, 'error')
+            return
+          }
+        }
+
+        // 3. Finally, the player row itself.
         const { error } = await supabase.from('players').delete().eq('id', player.id)
         if (error) { showToast('Error: ' + error.message, 'error'); return }
-        showToast(`${player.name} removed.`)
+        showToast(`${player.name} and all related data removed.`)
         loadAll()
       },
     })

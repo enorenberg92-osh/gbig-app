@@ -81,17 +81,35 @@ export async function recalcPlayerHandicap(supabase, playerId, locationId, setti
 
     if (!player || player.handicap_locked) return { skipped: true }
 
-    // Load all their scores with course par info
+    // Load all their scores with course par info. Order chronologically so
+    // `calcHandicap`'s `.slice(-scoresUsed)` picks the most recent N.
+    //
+    // Previous version ordered by `scores.created_at`, which doesn't exist on
+    // this table; Supabase silently returned unordered rows, and handicap
+    // calcs could use an arbitrary subset of scores instead of the latest.
+    // We pull week_number + start_date from the joined events row and sort
+    // client-side (week_number primary, start_date fallback for nulls).
     const { data: scores } = await supabase
       .from('scores')
-      .select('gross_total, events(courses(hole_pars))')
+      .select('gross_total, events(week_number, start_date, courses(hole_pars))')
       .eq('player_id', playerId)
       .eq('location_id', locationId)
       .eq('entry_type', 'played')
       .not('gross_total', 'is', null)
-      .order('created_at', { ascending: true })
 
-    const diffs = (scores || [])
+    // Sort by week_number ascending (nulls last), then start_date ascending.
+    const sortedScores = [...(scores || [])].sort((a, b) => {
+      const aw = a.events?.week_number
+      const bw = b.events?.week_number
+      if (aw != null && bw != null && aw !== bw) return aw - bw
+      if (aw == null && bw != null) return 1
+      if (aw != null && bw == null) return -1
+      const ad = a.events?.start_date || ''
+      const bd = b.events?.start_date || ''
+      return ad.localeCompare(bd)
+    })
+
+    const diffs = sortedScores
       .map(s => {
         const holePars  = s.events?.courses?.hole_pars
         const coursePar = holePars ? holePars.reduce((sum, p) => sum + p, 0) : null

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { AlertTriangle, Target, Plus, Check } from 'lucide-react'
+import { AlertTriangle, Target, Plus, Check, Trash2 } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { recalcPlayerHandicap } from '../../lib/handicapCalc'
 import { useLocation } from '../../context/LocationContext'
@@ -267,6 +267,56 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
       })
   }
 
+  // Remove a single player's score for the currently-selected event.
+  // Distinct from "clear inputs" — this actually DELETEs the score row so
+  // the player's handicap and profile reflect reality. Also removes the
+  // mirrored sub row (if any) so a sub who played doesn't keep an orphan
+  // score against their own profile. Fires recalcPlayerHandicap for both.
+  async function handleDeleteScore(team, player, existingScore) {
+    if (!existingScore?.id) return
+    const ok = window.confirm(
+      `Remove ${player.name}'s score for this week?\n\nThis permanently deletes the ` +
+      `score row and recalculates their handicap. It cannot be undone.`
+    )
+    if (!ok) return
+
+    // Look up any approved sub that was recorded for this player/event —
+    // if the sub has their own player profile, their mirrored score row
+    // must go too so the sub's profile doesn't keep a stale round.
+    const sub = subMap[player.id]
+
+    const { error: delErr } = await supabase
+      .from('scores')
+      .delete()
+      .eq('id', existingScore.id)
+
+    if (delErr) { showToast('Error removing score: ' + delErr.message, 'error'); return }
+
+    let subPlayerId = null
+    if (sub?.sub_player_id) {
+      subPlayerId = sub.sub_player_id
+      await supabase
+        .from('scores')
+        .delete()
+        .eq('event_id', selectedEvent)
+        .eq('player_id', subPlayerId)
+        .eq('location_id', locationId)
+    }
+
+    showToast(`Removed ${player.name}'s score`)
+    setEditingTeam(null)
+    loadEventData(selectedEvent)
+
+    // Silently recalc handicaps for the player (and the sub if they played).
+    const ids = [player.id, subPlayerId].filter(Boolean)
+    Promise.all(ids.map(id => recalcPlayerHandicap(supabase, id, locationId)))
+      .then(results => {
+        results.forEach((r, i) => {
+          if (r.updated) console.log(`Handicap updated: player ${ids[i]} → ${r.newHcp} (was ${r.oldHcp})`)
+        })
+      })
+  }
+
   async function handleCalculateSkins() {
     // Load scores + all players independently (avoids FK join issues)
     const [{ data: allScores }, { data: skinPlayers }] = await Promise.all([
@@ -359,6 +409,7 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
                   onHoleChange={updateHole}
                   onSave={() => handleSaveTeamScores(team)}
                   onCancel={() => setEditingTeam(null)}
+                  onDeleteScore={handleDeleteScore}
                   calcGross={calcGross}
                   calcNet={calcNet}
                   calcNetVsPar={calcNetVsPar}
@@ -392,6 +443,7 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
                   onHoleChange={updateHole}
                   onSave={() => handleSaveTeamScores(team)}
                   onCancel={() => setEditingTeam(null)}
+                  onDeleteScore={handleDeleteScore}
                   calcGross={calcGross}
                   calcNet={calcNet}
                   calcNetVsPar={calcNetVsPar}
@@ -464,7 +516,7 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
 }
 
 // ─── Team Row Component ───────────────────────────────────────────────────────
-function TeamRow({ team, holePars, isEditing, holeScores, saving, subMap = {}, onEdit, onHoleChange, onSave, onCancel, calcGross, calcNet, calcNetVsPar }) {
+function TeamRow({ team, holePars, isEditing, holeScores, saving, subMap = {}, onEdit, onHoleChange, onSave, onCancel, onDeleteScore, calcGross, calcNet, calcNetVsPar }) {
   const totalPar = holePars.reduce((s, p) => s + p, 0)
   const submitted = !!(team.score1 || team.score2)
 
@@ -668,6 +720,33 @@ function TeamRow({ team, holePars, isEditing, holeScores, saving, subMap = {}, o
             )
           })()}
 
+          {/* Danger zone: per-player score deletion. Only shown when that player
+              already has a saved score — otherwise there's nothing to remove. */}
+          {(team.score1 || team.score2) && onDeleteScore && (
+            <div style={trStyles.removeRow}>
+              {team.score1 && (
+                <button
+                  type="button"
+                  onClick={() => onDeleteScore(team, team.p1, team.score1)}
+                  style={trStyles.removeBtn}
+                >
+                  <Trash2 size={12} strokeWidth={2.25} style={{ verticalAlign: '-2px', marginRight: 4 }} />
+                  Remove {team.p1.name.split(' ')[0]}'s score
+                </button>
+              )}
+              {team.score2 && (
+                <button
+                  type="button"
+                  onClick={() => onDeleteScore(team, team.p2, team.score2)}
+                  style={trStyles.removeBtn}
+                >
+                  <Trash2 size={12} strokeWidth={2.25} style={{ verticalAlign: '-2px', marginRight: 4 }} />
+                  Remove {team.p2.name.split(' ')[0]}'s score
+                </button>
+              )}
+            </div>
+          )}
+
           <div style={trStyles.actions}>
             <Button
               variant="primary"
@@ -774,6 +853,17 @@ const trStyles = {
   summaryLabel: { fontSize: '10px', color: 'var(--green)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.3px' },
   summaryValue: { fontSize: '16px', fontWeight: 800, color: 'var(--green-dark)' },
   actions: { display: 'flex', gap: '10px' },
+  removeRow: { display: 'flex', gap: '12px', flexWrap: 'wrap', justifyContent: 'center', marginBottom: '10px' },
+  removeBtn: {
+    background: 'transparent',
+    border: 'none',
+    color: '#c53030',
+    fontSize: '11px',
+    fontWeight: 600,
+    cursor: 'pointer',
+    padding: '4px 8px',
+    borderRadius: '6px',
+  },
   submittedSummary: { paddingTop: '6px', display: 'flex', gap: '12px', flexWrap: 'wrap' },
   submittedRow: { display: 'flex', gap: '8px', alignItems: 'center' },
   submittedName: { fontSize: '12px', fontWeight: 600, color: 'var(--black)' },
