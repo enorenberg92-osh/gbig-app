@@ -68,10 +68,20 @@ export default function AdminPlayers() {
   async function handleSavePlayer(e) {
     e.preventDefault()
 
+    // Handicap is required by the form; still truncate + clamp on save as
+    // defense in depth so a manually typed decimal or out-of-range value
+    // can't sneak into the DB. Spec: integers only, [-2, 27]. If you want
+    // different rules for a future league, change the floor/ceil here and
+    // the defaults in handicapCalc.js DEFAULT_SETTINGS in tandem.
+    const rawHcp = parseFloat(playerForm.handicap)
+    const handicap = Number.isFinite(rawHcp)
+      ? Math.max(-2, Math.min(27, Math.floor(rawHcp)))
+      : null
+
     const payload = {
       name: playerForm.name.trim(),
       email: playerForm.email.trim().toLowerCase() || null,
-      handicap: playerForm.handicap !== '' ? parseFloat(playerForm.handicap) : null,
+      handicap,
       in_skins: playerForm.in_skins,
       handicap_locked: playerForm.handicap_locked,
       league_password: playerForm.league_password.trim() || 'password',
@@ -549,7 +559,18 @@ export default function AdminPlayers() {
             </div>
             <div style={styles.fieldGroup}>
               <label style={styles.label}>Handicap</label>
-              <input type="number" step="0.1" min="-10" max="54" style={styles.input} value={playerForm.handicap} onChange={e => setPlayerForm(f => ({ ...f, handicap: e.target.value }))} placeholder="e.g. 12.4" />
+              <input
+                type="number"
+                step="1"
+                min="-2"
+                max="27"
+                required
+                style={styles.input}
+                value={playerForm.handicap}
+                onChange={e => setPlayerForm(f => ({ ...f, handicap: e.target.value }))}
+                placeholder="e.g. 12"
+              />
+              <span style={styles.hint}>Whole numbers only, -2 to 27.</span>
             </div>
 
             {/* Handicap Lock Toggle */}
@@ -786,8 +807,10 @@ export default function AdminPlayers() {
           teams.map((team, idx) => {
             const p1 = players.find(p => p.id === team.player1_id)
             const p2 = players.find(p => p.id === team.player2_id)
+            // Handicaps are integers per league spec, so the sum is already an
+            // integer — don't slap a trailing ".0" on it via toFixed(1).
             const combinedHcp = (p1?.handicap != null && p2?.handicap != null)
-              ? (p1.handicap + p2.handicap).toFixed(1) : null
+              ? String(p1.handicap + p2.handicap) : null
             return (
               <div key={team.id} style={styles.teamRow}>
                 <div style={styles.teamNum}>{idx + 1}</div>

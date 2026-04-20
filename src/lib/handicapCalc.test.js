@@ -109,14 +109,27 @@ describe('calcHandicap — math and rounding', () => {
     expect(calcHandicap([50], { ...DEFAULT_SETTINGS, maxHandicap: 36 })).toBe(36)
   })
 
-  it('caps at 0 on the low end (never returns negative)', () => {
-    // Scratch golfer / hypothetical: avg par or below.
-    // Single score -5: -5 * 0.90 = -4.5 → floor -5 → capped at 0
-    expect(calcHandicap([-5])).toBe(0)
+  it('caps at minHandicap (-2 default) for plus-handicap golfers', () => {
+    // Hypothetical plus-handicap golfer: single diff of -5.
+    // -5 * 0.90 = -4.5 → floor -5 → clamped at -2 (the default minHandicap).
+    // Previously this test asserted 0; the spec is -2 to 27, so 0 was wrong.
+    expect(calcHandicap([-5])).toBe(-2)
+  })
+
+  it('honors custom minHandicap', () => {
+    // Future league with a more permissive low end: let plus golfers play off -5.
+    // -5 * 0.90 = -4.5 → floor -5 → clamped at -5 (custom floor).
+    expect(calcHandicap([-5], { ...DEFAULT_SETTINGS, minHandicap: -5 })).toBe(-5)
   })
 
   it('returns 0 for a perfectly-par score', () => {
+    // 0 * 0.90 = 0 → floor 0 → inside [-2, 27] so no clamp.
     expect(calcHandicap([0])).toBe(0)
+  })
+
+  it('returns 0 for a just-above-par golfer', () => {
+    // Bordering case: diff of 1, * 0.9 = 0.9 → floor 0. Not clamped.
+    expect(calcHandicap([1])).toBe(0)
   })
 
   it('honors custom handicapPct', () => {
@@ -155,8 +168,8 @@ describe('calcBreakdown', () => {
       [10, 20, 30, 40],
       [5, 10, 20, 30, 40, 50],
       [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
-      [50],            // cap at 27
-      [-5],            // cap at 0
+      [50],            // cap at 27 (maxHandicap)
+      [-5],            // cap at -2 (minHandicap default)
       [999, 998, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],  // recency window
     ]
     for (const diffs of cases) {
