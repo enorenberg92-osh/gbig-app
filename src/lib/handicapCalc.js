@@ -108,6 +108,12 @@ export async function recalcPlayerHandicap(supabase, playerId, locationId, setti
       .eq('player_id', playerId)
       .eq('location_id', locationId)
       .eq('entry_type', 'played')
+      // Skip sit-out marker rows: when this player sat out and a sub played
+      // for them, AdminScores wrote a row with sub_played=true whose gross
+      // is the sub's. Without this filter, the sub's score contaminates the
+      // regular player's handicap. The sub is credited via a separate row
+      // where player_id = sub_player_id.
+      .eq('sub_played', false)
       .not('gross_total', 'is', null)
 
     // Sort by week_number ascending (nulls last), then start_date ascending.

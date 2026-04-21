@@ -25,10 +25,22 @@ export default function AdminHandicap() {
       supabase.from('players').select('*').eq('location_id', locationId).order('name'),
       supabase
         .from('scores')
-        .select('player_id, gross_total, created_at, events(id, name, start_date, event_date, week_number, courses(name, hole_pars))')
+        // NOTE: `scores` has no `created_at` column. Previously this query
+        // selected + ordered by created_at, which silently errored the whole
+        // query — every player showed "No Score History" and recalculate
+        // couldn't change any handicap. Order is derived client-side from
+        // the joined events.week_number + start_date instead.
+        //
+        // Also filter `sub_played=false`: when a regular player sits out and
+        // a sub plays for them, AdminScores writes a marker row on the regular
+        // player with sub_played=true. That row is NOT part of their handicap
+        // history (the sub gets credited on their own row where
+        // player_id = sub_player_id). Without this filter, Erich's handicap
+        // moved with his sub's score.
+        .select('player_id, gross_total, sub_played, events(id, name, start_date, event_date, week_number, courses(name, hole_pars))')
         .eq('location_id', locationId)
         .eq('entry_type', 'played')
-        .order('created_at', { ascending: true }),
+        .eq('sub_played', false),
       supabase.from('league_config').select('num_weeks').eq('location_id', locationId).limit(1).single(),
     ])
 
@@ -37,9 +49,23 @@ export default function AdminHandicap() {
       setSettings(s => ({ ...s, scoresUsed: leagueCfg.num_weeks }))
     }
 
+    // Sort client-side by events.week_number ascending (nulls last), then
+    // start_date. Mirrors handicapCalc.js so `scoresUsed` (slice -N) really
+    // does pick the N most recent rounds.
+    const sortedScores = [...(scores || [])].sort((a, b) => {
+      const aw = a.events?.week_number
+      const bw = b.events?.week_number
+      if (aw != null && bw != null && aw !== bw) return aw - bw
+      if (aw == null && bw != null) return 1
+      if (aw != null && bw == null) return -1
+      const ad = a.events?.start_date || a.events?.event_date || ''
+      const bd = b.events?.start_date || b.events?.event_date || ''
+      return ad.localeCompare(bd)
+    })
+
     // Build score history per player
     const history = {}
-    ;(scores || []).forEach(s => {
+    sortedScores.forEach(s => {
       const pid = s.player_id
       if (!history[pid]) history[pid] = []
       const holePars  = s.events?.courses?.hole_pars
@@ -297,7 +323,7 @@ export default function AdminHandicap() {
                       </div>
                       {Math.floor(breakdown.raw) !== breakdown.capped && (
                         <div style={styles.calcRow}>
-                          <span style={styles.calcLabel}>Capped at {SETTINGS.maxHandicap}</span>
+                          <span style={styles.calcLabel}>Capped at {settings.maxHandicap}</span>
                           <span style={styles.calcVal}>{breakdown.capped}</span>
                         </div>
                       )}
