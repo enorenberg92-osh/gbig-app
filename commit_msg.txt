@@ -1,0 +1,30 @@
+Alerts UX + push deliverability + PWA install
+
+Alerts (task #92)
+- Migration add_alerts_expires_at.sql: nullable expires_at column
+  + partial index (NULL = never expires)
+- send-alert Edge Function accepts + validates + writes expiresAt
+- AdminAlerts: expiry picker (24h/7d/30d/never), trash-button delete
+  with confirm, history filter to active-only
+- AlertsPage: same active-only filter + 60s periodic sweep so rows
+  age out of the feed without a reload
+
+Push deliverability (task #93)
+- send-alert + send-social-push: reject VAPID_EMAIL fallback to
+  no-reply@example.com (known deliverability-flag trigger) — fail
+  loudly if unset or placeholder
+- Set TTL: 24h + urgency: high on webpush.sendNotification
+- Rich payload (icon, tag, url) matching what public/sw.js reads so
+  iOS + Android render the full branded notification
+
+PWA install (task #94)
+- New src/components/InstallPrompt.jsx: captures beforeinstallprompt
+  on Android/Chrome, shows Share → Add to Home Screen guide modal
+  on iOS Safari, auto-hides when already standalone
+- iOS dismissal persists 7 days via localStorage
+- Wired into App.jsx header (hidden on /super-admin)
+- installFadeIn + installSlideUp keyframes in index.css
+
+Super-admin Phase 1 (was uncommitted from prior session)
+- src/hooks/useIsSuperAdmin.js, src/pages/SuperAdminPage.jsx,
+  supabase/migrations/add_super_admins.sql

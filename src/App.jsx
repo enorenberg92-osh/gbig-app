@@ -3,12 +3,17 @@ import { Routes, Route, Navigate, useLocation as useRouterLocation, useNavigate 
 import { supabase } from './lib/supabase'
 import { useLocation } from './context/LocationContext'
 import { useBrand } from './context/ThemeProvider'
+import { useIsSuperAdmin } from './hooks/useIsSuperAdmin'
 
 // Pages
 import ReservationsPage from './pages/ReservationsPage'
 import LeaguePage from './pages/LeaguePage'
 import EventsPage from './pages/EventsPage'
 import AlertsPage from './pages/AlertsPage'
+import SuperAdminPage from './pages/SuperAdminPage'
+
+// Header-mounted "Install App" button (Android beforeinstallprompt + iOS guide)
+import InstallPrompt from './components/InstallPrompt'
 
 // Icons (inline SVGs for zero-dependency)
 const Icons = {
@@ -124,6 +129,7 @@ function activeTabFromPath(pathname) {
   if (pathname.startsWith('/events'))       return 'events'
   if (pathname.startsWith('/alerts'))       return 'alerts'
   if (pathname.startsWith('/admin'))        return 'league' // admin lives under the league tab
+  if (pathname.startsWith('/super-admin'))  return null     // no bottom tab highlight for super-admin
   return 'reservations'
 }
 
@@ -137,8 +143,10 @@ export default function App() {
   const [loading, setLoading]       = useState(true)
   const [splashDone, setSplashDone] = useState(false)
   const [leagueName, setLeagueName] = useState('')
+  const { isSuperAdmin }            = useIsSuperAdmin(session)
 
-  const activeTab = activeTabFromPath(routerLoc.pathname)
+  const activeTab         = activeTabFromPath(routerLoc.pathname)
+  const onSuperAdminRoute = routerLoc.pathname.startsWith('/super-admin')
 
   useEffect(() => {
     if (!locationId) return
@@ -164,7 +172,10 @@ export default function App() {
   // location name so the top-level chrome stays uniform.
   let headerTitle    = 'Reservations'
   let headerSubtitle = appFullName
-  if (activeTab === 'league') {
+  if (onSuperAdminRoute) {
+    headerTitle    = 'Super Admin'
+    headerSubtitle = 'Ecosystem operations'
+  } else if (activeTab === 'league') {
     headerTitle    = 'League'
     headerSubtitle = session && leagueName ? leagueName : appFullName
   } else if (activeTab === 'events') {
@@ -199,6 +210,35 @@ export default function App() {
               <span style={styles.headerTitle}>{headerTitle}</span>
               {headerSubtitle ? <span style={styles.headerSubtitle}>{headerSubtitle}</span> : null}
             </div>
+            {session && isSuperAdmin && !onSuperAdminRoute && (
+              <button
+                style={styles.signOutBtn}
+                onClick={() => navigate('/super-admin')}
+                title="Super admin"
+              >
+                {/* Shield icon — marks the entry into ecosystem-wide tools */}
+                <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                  <path d="M12 3l8 3v6c0 4.5-3.5 8.5-8 9-4.5-.5-8-4.5-8-9V6l8-3z" />
+                </svg>
+              </button>
+            )}
+            {session && onSuperAdminRoute && (
+              <button
+                style={styles.signOutBtn}
+                onClick={() => navigate('/reservations')}
+                title="Back to app"
+              >
+                {/* Home icon — exit super-admin */}
+                <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                  <path d="M3 10l9-7 9 7v10a2 2 0 01-2 2h-3m-8 0H5a2 2 0 01-2-2V10z" />
+                  <path d="M9 21V12h6v9" />
+                </svg>
+              </button>
+            )}
+            {/* Install App — hidden on super-admin (staff-only surface)
+                 and auto-hidden by the component when unsupported or
+                 already installed. */}
+            {!onSuperAdminRoute && <InstallPrompt buttonStyle={styles.signOutBtn} />}
             {session && (
               <button
                 style={styles.signOutBtn}
@@ -221,12 +261,14 @@ export default function App() {
             <Route path="/league/*"      element={<LeaguePage session={session} />} />
             <Route path="/events"        element={<EventsPage />} />
             <Route path="/alerts"        element={<AlertsPage session={session} />} />
+            <Route path="/super-admin/*" element={<SuperAdminPage session={session} />} />
             {/* Fallback for unknown URLs */}
             <Route path="*"              element={<Navigate to="/reservations" replace />} />
           </Routes>
         </main>
 
-        {/* Bottom Tab Bar */}
+        {/* Bottom Tab Bar — hidden on /super-admin; that surface is its own world */}
+        {!onSuperAdminRoute && (
         <nav style={styles.tabBar}>
           {TABS.map(({ id, label, Icon }) => {
             const isActive = activeTab === id
@@ -264,6 +306,7 @@ export default function App() {
             )
           })}
         </nav>
+        )}
 
       </div>
     </>

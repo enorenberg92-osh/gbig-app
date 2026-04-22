@@ -139,6 +139,16 @@ a {
   100% { background-position: -200% 0; }
 }
 
+/* -- InstallPrompt modal (iOS "Add to Home Screen" sheet) -- */
+@keyframes installFadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes installSlideUp {
+  from { transform: translateY(100%); }
+  to   { transform: translateY(0); }
+}
+
 /* Subtle press feedback for interactive surfaces — applied via a class so
    it survives React's inline-style overrides without leaking into every
    <button> in the app. */

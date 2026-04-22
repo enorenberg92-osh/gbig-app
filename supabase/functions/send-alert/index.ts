@@ -29,14 +29,28 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
 
   try {
-    const { title, body, sentBy } = await req.json()
+    const { title, body, sentBy, expiresAt } = await req.json()
     if (!title || !body) return json({ error: 'title and body required' }, 400)
+
+    // expiresAt is optional. Must be ISO-8601 or null. Reject obvious garbage
+    // so we don't DB-write a string that Postgres will choke on later.
+    if (expiresAt != null) {
+      if (typeof expiresAt !== 'string' || Number.isNaN(Date.parse(expiresAt))) {
+        return json({ error: 'expiresAt must be an ISO timestamp or null' }, 400)
+      }
+    }
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!
     const serviceKey  = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     const vapidPub    = Deno.env.get('VAPID_PUBLIC_KEY')!
     const vapidPriv   = Deno.env.get('VAPID_PRIVATE_KEY')!
-    const vapidEmail  = Deno.env.get('VAPID_EMAIL') || 'no-reply@example.com'
+    const vapidEmail  = Deno.env.get('VAPID_EMAIL')
+    // Fail loudly if VAPID_EMAIL is unset. Android FCM + Apple Web Push
+    // treat placeholder domains as suspicious sender identity and can
+    // silently drop or spam-bucket the push. Require a real contact email.
+    if (!vapidEmail || vapidEmail.endsWith('example.com') || !vapidEmail.includes('@')) {
+      return json({ error: 'VAPID_EMAIL secret must be set to a real admin email' }, 500)
+    }
 
     // ── 1. Identify the caller from their JWT ───────────────────────────────
     const authHeader = req.headers.get('Authorization') || ''
@@ -74,7 +88,15 @@ Deno.serve(async (req) => {
 
     const { error: insertErr } = await admin
       .from('alerts')
-      .insert({ title, body, sent_by: sentBy || 'Admin', location_id: locationId })
+      .insert({
+        title,
+        body,
+        sent_by:     sentBy || 'Admin',
+        location_id: locationId,
+        // Null = never expires. Anything else is an ISO timestamp the
+        // client-side expiry picker computed (24h / 7d / 30d / never).
+        expires_at:  expiresAt || null,
+      })
     if (insertErr) throw insertErr
 
     // ── 4. Load subscriptions FOR THIS LOCATION ONLY ────────────────────────
@@ -91,12 +113,27 @@ Deno.serve(async (req) => {
     }
 
     // ── 5. Fan out ──────────────────────────────────────────────────────────
-    const payload = JSON.stringify({ title, body })
+    // Payload mirrors what public/sw.js reads: title, body, tag, url, icon.
+    // Without these, iOS + Android renderers fall back to a generic
+    // "unknown app" style that push gateways can silently classify down.
+    const payload = JSON.stringify({
+      title,
+      body,
+      tag:  'gbig-alert',
+      url:  '/#/alerts',
+      icon: '/icon-192.png',
+    })
+
+    // webpush options: TTL (offline queue, 24h) + urgency=high (league alerts
+    // are user-visible and time-sensitive, not marketing blasts).
+    const pushOptions = { TTL: 60 * 60 * 24, urgency: 'high' as const }
+
     const results = await Promise.allSettled(
       subs.map(s =>
         webpush.sendNotification(
           { endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth_key } },
-          payload
+          payload,
+          pushOptions
         )
       )
     )

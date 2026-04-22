@@ -42,7 +42,12 @@ Deno.serve(async (req) => {
     const anonKey     = Deno.env.get('SUPABASE_ANON_KEY')!
     const vapidPub    = Deno.env.get('VAPID_PUBLIC_KEY')!
     const vapidPriv   = Deno.env.get('VAPID_PRIVATE_KEY')!
-    const vapidEmail  = Deno.env.get('VAPID_EMAIL') || 'no-reply@example.com'
+    const vapidEmail  = Deno.env.get('VAPID_EMAIL')
+    // Fail loudly if VAPID_EMAIL is unset — placeholder domains are a known
+    // deliverability-flag trigger on Android FCM + Apple Web Push.
+    if (!vapidEmail || vapidEmail.endsWith('example.com') || !vapidEmail.includes('@')) {
+      return json({ error: 'VAPID_EMAIL secret must be set to a real admin email' }, 500)
+    }
 
     // ── 1. Identify caller ──────────────────────────────────────────────────
     const authHeader = req.headers.get('Authorization') || ''
@@ -104,12 +109,26 @@ Deno.serve(async (req) => {
     // ── 5. Fan out ──────────────────────────────────────────────────────────
     webpush.setVapidDetails(`mailto:${vapidEmail}`, vapidPub, vapidPriv)
 
-    const payload = JSON.stringify({ title, body })
+    // Payload mirrors public/sw.js. Tag + url + icon help native OS
+    // renderers show a full branded notification rather than a generic fallback.
+    const payload = JSON.stringify({
+      title,
+      body,
+      tag:  'gbig-social',
+      url:  '/#/social',
+      icon: '/icon-192.png',
+    })
+
+    // TTL 24h, urgency high — social pings are time-sensitive and
+    // user-visible (not marketing), which is the correct urgency class.
+    const pushOptions = { TTL: 60 * 60 * 24, urgency: 'high' as const }
+
     const results = await Promise.allSettled(
       subs.map(s =>
         webpush.sendNotification(
           { endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth_key } },
-          payload
+          payload,
+          pushOptions
         )
       )
     )

@@ -31,16 +31,32 @@ export default function AlertsPage({ session }) {
   const [subscribing, setSubscribing]   = useState(false)
 
   // ── Load past alerts ─────────────────────────────────────────
+  // Only surface "active" alerts: either no expiry set, or expiry is in the
+  // future. Expired rows stay in the DB for audit but don't appear in the
+  // feed. Admin side filters the same way in AdminAlerts.loadAll().
   useEffect(() => {
     if (!locationId) return
+    const nowIso = new Date().toISOString()
     supabase
       .from('alerts')
       .select('*')
       .eq('location_id', locationId)
+      .or(`expires_at.is.null,expires_at.gt.${nowIso}`)
       .order('created_at', { ascending: false })
       .limit(50)
       .then(({ data }) => { setAlerts(data || []); setLoading(false) })
   }, [locationId])
+
+  // Periodic sweep so alerts age out of the feed without a reload. Every 60s
+  // drop any alerts whose expires_at has slipped into the past. Cheap — the
+  // feed is capped at 50 rows.
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const now = Date.now()
+      setAlerts(prev => prev.filter(a => !a.expires_at || new Date(a.expires_at).getTime() > now))
+    }, 60 * 1000)
+    return () => clearInterval(interval)
+  }, [])
 
   // ── Realtime: new alerts appear instantly (scoped to this location) ─────────
   useEffect(() => {

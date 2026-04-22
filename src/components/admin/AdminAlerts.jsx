@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Megaphone, Inbox } from 'lucide-react'
+import { Megaphone, Inbox, Trash2, Clock } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useLocation } from '../../context/LocationContext'
 import { Button, Toast, EmptyState } from '../ui'
@@ -18,6 +18,28 @@ function timeAgo(dateStr) {
   return new Date(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
+// Human-readable "expires in" for future timestamps. Mirror of timeAgo.
+function timeUntil(dateStr) {
+  const diff  = new Date(dateStr).getTime() - Date.now()
+  if (diff <= 0)   return 'expired'
+  const mins  = Math.floor(diff / 60000)
+  const hours = Math.floor(diff / 3600000)
+  const days  = Math.floor(diff / 86400000)
+  if (mins < 60)  return `in ${mins}m`
+  if (hours < 24) return `in ${hours}h`
+  if (days < 30)  return `in ${days}d`
+  return `on ${new Date(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
+}
+
+// Turn an expiry-picker choice into an ISO string (or null for "never").
+function computeExpiresAt(choice) {
+  const now = Date.now()
+  if (choice === '24h')  return new Date(now + 24 * 3600 * 1000).toISOString()
+  if (choice === '7d')   return new Date(now + 7  * 86400 * 1000).toISOString()
+  if (choice === '30d')  return new Date(now + 30 * 86400 * 1000).toISOString()
+  return null
+}
+
 export default function AdminAlerts() {
   const { locationId, appName } = useLocation()
   const [alerts, setAlerts]       = useState([])
@@ -26,6 +48,10 @@ export default function AdminAlerts() {
   const [sending, setSending]     = useState(false)
   const [title, setTitle]         = useState('')
   const [body, setBody]           = useState('')
+  // How long the alert stays visible in the feed. NULL = never expires.
+  // Default 7d matches the "feed of recently-relevant league news" posture.
+  const [expiryChoice, setExpiryChoice] = useState('7d')
+  const [deletingId, setDeletingId]     = useState(null)
   const [toast, setToast]         = useState(null)
 
   const showToast = (msg, type = 'success') => {
@@ -34,8 +60,17 @@ export default function AdminAlerts() {
   }
 
   const load = async () => {
+    const nowIso = new Date().toISOString()
     const [{ data: alertRows }, { count }] = await Promise.all([
-      supabase.from('alerts').select('*').eq('location_id', locationId).order('created_at', { ascending: false }).limit(20),
+      // Active alerts only: either no expiry set, or expiry still in the future.
+      // Supabase .or() takes a comma-separated filter list in a single string.
+      supabase
+        .from('alerts')
+        .select('*')
+        .eq('location_id', locationId)
+        .or(`expires_at.is.null,expires_at.gt.${nowIso}`)
+        .order('created_at', { ascending: false })
+        .limit(20),
       supabase.from('push_subscriptions').select('*', { count: 'exact', head: true }).eq('location_id', locationId),
     ])
     setAlerts(alertRows || [])
@@ -55,13 +90,23 @@ export default function AdminAlerts() {
       const accessToken = session?.access_token
       if (!accessToken) throw new Error('You are not signed in.')
 
+      // Compute expires_at from the picker. 'never' -> null; otherwise an
+      // ISO timestamp N hours/days from now. The Edge Function writes it on
+      // the alerts row it inserts.
+      const expiresAt = computeExpiresAt(expiryChoice)
+
       const res = await fetch(EDGE_URL, {
         method:  'POST',
         headers: {
           'Content-Type':  'application/json',
           'Authorization': `Bearer ${accessToken}`,
         },
-        body: JSON.stringify({ title: title.trim(), body: body.trim(), sentBy: `${appName} Admin` }),
+        body: JSON.stringify({
+          title:     title.trim(),
+          body:      body.trim(),
+          sentBy:    `${appName} Admin`,
+          expiresAt,
+        }),
       })
       const json = await res.json()
       if (!res.ok) throw new Error(json.error || 'Send failed')
@@ -74,6 +119,16 @@ export default function AdminAlerts() {
     } finally {
       setSending(false)
     }
+  }
+
+  const handleDelete = async (id) => {
+    if (!confirm('Delete this alert? Players will no longer see it.')) return
+    setDeletingId(id)
+    const { error } = await supabase.from('alerts').delete().eq('id', id)
+    setDeletingId(null)
+    if (error) { showToast('Delete failed: ' + error.message, 'error'); return }
+    setAlerts(prev => prev.filter(a => a.id !== id))
+    showToast('Alert deleted')
   }
 
   const remaining = 160 - body.length
@@ -141,6 +196,31 @@ export default function AdminAlerts() {
           </div>
         )}
 
+        {/* ── Expiry picker ───────────────────────────────── */}
+        <label style={styles.label}>
+          <Clock size={11} strokeWidth={2.5} style={{ display: 'inline', verticalAlign: '-1px', marginRight: 4 }} />
+          Visible for
+        </label>
+        <select
+          style={styles.input}
+          value={expiryChoice}
+          onChange={e => setExpiryChoice(e.target.value)}
+        >
+          <option value="24h">24 hours</option>
+          <option value="7d">7 days</option>
+          <option value="30d">30 days</option>
+          <option value="never">Never — show until I delete it</option>
+        </select>
+        <p style={styles.pickerHint}>
+          {expiryChoice === 'never'
+            ? 'Alert will stay in the feed until you delete it.'
+            : `Alert will automatically disappear after ${
+                expiryChoice === '24h' ? '24 hours'
+                : expiryChoice === '7d' ? '7 days'
+                : '30 days'
+              }. The push still delivers immediately either way.`}
+        </p>
+
         <Button
           variant="primary"
           size="lg"
@@ -155,6 +235,7 @@ export default function AdminAlerts() {
             borderColor: 'var(--green-dark)',
             letterSpacing: '0.3px',
             boxShadow: '0 3px 10px rgba(45,106,79,0.3)',
+            marginTop: '14px',
           }}
         >
           Send to {subCount ?? '…'} Subscriber{subCount !== 1 ? 's' : ''}
@@ -176,15 +257,36 @@ export default function AdminAlerts() {
         )}
 
         <div style={styles.history}>
-          {alerts.map(a => (
-            <div key={a.id} style={styles.histCard}>
-              <div style={styles.histTop}>
-                <span style={styles.histTitle}>{a.title}</span>
-                <span style={styles.histTime}>{timeAgo(a.created_at)}</span>
+          {alerts.map(a => {
+            const isDeleting = deletingId === a.id
+            // Show "expires in …" when we have a future expiry set. Null means
+            // never expires; already-expired alerts were filtered out in load.
+            const expiryLabel = a.expires_at
+              ? `expires ${timeUntil(a.expires_at)}`
+              : 'never expires'
+            return (
+              <div key={a.id} style={styles.histCard}>
+                <div style={styles.histTop}>
+                  <span style={styles.histTitle}>{a.title}</span>
+                  <span style={styles.histTime}>{timeAgo(a.created_at)}</span>
+                </div>
+                <p style={styles.histBody}>{a.body}</p>
+                <div style={styles.histFooter}>
+                  <span style={styles.histExpiry}>{expiryLabel}</span>
+                  <button
+                    type="button"
+                    style={{ ...styles.deleteBtn, opacity: isDeleting ? 0.5 : 1 }}
+                    disabled={isDeleting}
+                    onClick={() => handleDelete(a.id)}
+                    aria-label="Delete alert"
+                  >
+                    <Trash2 size={14} strokeWidth={2} />
+                    {isDeleting ? 'Deleting…' : 'Delete'}
+                  </button>
+                </div>
               </div>
-              <p style={styles.histBody}>{a.body}</p>
-            </div>
-          ))}
+            )
+          })}
         </div>
       </div>
 
@@ -311,5 +413,37 @@ const styles = {
   histTitle: { fontSize: '14px', fontWeight: 700, color: 'var(--black)' },
   histTime: { fontSize: '11px', color: 'var(--gray-400)', flexShrink: 0 },
   histBody: { fontSize: '13px', color: 'var(--gray-600)', lineHeight: 1.4 },
+  histFooter: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: '8px',
+    paddingTop: '8px',
+    borderTop: '1px dashed var(--gray-200)',
+  },
+  histExpiry: {
+    fontSize: '11px',
+    color: 'var(--gray-400)',
+    fontStyle: 'italic',
+  },
+  deleteBtn: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '5px',
+    background: 'transparent',
+    color: '#c53030',
+    border: '1px solid #fed7d7',
+    borderRadius: 'var(--radius-sm)',
+    padding: '5px 10px',
+    fontSize: '11px',
+    fontWeight: 600,
+    cursor: 'pointer',
+  },
+  pickerHint: {
+    fontSize: '11px',
+    color: 'var(--gray-400)',
+    marginTop: '6px',
+    lineHeight: 1.4,
+  },
   loadingText: { fontSize: '13px', color: 'var(--gray-400)', textAlign: 'center', padding: '20px 0' },
 }
