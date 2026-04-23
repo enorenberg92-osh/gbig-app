@@ -14,11 +14,50 @@ export default function AdminSubs() {
   const [filter, setFilter]   = useState('pending') // 'pending' | 'approved' | 'all'
   const [dialog, setDialog]   = useState(null)
 
+  // Inline HCP editor state for the Sub Roster.
+  // editingHcpId = the player id currently in edit mode (or null).
+  // editingHcpValue = the raw string in the input (kept as a string so the
+  //   user can type '-' before the digit without the value snapping).
+  const [editingHcpId, setEditingHcpId]       = useState(null)
+  const [editingHcpValue, setEditingHcpValue] = useState('')
+  const [savingHcp, setSavingHcp]             = useState(false)
+
+  function startEditHcp(player) {
+    setEditingHcpId(player.id)
+    setEditingHcpValue(String(player.handicap ?? ''))
+  }
+  function cancelEditHcp() {
+    setEditingHcpId(null)
+    setEditingHcpValue('')
+  }
+  async function saveEditHcp(player) {
+    // Parse + clamp. Integer-only; sub handicaps can legitimately run higher
+    // than league cap, so allow [-2, 40].
+    const n = parseInt(editingHcpValue, 10)
+    if (!Number.isFinite(n)) {
+      showToast('Handicap must be a whole number.', 'error')
+      return
+    }
+    const clamped = Math.max(-2, Math.min(40, n))
+    if (clamped === player.handicap) { cancelEditHcp(); return }
+
+    setSavingHcp(true)
+    const { error } = await supabase
+      .from('players')
+      .update({ handicap: clamped })
+      .eq('id', player.id)
+    setSavingHcp(false)
+    if (error) { showToast('Error: ' + error.message, 'error'); return }
+    showToast(`Updated ${player.name || 'sub'} to HCP ${clamped}`)
+    cancelEditHcp()
+    load()
+  }
+
   useEffect(() => { if (locationId) load() }, [locationId])
 
   async function load() {
     // Fetch everything independently — no FK joins (avoids PostgREST relationship issues)
-    const [
+    let [
       { data: subRows,       error: subErr },
       { data: allPlayers },
       { data: allEvents },
@@ -31,6 +70,34 @@ export default function AdminSubs() {
     ])
 
     if (subErr) console.error('AdminSubs load error:', subErr.message)
+
+    // ── One-time heal: flip is_sub=true on any approved sub whose linked
+    // player never got the flag set (pre-fix data). We only refetch the
+    // roster if we touched anything so we don't loop.
+    const linkedIds = (subRows || [])
+      .filter(s => s.status === 'approved' && s.sub_player_id)
+      .map(s => s.sub_player_id)
+
+    const subPlayerIdSet = new Set((subPlayerRows || []).map(p => p.id))
+    const missing = linkedIds.filter(id => !subPlayerIdSet.has(id))
+    if (missing.length > 0) {
+      const { error: healErr } = await supabase
+        .from('players')
+        .update({ is_sub: true })
+        .in('id', missing)
+      if (healErr) {
+        console.warn('AdminSubs backfill heal failed:', healErr.message)
+      } else {
+        // Refetch the roster so the newly-flagged players appear immediately.
+        const { data: refetched } = await supabase
+          .from('players')
+          .select('id, first_name, last_name, name, handicap, email')
+          .eq('location_id', locationId)
+          .eq('is_sub', true)
+          .order('last_name', { ascending: true })
+        if (refetched) subPlayerRows = refetched
+      }
+    }
 
     // Build lookup maps
     const playerById = {}
@@ -59,8 +126,14 @@ export default function AdminSubs() {
   // ── Shared helper: find existing sub profile or create a new one ────────────
   async function ensureSubProfile(sub) {
     if (sub.sub_player_id) {
-      // Already linked — just keep their handicap current
-      await supabase.from('players').update({ handicap: sub.sub_handicap }).eq('id', sub.sub_player_id)
+      // Already linked — keep handicap current AND ensure they're flagged as a sub.
+      // (An already-linked player might be a regular league player whose is_sub
+      //  flag was never flipped — the Sub Roster filters on is_sub=true, so if
+      //  we don't set it here they'll be invisible in the roster.)
+      await supabase
+        .from('players')
+        .update({ handicap: sub.sub_handicap, is_sub: true })
+        .eq('id', sub.sub_player_id)
       return { id: sub.sub_player_id, error: null }
     }
 
@@ -78,7 +151,12 @@ export default function AdminSubs() {
       .maybeSingle()
 
     if (existing) {
-      await supabase.from('players').update({ handicap: sub.sub_handicap }).eq('id', existing.id)
+      // Defensive: the query already filtered on is_sub=true, but write it
+      // anyway so this branch stays consistent with the sub_player_id branch.
+      await supabase
+        .from('players')
+        .update({ handicap: sub.sub_handicap, is_sub: true })
+        .eq('id', existing.id)
       return { id: existing.id, error: null }
     }
 
@@ -343,6 +421,7 @@ export default function AdminSubs() {
         ) : (
           knownSubs.map(s => {
             const fullName = (`${s.first_name || ''} ${s.last_name || ''}`).trim() || s.name || 'Unknown'
+            const editing = editingHcpId === s.id
             return (
               <div key={s.id} style={styles.rosterRow}>
                 <div style={styles.rosterAvatar}>
@@ -352,10 +431,57 @@ export default function AdminSubs() {
                   <div style={styles.rosterName}>{fullName}</div>
                   {s.email && <div style={styles.rosterEmail}>{s.email}</div>}
                 </div>
-                <div style={styles.rosterHcp}>
-                  <span style={styles.rosterHcpLabel}>HCP</span>
-                  <span style={styles.rosterHcpValue}>{s.handicap ?? '—'}</span>
-                </div>
+
+                {editing ? (
+                  <div style={styles.rosterHcpEdit}>
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      step="1"
+                      min="-2"
+                      max="40"
+                      autoFocus
+                      value={editingHcpValue}
+                      onChange={e => setEditingHcpValue(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') saveEditHcp(s)
+                        if (e.key === 'Escape') cancelEditHcp()
+                      }}
+                      style={styles.rosterHcpInput}
+                      disabled={savingHcp}
+                    />
+                    <div style={styles.rosterHcpEditBtns}>
+                      <button
+                        type="button"
+                        onClick={() => saveEditHcp(s)}
+                        disabled={savingHcp}
+                        style={{ ...styles.rosterHcpBtn, ...styles.rosterHcpSave }}
+                        title="Save (Enter)"
+                      >
+                        <Check size={14} strokeWidth={2.5} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={cancelEditHcp}
+                        disabled={savingHcp}
+                        style={{ ...styles.rosterHcpBtn, ...styles.rosterHcpCancel }}
+                        title="Cancel (Esc)"
+                      >
+                        <X size={14} strokeWidth={2.5} />
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => startEditHcp(s)}
+                    style={{ ...styles.rosterHcp, ...styles.rosterHcpButton }}
+                    title="Edit handicap"
+                  >
+                    <span style={styles.rosterHcpLabel}>HCP</span>
+                    <span style={styles.rosterHcpValue}>{s.handicap ?? '—'}</span>
+                  </button>
+                )}
               </div>
             )
           })
@@ -396,6 +522,13 @@ const styles = {
   rosterName: { fontSize: '14px', fontWeight: 700, color: 'var(--black)' },
   rosterEmail: { fontSize: '11px', color: 'var(--gray-400)', marginTop: '1px' },
   rosterHcp: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1px', background: 'var(--gray-100)', borderRadius: '8px', padding: '5px 10px', flexShrink: 0 },
+  rosterHcpButton: { border: '1px solid transparent', cursor: 'pointer', transition: 'all 0.12s ease' },
   rosterHcpLabel: { fontSize: '9px', fontWeight: 600, color: 'var(--gray-400)', textTransform: 'uppercase', letterSpacing: '0.4px' },
   rosterHcpValue: { fontSize: '15px', fontWeight: 800, color: 'var(--green-dark)' },
+  rosterHcpEdit: { display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 },
+  rosterHcpInput: { width: '56px', padding: '6px 8px', borderRadius: '8px', border: '1.5px solid var(--green)', fontSize: '14px', fontWeight: 700, color: 'var(--green-dark)', background: 'var(--white)', textAlign: 'center', outline: 'none', MozAppearance: 'textfield' },
+  rosterHcpEditBtns: { display: 'flex', flexDirection: 'column', gap: '4px' },
+  rosterHcpBtn: { display: 'flex', alignItems: 'center', justifyContent: 'center', width: '24px', height: '20px', borderRadius: '6px', border: 'none', cursor: 'pointer' },
+  rosterHcpSave: { background: 'var(--green)', color: 'var(--white)' },
+  rosterHcpCancel: { background: 'var(--gray-200)', color: 'var(--gray-600)' },
 }

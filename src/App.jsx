@@ -259,7 +259,7 @@ export default function App() {
             <Route path="/"              element={<Navigate to="/reservations" replace />} />
             <Route path="/reservations"  element={<ReservationsPage />} />
             <Route path="/league/*"      element={<LeaguePage session={session} />} />
-            <Route path="/events"        element={<EventsPage />} />
+            <Route path="/events"        element={<EventsPage session={session} />} />
             <Route path="/alerts"        element={<AlertsPage session={session} />} />
             <Route path="/super-admin/*" element={<SuperAdminPage session={session} />} />
             {/* Fallback for unknown URLs */}

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { Routes, Route, Navigate, useLocation as useRouterLocation, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard, Flag, Medal, Users, Trophy, Activity,
-  Calendar, Repeat2, Map, Target, Bell,
+  Calendar, Repeat2, Map, Target, Bell, CalendarPlus,
 } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useLocation } from '../../context/LocationContext'
@@ -12,6 +12,7 @@ import AdminPlayers   from './AdminPlayers'
 import AdminSchedule  from './AdminSchedule'
 import AdminCourses   from './AdminCourses'
 import AdminSubs      from './AdminSubs'
+import AdminEvents    from './AdminEvents'
 import AdminAlerts    from './AdminAlerts'
 import AdminSkins     from './AdminSkins'
 import AdminHandicap  from './AdminHandicap'
@@ -27,6 +28,7 @@ const SECTIONS = [
   { id: 'handicap',   label: 'Handicap',     Icon: Activity },
   { id: 'schedule',   label: 'Schedule',     Icon: Calendar },
   { id: 'subs',       label: 'Subs',         Icon: Repeat2 },
+  { id: 'events',     label: 'Events',       Icon: CalendarPlus },
   { id: 'courses',    label: 'Courses',      Icon: Map },
   { id: 'skins',      label: 'Skins',        Icon: Target },
   { id: 'alerts',     label: 'Alerts',       Icon: Bell },
@@ -123,6 +125,7 @@ export default function AdminPanel({ session, onBack }) {
       <Route path="handicap"   element={<AdminHandicap />} />
       <Route path="schedule"   element={<AdminSchedule />} />
       <Route path="subs"       element={<AdminSubs />} />
+      <Route path="events"     element={<AdminEvents />} />
       <Route path="courses"    element={<AdminCourses />} />
       <Route path="skins"      element={<AdminSkins     activeEventId={activeEventId} onEventChange={handleEventChange} />} />
       <Route path="alerts"     element={<AdminAlerts />} />
