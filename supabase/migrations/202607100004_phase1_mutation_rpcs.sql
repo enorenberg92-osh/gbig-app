@@ -31,6 +31,7 @@ DECLARE
   entry JSONB;
   entry_player public.players%ROWTYPE;
   holes JSONB;
+  holes_int INTEGER[];
   gross INTEGER;
   handicap_value INTEGER;
   inserted_count INTEGER := 0;
@@ -85,6 +86,8 @@ BEGIN
     IF NOT public.jsonb_int_array_valid(holes, course_row.num_holes, 1, 20) THEN
       RAISE EXCEPTION 'Scores must include % holes with values from 1 to 20', course_row.num_holes;
     END IF;
+    -- live schema stores hole_scores as integer[]
+    holes_int := ARRAY(SELECT elem::integer FROM jsonb_array_elements_text(holes) AS t(elem));
     gross := public.jsonb_int_array_sum(holes);
     handicap_value := round(COALESCE(entry_player.handicap, 0))::integer;
 
@@ -92,7 +95,7 @@ BEGIN
       event_id, player_id, team_id, hole_scores, gross_total, net_total,
       handicap_used, sub_played, entry_type, status, location_id
     ) VALUES (
-      p_event_id, entry_player.id, caller_team_id, holes, gross,
+      p_event_id, entry_player.id, caller_team_id, holes_int, gross,
       gross - handicap_value, handicap_value, false, 'played', 'pending',
       event_row.location_id
     )
@@ -137,6 +140,7 @@ DECLARE
   before_row JSONB;
   after_row JSONB;
   holes JSONB;
+  holes_int INTEGER[];
   gross INTEGER;
   handicap_value INTEGER;
   target_team_id UUID;
@@ -167,6 +171,8 @@ BEGIN
     IF NOT public.jsonb_int_array_valid(holes, course_row.num_holes, 1, 20) THEN
       RAISE EXCEPTION 'Scores must include % holes with values from 1 to 20', course_row.num_holes;
     END IF;
+    -- live schema stores hole_scores as integer[]
+    holes_int := ARRAY(SELECT elem::integer FROM jsonb_array_elements_text(holes) AS t(elem));
     gross := public.jsonb_int_array_sum(holes);
     handicap_value := COALESCE(
       NULLIF(entry->>'handicap_used', '')::integer,
@@ -185,7 +191,7 @@ BEGIN
       event_id, player_id, team_id, hole_scores, gross_total, net_total,
       handicap_used, sub_played, entry_type, status, location_id
     ) VALUES (
-      p_event_id, target_player.id, target_team_id, holes, gross,
+      p_event_id, target_player.id, target_team_id, holes_int, gross,
       gross - handicap_value, handicap_value,
       COALESCE((entry->>'sub_played')::boolean, false),
       'played', 'verified', event_row.location_id

@@ -39,7 +39,8 @@ WITH ranked AS (
     row_number() OVER (
       PARTITION BY s.event_id, s.player_id, s.entry_type
       ORDER BY
-        (CASE WHEN jsonb_typeof(s.hole_scores) = 'array' THEN jsonb_array_length(s.hole_scores) ELSE 0 END) DESC,
+        -- live schema: hole_scores is integer[], not jsonb
+        COALESCE(cardinality(s.hole_scores), 0) DESC,
         ((s.gross_total IS NOT NULL)::int + (s.net_total IS NOT NULL)::int + (s.handicap_used IS NOT NULL)::int) DESC,
         s.created_at DESC,
         s.id
@@ -105,6 +106,43 @@ AS $$
   SELECT COALESCE(sum(raw::integer), 0)::integer
     FROM jsonb_array_elements_text(value) AS item(raw);
 $$;
+
+-- Integer[] twins of the jsonb helpers: scores.hole_scores is integer[] in the
+-- live schema (jsonb helpers still validate courses.hole_pars + RPC payloads).
+CREATE OR REPLACE FUNCTION public.int_array_valid(
+  value INTEGER[],
+  expected_length INTEGER,
+  min_value INTEGER,
+  max_value INTEGER
+)
+RETURNS BOOLEAN
+LANGUAGE sql
+IMMUTABLE
+SET search_path = public
+AS $$
+  SELECT value IS NOT NULL
+    AND cardinality(value) = expected_length
+    AND NOT EXISTS (
+      SELECT 1 FROM unnest(value) AS item(v)
+       WHERE v IS NULL OR v < min_value OR v > max_value
+    );
+$$;
+
+CREATE OR REPLACE FUNCTION public.int_array_sum(value INTEGER[])
+RETURNS INTEGER
+LANGUAGE sql
+IMMUTABLE
+STRICT
+SET search_path = public
+AS $$
+  SELECT COALESCE(sum(v), 0)::integer FROM unnest(value) AS item(v);
+$$;
+
+-- Legacy backfill: some courses predate hole_pars and only carry pars int[].
+UPDATE public.courses
+   SET hole_pars = to_jsonb(pars)
+ WHERE hole_pars IS NULL
+   AND pars IS NOT NULL;
 
 -- Repair only derived values. Missing/invalid pars are never fabricated.
 UPDATE public.courses
@@ -188,10 +226,10 @@ BEGIN
     IF course_holes IS NULL THEN
       RAISE EXCEPTION 'Played scores require an event with a valid course';
     END IF;
-    IF NOT public.jsonb_int_array_valid(NEW.hole_scores, course_holes, 1, 20) THEN
+    IF NOT public.int_array_valid(NEW.hole_scores, course_holes, 1, 20) THEN
       RAISE EXCEPTION 'hole_scores must contain exactly % integer scores from 1 to 20', course_holes;
     END IF;
-    IF NEW.gross_total IS DISTINCT FROM public.jsonb_int_array_sum(NEW.hole_scores) THEN
+    IF NEW.gross_total IS DISTINCT FROM public.int_array_sum(NEW.hole_scores) THEN
       RAISE EXCEPTION 'gross_total must equal the sum of hole_scores';
     END IF;
     IF NEW.handicap_used IS NULL OR NEW.net_total IS DISTINCT FROM NEW.gross_total - NEW.handicap_used THEN
@@ -227,4 +265,6 @@ REVOKE ALL ON public.score_duplicate_quarantine FROM anon, authenticated;
 GRANT SELECT ON public.score_duplicate_quarantine TO authenticated;
 REVOKE ALL ON FUNCTION public.jsonb_int_array_valid(JSONB, INTEGER, INTEGER, INTEGER) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.jsonb_int_array_sum(JSONB) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.int_array_valid(INTEGER[], INTEGER, INTEGER, INTEGER) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.int_array_sum(INTEGER[]) FROM PUBLIC;
 
