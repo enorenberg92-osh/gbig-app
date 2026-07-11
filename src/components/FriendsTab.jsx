@@ -95,14 +95,13 @@ export default function FriendsTab({ session }) {
     const followerIds  = (fwerRows  || []).map(r => r.follower_id)
 
     // No .eq('location_id', ...) here on purpose -- social is ecosystem-wide.
-    // The players SELECT policy is open to any authenticated user, so we can
-    // resolve follows pointing at players from other locations.
+    // player_public is sanitized and intentionally ecosystem-wide.
     const [fwingRes, fwerRes] = await Promise.all([
       followingIds.length
-        ? supabase.from('players').select('id, name, first_name, last_name, handicap, avatar_url').in('id', followingIds)
+        ? supabase.from('player_public').select('*').in('id', followingIds)
         : { data: [] },
       followerIds.length
-        ? supabase.from('players').select('id, name, first_name, last_name, handicap, avatar_url').in('id', followerIds)
+        ? supabase.from('player_public').select('*').in('id', followerIds)
         : { data: [] },
     ])
 
@@ -179,8 +178,8 @@ export default function FriendsTab({ session }) {
       // is cross-tenant: a GBIG member can find and follow a friend who plays
       // at Appleton, or a star player at any other location in the ecosystem.
       const { data } = await supabase
-        .from('players')
-        .select('id, name, first_name, last_name, handicap, avatar_url')
+        .from('player_public')
+        .select('*')
         .or(`name.ilike.%${searchQuery}%,first_name.ilike.%${searchQuery}%,last_name.ilike.%${searchQuery}%`)
         .neq('id', myPlayer?.id || '00000000-0000-0000-0000-000000000000')
         .limit(8)

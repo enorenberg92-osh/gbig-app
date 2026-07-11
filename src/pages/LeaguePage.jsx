@@ -11,6 +11,7 @@ import PlayerProfile from '../components/PlayerProfile'
 import SubRequest from '../components/SubRequest'
 import FriendsTab from '../components/FriendsTab'
 import AdminPanel from '../components/admin/AdminPanel'
+import { useFeature } from '../context/FeatureContext'
 
 export default function LeaguePage({ session }) {
   // Auth gate — unauthenticated users get the login screen
@@ -19,6 +20,8 @@ export default function LeaguePage({ session }) {
   const { locationId } = useLocation()
   const { isAdmin, checking } = useIsAdmin(session)
   const navigate = useNavigate()
+  const subsEnabled = useFeature('subs')
+  const friendsEnabled = useFeature('friends')
 
   // Active-round lookup is lifted here so both the hub (to enable/disable the
   // "Submit Scores" banner) and the /score-entry route guard can share it.
@@ -77,10 +80,10 @@ export default function LeaguePage({ session }) {
 
       <Route path="standings"   element={<Standings   session={session} onBack={backToHub} />} />
       <Route path="profile"     element={<PlayerProfile session={session} onBack={backToHub} />} />
-      <Route path="sub-request" element={<SubRequest  session={session} onBack={backToHub} />} />
+      <Route path="sub-request" element={subsEnabled ? <SubRequest session={session} onBack={backToHub} /> : <Navigate to="/league" replace />} />
 
       {/* Friends currently has no internal header/back button — wrap it. */}
-      <Route path="friends"     element={<FriendsScreen session={session} onBack={backToHub} />} />
+      <Route path="friends"     element={friendsEnabled ? <FriendsScreen session={session} onBack={backToHub} /> : <Navigate to="/league" replace />} />
 
       {/* Admin — gated. Non-admins bounce to the hub. Wait for the role
           check to resolve before deciding so we don't flash a redirect. */}

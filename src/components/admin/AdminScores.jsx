@@ -9,6 +9,7 @@ import { loadWorkingLeague } from '../../lib/leagueUtils'
 import { mutationErrorMessage } from '../../lib/rpcErrors'
 import { compareEffectiveScores } from '../../lib/roundUtils'
 import { Button, Toast } from '../ui'
+import { useFeature } from '../../context/FeatureContext'
 
 // ─── Skins calculation ───────────────────────────────────────────────────────
 // For each hole: find the lowest score. If exactly one player shot it → skin won.
@@ -34,6 +35,7 @@ function calcSkins(playerScoreMap, numHoles) {
 
 export default function AdminScores({ activeEventId = null, onEventChange = () => {} }) {
   const { locationId, timezone } = useLocation()
+  const skinsEnabled = useFeature('skins')
   const [events, setEvents]         = useState([])
   const [selectedEvent, setSelectedEvent] = useState(activeEventId || '')
   const [eventData, setEventData]   = useState(null)   // { course, pars[] }
@@ -472,6 +474,7 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
             </div>
           )}
 
+          {skinsEnabled && <>
           {/* Skins Calculator */}
           <Button
             variant="primary"
@@ -530,6 +533,7 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
               </div>
             </div>
           )}
+          </>}
         </>
       )}
     </div>

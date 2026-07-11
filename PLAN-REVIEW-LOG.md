@@ -166,3 +166,23 @@ Fix rounds used: 0 of 2. Handed to Erich for commit sign-off.
 
 ### Post-gate revision — Erich's requirement: edit prior-week scores
 Erich requires score corrections on closed weeks (life happens). Better alternative than restoring "Reopen": events stay closed (publish/standings lifecycle intact), but `admin_upsert_score` now works on closed events — Claude edited migration 202607100004 directly (too small for a Codex round): removed the closed-event block, added penalty supersede (a late real score deletes that player's missed_penalty row, mirroring publish_week), audit payload now records event_status + penalty_superseded. admin_delete_score / admin_review_score already worked on closed weeks. Player submissions still require an open event. npm test: 34 pass.
+
+## Act 3 — Build, Phase 2
+
+### Round 1 — Codex build (gpt-5.6-sol, sandboxed workspace-write)
+Implemented items 12-17: 3 migrations (legacy cleanup + player_public → location_public boot view → feature flags + super-admin RPCs), 12 client files + new FeatureContext. Codex's sandbox blocked npm directly; it verified via programmatic vitest/vite APIs.
+
+### Claude's verdict
+Ran real npm test (34 pass) + npm run build (pass) myself; read all 3 migrations + full 614-line client diff; ran live-DB pre-checks via psql.
+
+PASSED: sanitized player_public (no email/phone/handicap/password) restores cross-location friends; anon-safe location_public boot view; hostname resolver falls back to VITE_LOCATION_ID (current deploy unaffected); feature flags default ON, league overrides location, server-enforced via triggers on subs/follows/messages/event_signups; super-admin RPCs follow hardening template + audit; league feature toggles UI in AdminLeague; reverted a no-op line-ending touch on vite.config.js.
+
+Claude patches applied before gate (live-DB pre-checks caught both):
+1. players.league_id + news_posts.league_id legacy FKs still target leagues in the live DB — migration 1's gate would halt; added DROP CONSTRAINT IF EXISTS for both before the gate.
+2. Codex added league_password to the player guard trigger, which would break PlayerProfile's own-password form — guard now permits changing one's OWN league_password (OLD.user_id = auth.uid()); everyone else still blocked.
+
+Verified against live DB: locations.app_name exists, location_admins UNIQUE(user_id, location_id) exists, is_super_admin() exists, slug 'gbig' present, zero null push_subscriptions.location_id.
+
+Deviations accepted: flags default ON (deployment-safety constraint outranked plan's default-OFF); unfollow blocked while 'friends' disabled (minor); player_public intentionally omits handicap (search results show name/avatar only).
+
+Fix rounds used: 0 of 2. Handed to Erich for commit sign-off.

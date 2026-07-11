@@ -10,6 +10,7 @@ import { loadWorkingLeague } from '../../lib/leagueUtils'
 import { mutationErrorMessage } from '../../lib/rpcErrors'
 import ConfirmDialog from '../ConfirmDialog'
 import { Button } from '../ui'
+import { useFeature } from '../../context/FeatureContext'
 
 const STEPS = [
   { id: 'scores',  label: 'Review scores', num: 1 },
@@ -67,6 +68,8 @@ See you next week!
 
 export default function AdminDashboard({ onWeekClosed = () => {} }) {
   const { locationId, appName } = useLocation()
+  const skinsEnabled = useFeature('skins')
+  const visibleSteps = STEPS.filter(step => step.id !== 'skins' || skinsEnabled)
   const [stats, setStats]           = useState({ players: 0, events: 0, teams: 0 })
   const [openEvent, setOpenEvent]   = useState(null)
   const [scores, setScores]         = useState([])
@@ -250,7 +253,7 @@ export default function AdminDashboard({ onWeekClosed = () => {} }) {
   const expectedScores  = teams.length
   const submittedScores = Object.keys(scoresByTeam).length   // count teams, not rows
   const scoresOk  = submittedScores >= expectedScores && expectedScores > 0
-  const skinsOk   = skins.length > 0
+  const skinsOk   = !skinsEnabled || skins.length > 0
   const emailOk   = emailBody.trim().length > 10
 
   const stepDone = {
@@ -329,7 +332,7 @@ export default function AdminDashboard({ onWeekClosed = () => {} }) {
 
         {/* Step tab bar */}
         <div style={s.stepBar}>
-          {STEPS.map(({ id, label, num }) => {
+          {visibleSteps.map(({ id, label, num }) => {
             const done   = stepDone[id]
             const active = activeStep === id
             return (
@@ -388,7 +391,7 @@ export default function AdminDashboard({ onWeekClosed = () => {} }) {
                   ))
               }
               <div style={s.stepActions}>
-                <button style={s.nextBtn} onClick={() => ack('scores', 'skins')}>
+                <button style={s.nextBtn} onClick={() => ack('scores', skinsEnabled ? 'skins' : 'results')}>
                   {scoresOk
                     ? <><Check size={15} strokeWidth={2.5} style={{ verticalAlign: '-3px', marginRight: 6 }} />Scores look good — Next: Skins</>
                     : 'Mark reviewed & continue →'}
@@ -398,7 +401,7 @@ export default function AdminDashboard({ onWeekClosed = () => {} }) {
           )}
 
           {/* STEP 2 — Skins */}
-          {activeStep === 'skins' && (
+          {skinsEnabled && activeStep === 'skins' && (
             <div>
               <h3 style={s.stepTitle}>Skins</h3>
               {skins.length === 0 ? (

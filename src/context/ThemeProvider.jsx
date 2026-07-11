@@ -95,7 +95,7 @@ export function deriveBrandPalette(primaryHex) {
  * fails or primary_color is missing — nothing visual breaks.
  */
 export function ThemeProvider({ children }) {
-  const { locationId } = useLocation()
+  const { locationId, location } = useLocation()
   const [ready, setReady] = useState(false)
   const [brand, setBrand] = useState({ logoUrl: null, logoIconUrl: null })
 
@@ -104,11 +104,10 @@ export function ThemeProvider({ children }) {
     let cancelled = false
 
     async function applyTheme() {
-      const { data, error } = await supabase
-        .from('locations')
-        .select('primary_color, logo_url, logo_icon_url')
-        .eq('id', locationId)
-        .maybeSingle()
+      const result = location?.primary_color
+        ? { data: location, error: null }
+        : await supabase.from('location_public').select('primary_color, logo_url, logo_icon_url').eq('id', locationId).maybeSingle()
+      const { data, error } = result
 
       if (cancelled) return
 
@@ -138,7 +137,7 @@ export function ThemeProvider({ children }) {
 
     applyTheme()
     return () => { cancelled = true }
-  }, [locationId])
+  }, [locationId, location])
 
   // Render children immediately — the splash screen already covers the brief
   // moment before the theme resolves, and the CSS defaults are correct for

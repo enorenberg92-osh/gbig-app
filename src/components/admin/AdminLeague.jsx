@@ -8,6 +8,7 @@ import { formatLocalDate } from '../../lib/dateUtils'
 import { mutationErrorMessage } from '../../lib/rpcErrors'
 
 const EMPTY_FORM = { name: '', num_weeks: '', start_date: '', is_active: false }
+const FEATURE_KEYS = ['friends', 'events', 'skins', 'subs', 'news']
 
 export default function AdminLeague() {
   const { locationId } = useLocation()
@@ -175,6 +176,14 @@ export default function AdminLeague() {
 
   const workingLeague = leagues.find(l => l.is_working)
 
+  async function toggleFeature(key) {
+    if (!workingLeague) return
+    const features = { ...(workingLeague.features || {}), [key]: workingLeague.features?.[key] === false }
+    const { error } = await supabase.from('league_config').update({ features }).eq('id', workingLeague.id).eq('location_id', locationId)
+    if (error) showToast('Error: ' + error.message, 'error')
+    else { showToast(`${key} ${features[key] ? 'enabled' : 'disabled'}`); loadLeagues() }
+  }
+
   if (loading) return <div style={s.loading}>Loading…</div>
 
   return (
@@ -289,6 +298,22 @@ export default function AdminLeague() {
             })}
           </>
         )}
+      </div>
+
+      <div style={s.card}>
+        <h3 style={s.formTitle}>Features</h3>
+        <div style={s.form}>
+          <div style={s.hint}>League overrides for the working league. Existing and unset flags default on.</div>
+          {!workingLeague ? <div style={s.hint}>Select a working league to edit features.</div> : FEATURE_KEYS.map(key => {
+            const enabled = workingLeague.features?.[key] !== false
+            return (
+              <button key={key} type="button" style={{ ...s.toggleRow, background: enabled ? 'var(--green-xlight)' : 'var(--gray-100)', border: '1px solid var(--gray-200)' }} onClick={() => toggleFeature(key)}>
+                <span style={s.toggleLabel}>{key[0].toUpperCase() + key.slice(1)}</span>
+                <span style={{ ...s.switch, background: enabled ? 'var(--green)' : 'var(--gray-300)' }}><span style={{ ...s.knob, display: 'block', transform: enabled ? 'translateX(18px)' : 'translateX(0)' }} /></span>
+              </button>
+            )
+          })}
+        </div>
       </div>
 
       {/* ── Create / Edit form ────────────────────────────────────────────── */}

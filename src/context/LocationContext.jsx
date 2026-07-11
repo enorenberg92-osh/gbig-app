@@ -9,31 +9,42 @@ const LocationContext = createContext(null)
  * independently configured with no runtime overhead.
  */
 export function LocationProvider({ children }) {
-  const locationId  = import.meta.env.VITE_LOCATION_ID
-  const appName     = import.meta.env.VITE_APP_NAME     || 'Golf League App'
-  // Full display name for the splash screen (defaults to appName if not set)
-  const appFullName = import.meta.env.VITE_APP_FULL_NAME || appName
-  const [timezone, setTimezone] = useState('America/Chicago')
+  const fallbackId = import.meta.env.VITE_LOCATION_ID
+  const [resolved, setResolved] = useState(null)
+  const locationId = resolved?.id || fallbackId
+  const appName     = resolved?.name || import.meta.env.VITE_APP_NAME || 'Golf League App'
+  const appFullName = resolved?.name || import.meta.env.VITE_APP_FULL_NAME || appName
+  const timezone = resolved?.timezone || 'America/Chicago'
 
   useEffect(() => {
-    if (!locationId) return undefined
     let cancelled = false
-
-    async function loadTimezone() {
-      const { data } = await supabase
-        .from('locations')
-        .select('timezone')
-        .eq('id', locationId)
-        .maybeSingle()
-      if (!cancelled && data?.timezone) setTimezone(data.timezone)
+    async function resolveLocation() {
+      const hostname = window.location.hostname.toLowerCase()
+      const slug = hostname.split('.')[0]
+      let data = null
+      if (!import.meta.env.DEV && slug && slug !== 'www' && slug !== 'localhost') {
+        const result = await supabase.from('location_public').select('*').eq('slug', slug).maybeSingle()
+        data = result.data
+      }
+      if (!data && fallbackId) {
+        const result = await supabase.from('location_public').select('*').eq('id', fallbackId).maybeSingle()
+        data = result.data
+      }
+      if (!cancelled) setResolved(data || (fallbackId ? { id: fallbackId } : {}))
     }
+    resolveLocation()
+    return () => { cancelled = true }
+  }, [fallbackId])
 
-    loadTimezone()
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(() => loadTimezone())
-    return () => {
-      cancelled = true
-      subscription.unsubscribe()
-    }
+  /* Location data is cached in this context after the single public boot lookup. */
+  /* eslint-disable react-hooks/exhaustive-deps */
+  useEffect(() => {
+    if (!locationId || resolved) return undefined
+    let cancelled = false
+    supabase.from('location_public').select('*').eq('id', locationId).maybeSingle().then(({ data }) => {
+      if (!cancelled && data) setResolved(data)
+    })
+    return () => { cancelled = true }
   }, [locationId])
 
   if (!locationId) {
@@ -44,7 +55,7 @@ export function LocationProvider({ children }) {
   }
 
   return (
-    <LocationContext.Provider value={{ locationId, appName, appFullName, timezone }}>
+    <LocationContext.Provider value={{ locationId, appName, appFullName, timezone, location: resolved }}>
       {children}
     </LocationContext.Provider>
   )

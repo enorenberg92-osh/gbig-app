@@ -20,6 +20,7 @@ import AdminLeague    from './AdminLeague'
 import AdminStandings from './AdminStandings'
 import { isFutureDate } from '../../lib/dateUtils'
 import { loadWorkingLeague } from '../../lib/leagueUtils'
+import { useFeature } from '../../context/FeatureContext'
 
 const SECTIONS = [
   { id: 'dashboard',  label: 'Overview',     Icon: LayoutDashboard },
@@ -50,6 +51,11 @@ export default function AdminPanel({ session, onBack }) {
   const routerLocation = useRouterLocation()
   const navigate = useNavigate()
   const activeSection = sectionFromPath(routerLocation.pathname)
+  const subsEnabled = useFeature('subs')
+  const skinsEnabled = useFeature('skins')
+  const visibleSections = SECTIONS.filter(section =>
+    (section.id !== 'subs' || subsEnabled) && (section.id !== 'skins' || skinsEnabled)
+  )
 
   const [isDesktop, setIsDesktop] = useState(() => window.innerWidth >= 768)
 
@@ -134,10 +140,10 @@ export default function AdminPanel({ session, onBack }) {
       <Route path="league"     element={<AdminLeague />} />
       <Route path="handicap"   element={<AdminHandicap />} />
       <Route path="schedule"   element={<AdminSchedule />} />
-      <Route path="subs"       element={<AdminSubs />} />
+      <Route path="subs"       element={subsEnabled ? <AdminSubs /> : <Navigate to="/league/admin/dashboard" replace />} />
       <Route path="events"     element={<AdminEvents />} />
       <Route path="courses"    element={<AdminCourses />} />
-      <Route path="skins"      element={<AdminSkins     activeEventId={activeEventId} onEventChange={handleEventChange} />} />
+      <Route path="skins"      element={skinsEnabled ? <AdminSkins activeEventId={activeEventId} onEventChange={handleEventChange} /> : <Navigate to="/league/admin/dashboard" replace />} />
       <Route path="alerts"     element={<AdminAlerts />} />
       <Route path="*"          element={<Navigate to="/league/admin/dashboard" replace />} />
     </Routes>
@@ -165,7 +171,7 @@ export default function AdminPanel({ session, onBack }) {
 
           {/* Nav items */}
           <nav style={ds.nav}>
-            {SECTIONS.map(({ id, label, Icon }) => {
+            {visibleSections.map(({ id, label, Icon }) => {
               const active = activeSection === id
               return (
                 <button
@@ -249,7 +255,7 @@ export default function AdminPanel({ session, onBack }) {
       {/* Horizontal scrolling section nav */}
       <div style={ms.navScroll}>
         <div style={ms.navInner}>
-          {SECTIONS.map(({ id, label, Icon }) => {
+          {visibleSections.map(({ id, label, Icon }) => {
             const active = activeSection === id
             return (
               <button

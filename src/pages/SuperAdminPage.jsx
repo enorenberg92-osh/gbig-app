@@ -3,7 +3,9 @@ import { Routes, Route, Navigate, useNavigate } from 'react-router-dom'
 import { Shield, Plus, MapPin, Users, UserCog, Clock } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useIsSuperAdmin } from '../hooks/useIsSuperAdmin'
-import { Button, Card, PageHeader, EmptyState } from '../components/ui'
+import { Button, Card, PageHeader, EmptyState, Input } from '../components/ui'
+
+const FEATURE_KEYS = ['friends', 'events', 'skins', 'subs', 'news']
 
 /**
  * SuperAdminPage — ecosystem-wide operations console.
@@ -32,7 +34,8 @@ export default function SuperAdminPage({ session }) {
   return (
     <Routes>
       <Route index element={<LocationsDashboard session={session} />} />
-      {/* Phase-2 routes will live here: /locations/new, /locations/:id */}
+      <Route path="locations/new" element={<CreateLocation />} />
+      <Route path="locations/:id" element={<LocationEditor />} />
       <Route path="*" element={<Navigate to="/super-admin" replace />} />
     </Routes>
   )
@@ -93,8 +96,6 @@ function LocationsDashboard({ session }) {
             variant="primary"
             icon={<Plus size={16} />}
             onClick={() => navigate('/super-admin/locations/new')}
-            disabled
-            title="Coming in the next session"
           >
             New Location
           </Button>
@@ -117,7 +118,7 @@ function LocationsDashboard({ session }) {
         <EmptyState
           icon={<MapPin size={36} color="var(--gray-400)" />}
           title="No locations yet"
-          description="Create the first location to start onboarding members. (Coming in the next session.)"
+          description="Create the first location to start onboarding members."
         />
       )}
 
@@ -171,14 +172,82 @@ function LocationCard({ loc, onOpen }) {
           variant="ghost"
           size="sm"
           onClick={onOpen}
-          disabled
-          title="Coming in the next session"
         >
           Open →
         </Button>
       </div>
     </Card>
   )
+}
+
+function CreateLocation() {
+  const navigate = useNavigate()
+  const [form, setForm] = useState({ name: '', slug: '', primary_color: '#10B981', timezone: 'America/Chicago' })
+  const [error, setError] = useState('')
+  const [saving, setSaving] = useState(false)
+  async function submit(event) {
+    event.preventDefault(); setSaving(true); setError('')
+    const { data, error: rpcError } = await supabase.rpc('super_admin_create_location', {
+      p_name: form.name, p_slug: form.slug, p_primary_color: form.primary_color, p_timezone: form.timezone,
+    })
+    setSaving(false)
+    if (rpcError) setError(rpcError.message)
+    else navigate(`/super-admin/locations/${data.id}`)
+  }
+  return <div style={styles.page}>
+    <PageHeader title="New Location" subtitle="Create a tenant and public boot identity" />
+    <Card><form onSubmit={submit} style={styles.form}>
+      <Input label="Name" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} required />
+      <Input label="Slug" value={form.slug} onChange={e => setForm({ ...form, slug: e.target.value.toLowerCase() })} placeholder="green-bay" required />
+      <Input label="Primary color" type="color" value={form.primary_color} onChange={e => setForm({ ...form, primary_color: e.target.value })} />
+      <Input label="Timezone" value={form.timezone} onChange={e => setForm({ ...form, timezone: e.target.value })} required />
+      {error && <div style={styles.errorRow}>{error}</div>}
+      <div style={styles.actions}><Button type="submit" loading={saving}>Create Location</Button><Button type="button" variant="secondary" onClick={() => navigate('/super-admin')}>Cancel</Button></div>
+    </form></Card>
+  </div>
+}
+
+function LocationEditor() {
+  const id = window.location.pathname.split('/').pop()
+  const navigate = useNavigate()
+  const [form, setForm] = useState(null)
+  const [email, setEmail] = useState('')
+  const [message, setMessage] = useState('')
+  const [error, setError] = useState('')
+  useEffect(() => { supabase.from('locations').select('*').eq('id', id).single().then(({ data, error }) => { setForm(data); if (error) setError(error.message) }) }, [id])
+  if (!form) return <div style={styles.page}>{error || 'Loading…'}</div>
+  async function save(event) {
+    event.preventDefault(); setError(''); setMessage('')
+    const { data, error: rpcError } = await supabase.rpc('super_admin_update_location', { p_location_id: id, p_payload: form })
+    if (rpcError) setError(rpcError.message); else { setForm(data); setMessage('Location updated.') }
+  }
+  async function invite(event) {
+    event.preventDefault(); setError(''); setMessage('')
+    const { error: rpcError } = await supabase.rpc('super_admin_invite_location_admin', { p_location_id: id, p_email: email })
+    if (rpcError) setError(rpcError.message); else { setEmail(''); setMessage('Admin access added.') }
+  }
+  return <div style={styles.page}>
+    <PageHeader title={form.name} subtitle={form.slug} actions={<Button variant="secondary" onClick={() => navigate('/super-admin')}>Back</Button>} />
+    <Card><form onSubmit={save} style={styles.form}>
+      <Input label="Name" value={form.name || ''} onChange={e => setForm({ ...form, name: e.target.value })} />
+      <Input label="Primary color" type="color" value={form.primary_color || '#10B981'} onChange={e => setForm({ ...form, primary_color: e.target.value })} />
+      <Input label="Full logo URL" value={form.logo_url || ''} onChange={e => setForm({ ...form, logo_url: e.target.value })} />
+      <Input label="Icon logo URL" value={form.logo_icon_url || ''} onChange={e => setForm({ ...form, logo_icon_url: e.target.value })} />
+      <Input label="Timezone" value={form.timezone || ''} onChange={e => setForm({ ...form, timezone: e.target.value })} />
+      <div style={styles.featureGrid}>{FEATURE_KEYS.map(key => {
+        const enabled = form.features?.[key] !== false
+        return <button key={key} type="button" style={styles.featureButton} onClick={() => setForm({ ...form, features: { ...(form.features || {}), [key]: !enabled } })}>{key}: {enabled ? 'On' : 'Off'}</button>
+      })}</div>
+      <Button type="submit">Save Branding & Features</Button>
+    </form></Card>
+    <Card><form onSubmit={invite} style={styles.form}>
+      <strong>Invite location admin</strong>
+      <Input label="Existing auth user email" type="email" value={email} onChange={e => setEmail(e.target.value)} required />
+      <div style={styles.help}>If no auth user exists, ask the person to create or sign in to an account first, then retry.</div>
+      <Button type="submit">Add Admin</Button>
+    </form></Card>
+    {message && <div style={styles.successRow}>{message}</div>}{error && <div style={styles.errorRow}>{error}</div>}
+  </div>
 }
 
 
@@ -221,6 +290,12 @@ const styles = {
     flexDirection: 'column',
     gap:           12,
   },
+  form: { display: 'flex', flexDirection: 'column', gap: 14 },
+  actions: { display: 'flex', gap: 10 },
+  help: { fontSize: 12, color: 'var(--gray-500)' },
+  successRow: { color: 'var(--green-dark)', fontWeight: 700 },
+  featureGrid: { display: 'flex', gap: 8, flexWrap: 'wrap' },
+  featureButton: { padding: '8px 12px', border: '1px solid var(--gray-200)', borderRadius: 8, background: 'var(--green-xlight)', textTransform: 'capitalize' },
 
   card: {
     display:        'flex',

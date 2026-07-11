@@ -2,6 +2,7 @@ import React from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Trophy, User, Repeat2, Users, Flag, Lock, Shield } from 'lucide-react'
 import { Button, StatTile } from './ui'
+import { useFeature } from '../context/FeatureContext'
 
 export default function LeagueDashboard({
   session,
@@ -11,14 +12,16 @@ export default function LeagueDashboard({
   roundChecked = false,
 }) {
   const navigate = useNavigate()
+  const friendsEnabled = useFeature('friends')
+  const subsEnabled = useFeature('subs')
   const email = session?.user?.email || 'Player'
 
   const tiles = [
     { Icon: Trophy,  label: 'Standings',    path: '/league/standings'   },
     { Icon: User,    label: 'My Profile',   path: '/league/profile'     },
-    { Icon: Repeat2, label: 'Request Sub',  path: '/league/sub-request' },
-    { Icon: Users,   label: 'Friends',      path: '/league/friends'     },
-  ]
+    { Icon: Repeat2, label: 'Request Sub',  path: '/league/sub-request', enabled: subsEnabled },
+    { Icon: Users,   label: 'Friends',      path: '/league/friends', enabled: friendsEnabled },
+  ].filter(tile => tile.enabled !== false)
 
   return (
     <div style={styles.container}>

@@ -4,6 +4,7 @@ import { supabase } from './lib/supabase'
 import { useLocation } from './context/LocationContext'
 import { useBrand } from './context/ThemeProvider'
 import { useIsSuperAdmin } from './hooks/useIsSuperAdmin'
+import { useFeature } from './context/FeatureContext'
 
 // Pages
 import ReservationsPage from './pages/ReservationsPage'
@@ -144,6 +145,7 @@ export default function App() {
   const [splashDone, setSplashDone] = useState(false)
   const [leagueName, setLeagueName] = useState('')
   const { isSuperAdmin }            = useIsSuperAdmin(session)
+  const eventsEnabled               = useFeature('events')
 
   const activeTab         = activeTabFromPath(routerLoc.pathname)
   const onSuperAdminRoute = routerLoc.pathname.startsWith('/super-admin')
@@ -259,7 +261,7 @@ export default function App() {
             <Route path="/"              element={<Navigate to="/reservations" replace />} />
             <Route path="/reservations"  element={<ReservationsPage />} />
             <Route path="/league/*"      element={<LeaguePage session={session} />} />
-            <Route path="/events"        element={<EventsPage session={session} />} />
+            <Route path="/events"        element={eventsEnabled ? <EventsPage session={session} /> : <Navigate to="/league" replace />} />
             <Route path="/alerts"        element={<AlertsPage session={session} />} />
             <Route path="/super-admin/*" element={<SuperAdminPage session={session} />} />
             {/* Fallback for unknown URLs */}
@@ -270,7 +272,7 @@ export default function App() {
         {/* Bottom Tab Bar — hidden on /super-admin; that surface is its own world */}
         {!onSuperAdminRoute && (
         <nav style={styles.tabBar}>
-          {TABS.map(({ id, label, Icon }) => {
+          {TABS.filter(tab => tab.id !== 'events' || eventsEnabled).map(({ id, label, Icon }) => {
             const isActive = activeTab === id
             const isRes    = id === 'reservations'
             const activeColor = isRes ? '#b8860b' : 'var(--green)'

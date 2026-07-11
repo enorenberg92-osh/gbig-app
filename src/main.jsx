@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router-dom'
 import App from './App.jsx'
 import { LocationProvider } from './context/LocationContext.jsx'
 import { ThemeProvider } from './context/ThemeProvider.jsx'
+import { FeatureProvider } from './context/FeatureContext.jsx'
 import './index.css'
 
 ReactDOM.createRoot(document.getElementById('root')).render(
@@ -11,7 +12,9 @@ ReactDOM.createRoot(document.getElementById('root')).render(
     <BrowserRouter>
       <LocationProvider>
         <ThemeProvider>
-          <App />
+          <FeatureProvider>
+            <App />
+          </FeatureProvider>
         </ThemeProvider>
       </LocationProvider>
     </BrowserRouter>
