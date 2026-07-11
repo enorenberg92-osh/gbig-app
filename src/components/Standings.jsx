@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import { useLocation } from '../context/LocationContext'
+import { loadWorkingLeague } from '../lib/leagueUtils'
+import { compareEffectiveScores } from '../lib/roundUtils'
 
 // adminMode: Season shows ALL events (open + closed) so admins have full
 // visibility. Players only see closed weeks so rankings stay clean.
@@ -13,6 +15,7 @@ export default function Standings({ session, onBack, adminMode = false }) {
   const [selectedEvent, setSelectedEvent] = useState(null)
   const [rows, setRows]                   = useState([])
   const [error, setError]                 = useState(null)
+  const [leagueId, setLeagueId]           = useState(null)
 
   // ── 1. On mount, fetch the event list ────────────────────────────
   useEffect(() => { if (locationId) loadEvents() }, [locationId])
@@ -38,10 +41,18 @@ export default function Standings({ session, onBack, adminMode = false }) {
 
     // Filter by status rather than start_date so the open week always appears
     // in the picker even if its calendar start_date hasn't passed yet.
+    let league
+    try {
+      league = await loadWorkingLeague(supabase, locationId)
+    } catch (leagueError) {
+      setError(leagueError.message); setLoading(false); return
+    }
+    setLeagueId(league.id)
     const { data, error } = await supabase
       .from('events')
       .select('id, name, week_number, start_date, status')
       .eq('location_id', locationId)
+      .eq('league_id', league.id)
       .neq('is_bye', true)
       .in('status', ['open', 'closed'])
       .order('week_number', { ascending: false })
@@ -65,19 +76,21 @@ export default function Standings({ session, onBack, adminMode = false }) {
     setLoading(true)
     setError(null)
 
-    const [scoresRes, playersRes, teamsRes] = await Promise.all([
+    const [scoresRes, playersRes, teamsRes, rosterRes] = await Promise.all([
       supabase.from('scores')
-        .select('id, player_id, event_id, gross_total, net_total, handicap_used, entry_type')
+        .select('id, player_id, team_id, event_id, gross_total, net_total, handicap_used, entry_type, status, created_at')
         .eq('event_id', eventId)
-        .eq('location_id', locationId),
+        .eq('location_id', locationId)
+        .eq('status', 'verified'),
       supabase.from('players').select('id, name, first_name, last_name, handicap').eq('location_id', locationId),
-      supabase.from('teams').select('id, name, player1_id, player2_id').eq('location_id', locationId),
+      supabase.from('teams').select('id, name').eq('location_id', locationId).eq('league_id', leagueId),
+      supabase.from('roster_at').select('team_id, team_name, player_id').eq('event_id', eventId),
     ])
 
     if (scoresRes.error) { setError(scoresRes.error.message); setLoading(false); return }
 
     const teamRows = buildTeamRows(
-      scoresRes.data || [], playersRes.data || [], teamsRes.data || [], false
+      scoresRes.data || [], playersRes.data || [], hydrateRosterTeams(teamsRes.data || [], rosterRes.data || []), false
     )
     setRows(sortRows(teamRows, sortBy))
     setLoading(false)
@@ -89,29 +102,45 @@ export default function Standings({ session, onBack, adminMode = false }) {
     setError(null)
 
     // Admins see all events; players only see closed weeks
+    if (!leagueId) { setLoading(false); return }
     const { data: eligibleEvents } = adminMode
-      ? await supabase.from('events').select('id').eq('location_id', locationId).in('status', ['open', 'closed'])
-      : await supabase.from('events').select('id').eq('location_id', locationId).eq('status', 'closed')
+      ? await supabase.from('events').select('id').eq('location_id', locationId).eq('league_id', leagueId).in('status', ['open', 'closed'])
+      : await supabase.from('events').select('id').eq('location_id', locationId).eq('league_id', leagueId).eq('status', 'closed')
 
     const ids = (eligibleEvents || []).map(e => e.id)
     if (ids.length === 0) { setRows([]); setLoading(false); return }
 
-    const [scoresRes, playersRes, teamsRes] = await Promise.all([
+    const [scoresRes, playersRes, teamsRes, rosterRes] = await Promise.all([
       supabase.from('scores')
-        .select('id, player_id, event_id, gross_total, net_total, entry_type')
+        .select('id, player_id, team_id, event_id, gross_total, net_total, entry_type, status, created_at')
         .in('event_id', ids)
-        .eq('location_id', locationId),
+        .eq('location_id', locationId)
+        .eq('status', 'verified'),
       supabase.from('players').select('id, name, first_name, last_name, handicap').eq('location_id', locationId),
-      supabase.from('teams').select('id, name, player1_id, player2_id').eq('location_id', locationId),
+      supabase.from('teams').select('id, name').eq('location_id', locationId).eq('league_id', leagueId),
+      supabase.from('roster_at').select('event_id, team_id, team_name, player_id').in('event_id', ids),
     ])
 
     if (scoresRes.error) { setError(scoresRes.error.message); setLoading(false); return }
 
     const teamRows = buildTeamRows(
-      scoresRes.data || [], playersRes.data || [], teamsRes.data || [], true
+      scoresRes.data || [], playersRes.data || [], hydrateRosterTeams(teamsRes.data || [], rosterRes.data || []), true
     )
     setRows(sortRows(teamRows, sortBy))
     setLoading(false)
+  }
+
+  function hydrateRosterTeams(teams, rosterRows) {
+    const playerIdsByTeam = {}
+    rosterRows.forEach(row => {
+      if (!playerIdsByTeam[row.team_id]) playerIdsByTeam[row.team_id] = []
+      if (!playerIdsByTeam[row.team_id].includes(row.player_id)) playerIdsByTeam[row.team_id].push(row.player_id)
+    })
+    return teams.map(team => ({
+      ...team,
+      player1_id: playerIdsByTeam[team.id]?.[0] || null,
+      player2_id: playerIdsByTeam[team.id]?.[1] || null,
+    }))
   }
 
   // ─────────────────────────────────────────────────────────────────
@@ -130,8 +159,8 @@ export default function Standings({ session, onBack, adminMode = false }) {
     const teamRows = []
 
     for (const team of teams) {
-      const p1scores = byPlayer[team.player1_id] || []
-      const p2scores = byPlayer[team.player2_id] || []
+      const p1scores = [...(byPlayer[team.player1_id] || [])].sort(compareEffectiveScores)
+      const p2scores = [...(byPlayer[team.player2_id] || [])].sort(compareEffectiveScores)
       if (!p1scores.length && !p2scores.length) continue
 
       const p1 = playerMap[team.player1_id]
@@ -198,8 +227,8 @@ export default function Standings({ session, onBack, adminMode = false }) {
       if (!a.hasScore && b.hasScore)  return 1
       if (a.hasScore  && !b.hasScore) return -1
       return by === 'gross'
-        ? a.teamGross - b.teamGross
-        : a.teamNet   - b.teamNet
+        ? (a.teamGross - b.teamGross) || a.teamName.localeCompare(b.teamName)
+        : (a.teamNet   - b.teamNet) || a.teamName.localeCompare(b.teamName)
     })
   }
 

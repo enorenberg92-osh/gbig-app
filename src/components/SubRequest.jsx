@@ -1,6 +1,9 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import { useLocation } from '../context/LocationContext'
+import { formatLocalDate } from '../lib/dateUtils'
+import { loadWorkingLeague } from '../lib/leagueUtils'
+import { mutationErrorMessage } from '../lib/rpcErrors'
 
 /**
  * SubRequest
@@ -33,16 +36,24 @@ export default function SubRequest({ session, onBack }) {
       .from('players')
       .select('id, name')
       .eq('user_id', session.user.id)
+      .eq('location_id', locationId)
       .single()
 
     if (pErr || !playerRow) { setError('No player record found. Ask your admin.'); setLoading(false); return }
     setPlayer(playerRow)
 
-    // Load open events
+    // Load open events for the canonical working league.
+    let league
+    try {
+      league = await loadWorkingLeague(supabase, locationId)
+    } catch (leagueError) {
+      setError(leagueError.message); setLoading(false); return
+    }
     const { data: evts } = await supabase
       .from('events')
       .select('id, name, start_date')
       .eq('location_id', locationId)
+      .eq('league_id', league.id)
       .eq('status', 'open')
       .order('start_date', { ascending: true })
 
@@ -54,6 +65,7 @@ export default function SubRequest({ session, onBack }) {
       .from('subs')
       .select('id, status, sub_first_name, sub_last_name, sub_handicap, events(name, start_date)')
       .eq('player_id', playerRow.id)
+      .eq('location_id', locationId)
       .order('created_at', { ascending: false })
 
     setMyRequests(reqs || [])
@@ -81,23 +93,29 @@ export default function SubRequest({ session, onBack }) {
 
     setSaving(true)
 
-    const { error: insertErr } = await supabase.from('subs').insert({
-      event_id:       form.event_id,
-      player_id:      player.id,
-      sub_first_name: form.sub_first_name.trim(),
-      sub_last_name:  form.sub_last_name.trim(),
-      sub_email:      form.sub_email.trim(),
-      sub_phone:      form.sub_phone.trim(),
-      sub_handicap:   parseFloat(form.sub_handicap),
-      sub_player_id:  form.sub_player_id || null,
-      status:         'pending',
-      location_id:    locationId,
+    const parsedHandicap = parseInt(form.sub_handicap, 10)
+    if (!Number.isFinite(parsedHandicap)) {
+      setSaving(false)
+      showToast("The sub's handicap must be a whole number.", 'error')
+      return
+    }
+    const subHandicap = Math.max(-2, Math.min(27, parsedHandicap))
+    const { error: insertErr } = await supabase.rpc('request_sub', {
+      p_event_id: form.event_id,
+      p_sub: {
+        sub_first_name: form.sub_first_name.trim(),
+        sub_last_name: form.sub_last_name.trim(),
+        sub_email: form.sub_email.trim(),
+        sub_phone: form.sub_phone.trim(),
+        sub_handicap: subHandicap,
+        sub_player_id: form.sub_player_id || null,
+      },
     })
 
     setSaving(false)
 
     if (insertErr) {
-      showToast('Error: ' + insertErr.message, 'error')
+      showToast('Error: ' + mutationErrorMessage(insertErr, 'request a substitute'), 'error')
     } else {
       showToast('Sub request submitted! Your admin will review it.')
       setShowForm(false)
@@ -235,7 +253,7 @@ export default function SubRequest({ session, onBack }) {
                     <option key={evt.id} value={evt.id}>
                       {evt.name}
                       {evt.start_date
-                        ? ` — ${new Date(evt.start_date).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}`
+                        ? ` — ${formatLocalDate(evt.start_date, { weekday: 'short', month: 'short', day: 'numeric' })}`
                         : ''}
                     </option>
                   ))}
@@ -297,9 +315,9 @@ export default function SubRequest({ session, onBack }) {
                 <label style={styles.label}>Sub's Handicap *</label>
                 <input
                   type="number"
-                  min="0"
+                  min="-2"
                   max="27"
-                  step="0.5"
+                  step="1"
                   style={styles.input}
                   value={form.sub_handicap}
                   onChange={e => setForm(f => ({ ...f, sub_handicap: e.target.value }))}
@@ -344,7 +362,7 @@ export default function SubRequest({ session, onBack }) {
                     </div>
                     {req.events?.start_date && (
                       <div style={styles.requestDate}>
-                        {new Date(req.events.start_date).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+                        {formatLocalDate(req.events.start_date, { weekday: 'short', month: 'short', day: 'numeric' })}
                       </div>
                     )}
                   </div>

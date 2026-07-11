@@ -4,6 +4,8 @@ import { Button, Toast, Callout, EmptyState } from '../ui'
 import { supabase } from '../../lib/supabase'
 import { useLocation } from '../../context/LocationContext'
 import ConfirmDialog from '../ConfirmDialog'
+import { mutationErrorMessage } from '../../lib/rpcErrors'
+import { formatLocalDate } from '../../lib/dateUtils'
 
 export default function AdminSubs() {
   const { locationId } = useLocation()
@@ -42,10 +44,10 @@ export default function AdminSubs() {
     if (clamped === player.handicap) { cancelEditHcp(); return }
 
     setSavingHcp(true)
-    const { error } = await supabase
-      .from('players')
-      .update({ handicap: clamped })
-      .eq('id', player.id)
+    const { error } = await supabase.rpc('admin_set_player_handicap', {
+      p_player_id: player.id,
+      p_handicap: clamped,
+    })
     setSavingHcp(false)
     if (error) { showToast('Error: ' + error.message, 'error'); return }
     showToast(`Updated ${player.name || 'sub'} to HCP ${clamped}`)
@@ -74,17 +76,13 @@ export default function AdminSubs() {
     // ── One-time heal: flip is_sub=true on any approved sub whose linked
     // player never got the flag set (pre-fix data). We only refetch the
     // roster if we touched anything so we don't loop.
-    const linkedIds = (subRows || [])
-      .filter(s => s.status === 'approved' && s.sub_player_id)
-      .map(s => s.sub_player_id)
-
     const subPlayerIdSet = new Set((subPlayerRows || []).map(p => p.id))
-    const missing = linkedIds.filter(id => !subPlayerIdSet.has(id))
+    const missing = (subRows || []).filter(s => s.status === 'approved' && s.sub_player_id && !subPlayerIdSet.has(s.sub_player_id))
     if (missing.length > 0) {
-      const { error: healErr } = await supabase
-        .from('players')
-        .update({ is_sub: true })
-        .in('id', missing)
+      const healResults = await Promise.all(
+        missing.map(s => supabase.rpc('admin_set_sub_status', { p_sub_id: s.id, p_status: 'approved' }))
+      )
+      const healErr = healResults.find(result => result.error)?.error
       if (healErr) {
         console.warn('AdminSubs backfill heal failed:', healErr.message)
       } else {
@@ -123,84 +121,17 @@ export default function AdminSubs() {
     setTimeout(() => setToast(null), 3000)
   }
 
-  // ── Shared helper: find existing sub profile or create a new one ────────────
-  async function ensureSubProfile(sub) {
-    if (sub.sub_player_id) {
-      // Already linked — keep handicap current AND ensure they're flagged as a sub.
-      // (An already-linked player might be a regular league player whose is_sub
-      //  flag was never flipped — the Sub Roster filters on is_sub=true, so if
-      //  we don't set it here they'll be invisible in the roster.)
-      await supabase
-        .from('players')
-        .update({ handicap: sub.sub_handicap, is_sub: true })
-        .eq('id', sub.sub_player_id)
-      return { id: sub.sub_player_id, error: null }
-    }
-
-    const firstName = (sub.sub_first_name || '').trim()
-    const lastName  = (sub.sub_last_name  || '').trim()
-    const fullName  = `${firstName} ${lastName}`.trim()
-
-    // Check for an existing sub player with the same name
-    const { data: existing } = await supabase
-      .from('players')
-      .select('id')
-      .eq('is_sub', true)
-      .eq('first_name', firstName)
-      .eq('last_name', lastName)
-      .maybeSingle()
-
-    if (existing) {
-      // Defensive: the query already filtered on is_sub=true, but write it
-      // anyway so this branch stays consistent with the sub_player_id branch.
-      await supabase
-        .from('players')
-        .update({ handicap: sub.sub_handicap, is_sub: true })
-        .eq('id', existing.id)
-      return { id: existing.id, error: null }
-    }
-
-    // Create a brand-new sub player profile
-    const { data: newPlayer, error: createErr } = await supabase
-      .from('players')
-      .insert({
-        first_name:  firstName,
-        last_name:   lastName,
-        name:        fullName,
-        handicap:    sub.sub_handicap,
-        email:       sub.sub_email || null,
-        is_sub:      true,
-        location_id: locationId,
-      })
-      .select('id')
-      .single()
-
-    return { id: newPlayer?.id || null, error: createErr }
-  }
-
   async function handleApprove(sub) {
-    const { id: subPlayerId, error: profileErr } = await ensureSubProfile(sub)
-    if (profileErr) { showToast('Error creating sub profile: ' + profileErr.message, 'error'); return }
-
-    const { error } = await supabase
-      .from('subs')
-      .update({ status: 'approved', sub_player_id: subPlayerId })
-      .eq('id', sub.id)
-    if (error) { showToast('Error: ' + error.message, 'error'); return }
+    const { error } = await supabase.rpc('admin_set_sub_status', { p_sub_id: sub.id, p_status: 'approved' })
+    if (error) { showToast('Error: ' + mutationErrorMessage(error, 'approve this substitute'), 'error'); return }
     showToast(`Sub approved for ${sub.playerName} — sub profile ready`)
     load()
   }
 
   // ── Retroactively sync a profile for an already-approved sub ─────────────
   async function handleSyncProfile(sub) {
-    const { id: subPlayerId, error: profileErr } = await ensureSubProfile(sub)
-    if (profileErr) { showToast('Error syncing profile: ' + profileErr.message, 'error'); return }
-
-    const { error } = await supabase
-      .from('subs')
-      .update({ sub_player_id: subPlayerId })
-      .eq('id', sub.id)
-    if (error) { showToast('Error: ' + error.message, 'error'); return }
+    const { error } = await supabase.rpc('admin_set_sub_status', { p_sub_id: sub.id, p_status: 'approved' })
+    if (error) { showToast('Error: ' + mutationErrorMessage(error, 'sync this substitute profile'), 'error'); return }
     showToast(`Profile synced for ${sub.sub_first_name} ${sub.sub_last_name}`)
     load()
   }
@@ -210,11 +141,8 @@ export default function AdminSubs() {
       message: 'Deny this sub request?',
       confirmLabel: 'Deny',
       onConfirm: async () => {
-        const { error } = await supabase
-          .from('subs')
-          .update({ status: 'denied' })
-          .eq('id', sub.id)
-        if (error) { showToast('Error: ' + error.message, 'error'); return }
+        const { error } = await supabase.rpc('admin_set_sub_status', { p_sub_id: sub.id, p_status: 'denied' })
+        if (error) { showToast('Error: ' + mutationErrorMessage(error, 'deny this substitute'), 'error'); return }
         showToast('Sub request denied.')
         load()
       },
@@ -226,8 +154,8 @@ export default function AdminSubs() {
       message: 'Remove this sub request entirely?',
       confirmLabel: 'Remove',
       onConfirm: async () => {
-        const { error } = await supabase.from('subs').delete().eq('id', sub.id)
-        if (error) { showToast('Error: ' + error.message, 'error'); return }
+        const { error } = await supabase.rpc('admin_delete_sub', { p_sub_id: sub.id })
+        if (error) { showToast('Error: ' + mutationErrorMessage(error, 'remove this substitute request'), 'error'); return }
         showToast('Request removed.')
         load()
       },
@@ -319,7 +247,7 @@ export default function AdminSubs() {
                     </div>
                     <div style={styles.subEvent}>
                       {sub.eventName}
-                      {sub.eventDate ? ' · ' + new Date(sub.eventDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''}
+                {sub.eventDate ? ' · ' + formatLocalDate(sub.eventDate, { month: 'short', day: 'numeric' }) : ''}
                     </div>
                     <div style={styles.subDate}>
                       Submitted {new Date(sub.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}

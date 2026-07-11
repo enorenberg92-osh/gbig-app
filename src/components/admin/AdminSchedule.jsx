@@ -4,6 +4,9 @@ import { supabase } from '../../lib/supabase'
 import { useLocation } from '../../context/LocationContext'
 import ConfirmDialog from '../ConfirmDialog'
 import { Button, Toast, EmptyState } from '../ui'
+import { formatLocalDate, isFutureDate } from '../../lib/dateUtils'
+import { loadWorkingLeague } from '../../lib/leagueUtils'
+import { mutationErrorMessage } from '../../lib/rpcErrors'
 
 const EMPTY_FORM = {
   name: '',
@@ -16,10 +19,10 @@ const EMPTY_FORM = {
   hole_event_name: '',
   is_bye: false,
 }
-const STATUS_OPTIONS = ['draft', 'open', 'closed', 'cancelled']
+const STATUS_OPTIONS = ['draft', 'open', 'cancelled']
 
 export default function AdminSchedule() {
-  const { locationId } = useLocation()
+  const { locationId, timezone } = useLocation()
   const [events, setEvents] = useState([])
   const [courses, setCourses] = useState([])
   const [league, setLeague] = useState(null)
@@ -42,27 +45,28 @@ export default function AdminSchedule() {
   }, [showForm, editing])
 
   async function loadAll() {
-    const [{ data: evtData }, { data: crsData }, { data: leagueData }] = await Promise.all([
+    let leagueData
+    try {
+      leagueData = await loadWorkingLeague(supabase, locationId)
+    } catch (leagueError) {
+      showToast(leagueError.message, 'error'); setLoading(false); return
+    }
+    const [{ data: evtData }, { data: crsData }] = await Promise.all([
       supabase
         .from('events')
         .select('*, courses(id, name)')
         .eq('location_id', locationId)
+        .eq('league_id', leagueData.id)
         .order('week_number', { ascending: true, nullsFirst: false }),
       supabase
         .from('courses')
         .select('id, name')
         .eq('location_id', locationId)
         .order('name'),
-      supabase
-        .from('league_config')
-        .select('*')
-        .eq('location_id', locationId)
-        .limit(1)
-        .single(),
     ])
     setEvents(evtData || [])
     setCourses(crsData || [])
-    setLeague(leagueData || null)
+    setLeague(leagueData)
     setLoading(false)
   }
 
@@ -87,16 +91,15 @@ export default function AdminSchedule() {
       is_bye: form.is_bye,
     }
 
-    let error
-    if (editing) {
-      ;({ error } = await supabase.from('events').update(payload).eq('id', editing.id))
-    } else {
-      ;({ error } = await supabase.from('events').insert({ ...payload, location_id: locationId }))
-    }
+    const { error } = await supabase.rpc('admin_upsert_event', {
+      p_event_id: editing?.id || null,
+      p_league_id: league.id,
+      p_payload: { ...payload, week_number: editing?.week_number ?? null },
+    })
 
     setSaving(false)
     if (error) {
-      showToast('Error: ' + error.message, 'error')
+      showToast('Error: ' + mutationErrorMessage(error, 'save this event'), 'error')
     } else {
       showToast(editing ? 'Event updated!' : 'Event created!')
       setShowForm(false)
@@ -117,13 +120,14 @@ export default function AdminSchedule() {
       }
     }
 
-    const { error } = await supabase
-      .from('events')
-      .update({ status: newStatus })
-      .eq('id', event.id)
+    const { error } = await supabase.rpc('admin_upsert_event', {
+      p_event_id: event.id,
+      p_league_id: league.id,
+      p_payload: { ...event, status: newStatus },
+    })
 
     if (error) {
-      showToast('Error: ' + error.message, 'error')
+      showToast('Error: ' + mutationErrorMessage(error, 'change event status'), 'error')
     } else {
       showToast(`Event marked as ${newStatus}`)
       loadAll()
@@ -135,9 +139,9 @@ export default function AdminSchedule() {
       message: `Delete "${event.name}"? All scores for this event will also be deleted.`,
       confirmLabel: 'Delete',
       onConfirm: async () => {
-        const { error } = await supabase.from('events').delete().eq('id', event.id)
+        const { error } = await supabase.rpc('admin_delete_event', { p_event_id: event.id })
         if (error) {
-          showToast('Error: ' + error.message, 'error')
+          showToast('Error: ' + mutationErrorMessage(error, 'delete this event'), 'error')
         } else {
           showToast('Event deleted.')
           loadAll()
@@ -167,24 +171,18 @@ export default function AdminSchedule() {
     const opts = { month: 'short', day: 'numeric' }
     const yearOpts = { month: 'short', day: 'numeric', year: 'numeric' }
     if (start && end) {
-      const s = new Date(start + 'T12:00:00')
-      const en = new Date(end + 'T12:00:00')
-      const sameYear = s.getFullYear() === en.getFullYear()
-      return `${s.toLocaleDateString('en-US', opts)} – ${en.toLocaleDateString('en-US', sameYear ? yearOpts : yearOpts)}`
+      return `${formatLocalDate(start, opts)} – ${formatLocalDate(end, yearOpts)}`
     }
     if (start) {
-      return new Date(start + 'T12:00:00').toLocaleDateString('en-US', yearOpts)
+      return formatLocalDate(start, yearOpts)
     }
-    return new Date(end + 'T12:00:00').toLocaleDateString('en-US', yearOpts)
+    return formatLocalDate(end, yearOpts)
   }
 
   // An event is "upcoming" if its start_date is strictly in the future
   function isUpcoming(evt) {
     if (!evt.start_date) return false
-    const today = new Date()
-    today.setHours(0, 0, 0, 0)
-    const start = new Date(evt.start_date + 'T00:00:00')
-    return start > today
+    return isFutureDate(evt.start_date, timezone)
   }
 
   function getStatusInfo(evt) {
@@ -387,7 +385,7 @@ export default function AdminSchedule() {
                 {league.num_weeks && <span>{league.num_weeks} weeks</span>}
                 {league.start_date && (
                   <span>
-                    · Starting {new Date(league.start_date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                  · Starting {formatLocalDate(league.start_date, { month: 'short', day: 'numeric', year: 'numeric' })}
                   </span>
                 )}
               </div>
@@ -473,18 +471,6 @@ export default function AdminSchedule() {
                     {!isBye && evt.status === 'draft' && (
                       <Button variant="secondary" size="sm" onClick={() => handleStatusChange(evt, 'open')} style={{ background: 'var(--green-dark)', color: '#fff', borderColor: 'var(--green-dark)', fontWeight: 700 }}>
                         Open
-                      </Button>
-                    )}
-                    {/* Admins can close an open event at any time, including
-                        events whose start_date is still in the future. */}
-                    {!isBye && evt.status === 'open' && (
-                      <Button variant="secondary" size="sm" onClick={() => handleStatusChange(evt, 'closed')} style={{ background: 'var(--gold-light)', color: '#7a5c00', borderColor: 'var(--gold-light)', fontWeight: 700 }}>
-                        Close Out
-                      </Button>
-                    )}
-                    {!isBye && evt.status === 'closed' && (
-                      <Button variant="secondary" size="sm" onClick={() => handleStatusChange(evt, 'open')} style={{ background: 'var(--green-xlight)', color: 'var(--green)', borderColor: 'var(--green-xlight)', fontWeight: 700 }}>
-                        Reopen
                       </Button>
                     )}
                     <Button variant="secondary" size="sm" onClick={() => startEdit(evt)} style={{ background: 'var(--green-xlight)', color: 'var(--green)', borderColor: 'var(--green-xlight)' }}>

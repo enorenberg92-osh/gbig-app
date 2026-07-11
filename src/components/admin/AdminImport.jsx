@@ -3,6 +3,7 @@ import { Check, Upload, FolderOpen } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useLocation } from '../../context/LocationContext'
 import { Button, Toast } from '../ui'
+import { mutationErrorMessage } from '../../lib/rpcErrors'
 
 // ── CSV helpers ───────────────────────────────────────────────────────────────
 
@@ -106,7 +107,7 @@ function parseCSV(text) {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function AdminImport() {
+export default function AdminImport({ leagueId }) {
   const { locationId } = useLocation()
   const [rows, setRows]         = useState([])
   const [selected, setSelected] = useState(new Set())
@@ -152,6 +153,7 @@ export default function AdminImport() {
   }
 
   async function handleImport() {
+    if (!leagueId) { showToast('Choose a working league before importing teams.', 'error'); return }
     setImporting(true)
     const toImport = rows.filter((_, i) => selected.has(i))
     const successes = [], errors = []
@@ -167,10 +169,11 @@ export default function AdminImport() {
           handicap:         row.p1.handicap,
           in_skins:         false,
           handicap_locked:  false,
-          location_id:      locationId,
         }
-        const { data: p1Data, error: p1Err } = await supabase
-          .from('players').insert(p1Payload).select('id').single()
+        const { data: p1Id, error: p1Err } = await supabase.rpc('admin_create_player', {
+          p_location_id: locationId,
+          p_payload: p1Payload,
+        })
 
         if (p1Err) {
           errors.push({ team: row.teamName, msg: `Player 1 (${row.p1.fullName}): ${p1Err.message}` })
@@ -188,25 +191,33 @@ export default function AdminImport() {
             handicap:        row.p2.handicap,
             in_skins:        false,
             handicap_locked: false,
-            location_id:     locationId,
           }
-          const { data: p2Data, error: p2Err } = await supabase
-            .from('players').insert(p2Payload).select('id').single()
+          const { data: p2CreatedId, error: p2Err } = await supabase.rpc('admin_create_player', {
+            p_location_id: locationId,
+            p_payload: p2Payload,
+          })
 
           if (p2Err) {
             errors.push({ team: row.teamName, msg: `Player 2 (${row.p2.fullName}): ${p2Err.message}` })
           } else {
-            p2Id = p2Data.id
+            p2Id = p2CreatedId
           }
         }
 
         // ── Create Team ──
-        const { error: teamErr } = await supabase
-          .from('teams')
-          .insert({ name: row.teamName, player1_id: p1Data.id, player2_id: p2Id, location_id: locationId })
+        if (!p2Id) {
+          errors.push({ team: row.teamName, msg: 'A team requires exactly two players.' })
+          continue
+        }
+        const { error: teamErr } = await supabase.rpc('admin_save_team', {
+          p_team_id: null,
+          p_league_id: leagueId,
+          p_name: row.teamName,
+          p_player_ids: [p1Id, p2Id],
+        })
 
         if (teamErr) {
-          errors.push({ team: row.teamName, msg: `Team: ${teamErr.message}` })
+          errors.push({ team: row.teamName, msg: `Team: ${mutationErrorMessage(teamErr, 'import this team')}` })
         } else {
           successes.push(row.teamName)
         }

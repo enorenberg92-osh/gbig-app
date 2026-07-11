@@ -151,7 +151,7 @@ export default function App() {
   useEffect(() => {
     if (!locationId) return
     supabase.from('league_config').select('name')
-      .eq('location_id', locationId).eq('is_active', true).limit(1).single()
+      .eq('location_id', locationId).eq('is_working', true).maybeSingle()
       .then(({ data }) => { if (data?.name) setLeagueName(data.name) })
   }, [locationId])
 

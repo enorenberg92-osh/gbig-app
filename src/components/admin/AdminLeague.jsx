@@ -4,6 +4,8 @@ import { supabase } from '../../lib/supabase'
 import { useLocation } from '../../context/LocationContext'
 import ConfirmDialog from '../ConfirmDialog'
 import { Button, Toast, EmptyState } from '../ui'
+import { formatLocalDate } from '../../lib/dateUtils'
+import { mutationErrorMessage } from '../../lib/rpcErrors'
 
 const EMPTY_FORM = { name: '', num_weeks: '', start_date: '', is_active: false }
 
@@ -59,8 +61,8 @@ export default function AdminLeague() {
   async function handleSetWorking(league) {
     // Clear all, then set this one
     const ids = leagues.map(l => l.id)
-    await supabase.from('league_config').update({ is_working: false }).in('id', ids)
-    await supabase.from('league_config').update({ is_working: true }).eq('id', league.id)
+    await supabase.from('league_config').update({ is_working: false }).in('id', ids).eq('location_id', locationId)
+    await supabase.from('league_config').update({ is_working: true }).eq('id', league.id).eq('location_id', locationId)
     showToast(`Now working with "${league.name}"`)
     loadLeagues()
   }
@@ -68,12 +70,7 @@ export default function AdminLeague() {
   // ── Toggle "display on website" ───────────────────────────────────────────
   async function handleToggleActive(league) {
     const newVal = !league.is_active
-    // If activating, deactivate all others first (only one active at a time)
-    if (newVal) {
-      const ids = leagues.map(l => l.id)
-      await supabase.from('league_config').update({ is_active: false }).in('id', ids)
-    }
-    await supabase.from('league_config').update({ is_active: newVal }).eq('id', league.id)
+    await supabase.from('league_config').update({ is_active: newVal }).eq('id', league.id).eq('location_id', locationId)
     showToast(newVal ? `"${league.name}" is now live for players` : `"${league.name}" hidden from players`)
     loadLeagues()
   }
@@ -90,13 +87,8 @@ export default function AdminLeague() {
     }
     let error
     if (editing) {
-      ;({ error } = await supabase.from('league_config').update(payload).eq('id', editing.id))
+      ;({ error } = await supabase.from('league_config').update(payload).eq('id', editing.id).eq('location_id', locationId))
     } else {
-      // New league — if marked active, deactivate all others first
-      if (payload.is_active) {
-        const ids = leagues.map(l => l.id)
-        if (ids.length) await supabase.from('league_config').update({ is_active: false }).in('id', ids)
-      }
       ;({ error } = await supabase.from('league_config').insert({ ...payload, location_id: locationId }))
     }
     setSaving(false)
@@ -113,7 +105,7 @@ export default function AdminLeague() {
       message: `Delete "${league.name}"? This cannot be undone.`,
       confirmLabel: 'Delete',
       onConfirm: async () => {
-        const { error } = await supabase.from('league_config').delete().eq('id', league.id)
+        const { error } = await supabase.from('league_config').delete().eq('id', league.id).eq('location_id', locationId)
         if (error) { showToast('Error: ' + error.message, 'error'); return }
         showToast('League deleted.')
         loadLeagues()
@@ -132,6 +124,7 @@ export default function AdminLeague() {
           .from('events')
           .select('week_number')
           .eq('location_id', locationId)
+          .eq('league_id', league.id)
           .not('week_number', 'is', null)
 
         const existingWeeks = new Set((existing || []).map(e => e.week_number))
@@ -143,16 +136,23 @@ export default function AdminLeague() {
             start_date:  w.start,
             end_date:    w.end,
             status:      'draft',
-            location_id: locationId,
           }))
 
         if (toInsert.length === 0) {
           showToast('All weeks already exist in the schedule.', 'error')
           return
         }
-        const { error } = await supabase.from('events').insert(toInsert)
-        if (error) { showToast('Error: ' + error.message, 'error'); return }
-        showToast(`${toInsert.length} week${toInsert.length !== 1 ? 's' : ''} added to Schedule!`)
+        const { data: inserted, error } = await supabase.rpc('admin_generate_schedule', {
+          p_league_id: league.id,
+          p_weeks: toInsert.map(week => ({
+            name: week.name,
+            week_number: week.week_number,
+            start_date: week.start_date,
+            end_date: week.end_date,
+          })),
+        })
+        if (error) { showToast('Error: ' + mutationErrorMessage(error, 'generate this schedule'), 'error'); return }
+        showToast(`${inserted} week${inserted !== 1 ? 's' : ''} added to Schedule!`)
       },
     })
   }
@@ -170,7 +170,7 @@ export default function AdminLeague() {
 
   function formatDate(d) {
     if (!d) return '—'
-    return new Date(d + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+    return formatLocalDate(d, { month: 'short', day: 'numeric', year: 'numeric' })
   }
 
   const workingLeague = leagues.find(l => l.is_working)

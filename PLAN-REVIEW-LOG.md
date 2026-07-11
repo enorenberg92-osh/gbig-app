@@ -141,3 +141,28 @@ Accepted 3/3:
 ## Resolution
 
 MAX_ROUNDS (5) reached without VERDICT: APPROVED. Not presenting this as convergence-by-approval. However: every finding across all 5 rounds (13+8+6+8+3 = 38) was accepted (4 with modifications, 0 rejected), and round 5's three findings were folded into the plan after the verdict. No unresolved disagreements exist between the models — the deadlock is procedural (rounds exhausted), not substantive. Tie-break handed to Erich for final sign-off.
+
+## Act 3 — Build
+
+### Round 1 — Codex build (gpt-5.6-sol)
+Implemented Phase 1 items 1–11: 5 migrations (audit foundation → score/course constraints → league rosters → mutation RPCs → role-split RLS), 23 client files modified, 9 new lib/test files. First run was interrupted by the host mid-report; resumed same thread, Codex completed and reported. npm test: 34 passed, 5 skipped (integration harness, skip-by-default). npm run build: pass.
+
+### Claude's verdict
+Verified independently: ran npm test (34 pass) and npm run build (pass) myself; read all 5 migrations fully and the complete client diff.
+
+PASSED: migration order correct (status column before partial index; quarantine before constraint); RPC hardening template followed everywhere (auth.uid() derivation, FOR UPDATE shared event lock, revoke-then-grant, PII-redacting audit on every mutation); the four target bugs verifiably fixed (PlayerProfile ordering+limit, ScoreEntry RPC+unique index, standings verified-only w/ deterministic tiebreaks, AdminSubs location-scoped); role-split RLS + player-role write revocation in Phase 1 as re-sequenced in review round 3; penalty math (+7 net) matches existing rule; dynamic num_holes throughout; pg_trgm indexes added.
+
+Deviations/flags (accepted, to surface at sign-off):
+1. Migrations have deliberate data gates that HALT apply on: invalid course pars, teams without exactly 2 members, duplicate week numbers, >1 open event, >1 working league. Fix data first, then apply.
+2. Cross-location player names/search degrade until Phase 2 player_public view (no impact with one location).
+3. "Close Out"/"Reopen" buttons removed from AdminSchedule — closing weeks is publish-only, closed weeks immutable (per plan).
+4. Missed-week penalty is now always applied at publish (checkbox locked on).
+5. Player-facing standings/score-entry resolve the admin's working league — correct single-league; per-team league resolution lands with Phase 3 multi-league.
+6. admin_create_player keeps the legacy default league_password 'password' (Phase 2 audits this).
+7. recalculate_handicaps() picks a multi-location admin's first location (edge case, Phase 2).
+8. Admin score entry now requires all holes (1–20); partial rows no longer possible (DB validates).
+
+Fix rounds used: 0 of 2. Handed to Erich for commit sign-off.
+
+### Post-gate revision — Erich's requirement: edit prior-week scores
+Erich requires score corrections on closed weeks (life happens). Better alternative than restoring "Reopen": events stay closed (publish/standings lifecycle intact), but `admin_upsert_score` now works on closed events — Claude edited migration 202607100004 directly (too small for a Codex round): removed the closed-event block, added penalty supersede (a late real score deletes that player's missed_penalty row, mirroring publish_week), audit payload now records event_status + penalty_superseded. admin_delete_score / admin_review_score already worked on closed weeks. Player submissions still require an open event. npm test: 34 pass.

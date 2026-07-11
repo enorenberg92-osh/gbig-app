@@ -1,20 +1,24 @@
 import React, { useState, useEffect } from 'react'
 import { AlertTriangle, Target, Plus, Check, Trash2 } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
-import { recalcPlayerHandicap } from '../../lib/handicapCalc'
 import { useLocation } from '../../context/LocationContext'
 import { scoreColor } from '../../lib/scoreUtils'
+import { isDateInRange, isFutureDate } from '../../lib/dateUtils'
+import { hasCompleteCoursePars } from '../../lib/holeUtils'
+import { loadWorkingLeague } from '../../lib/leagueUtils'
+import { mutationErrorMessage } from '../../lib/rpcErrors'
+import { compareEffectiveScores } from '../../lib/roundUtils'
 import { Button, Toast } from '../ui'
 
 // ─── Skins calculation ───────────────────────────────────────────────────────
 // For each hole: find the lowest score. If exactly one player shot it → skin won.
 // No carryovers. Each hole is independent.
-function calcSkins(playerScoreMap) {
+function calcSkins(playerScoreMap, numHoles) {
   // playerScoreMap: { playerId: [h1, h2, ..., h9] }
   const entries = Object.entries(playerScoreMap)
   const skins = {} // hole (1-indexed) → playerId or null
 
-  for (let hole = 0; hole < 9; hole++) {
+  for (let hole = 0; hole < numHoles; hole++) {
     const holeScores = entries
       .map(([pid, scores]) => ({ pid, score: scores[hole] }))
       .filter(x => x.score != null && x.score > 0)
@@ -29,7 +33,7 @@ function calcSkins(playerScoreMap) {
 }
 
 export default function AdminScores({ activeEventId = null, onEventChange = () => {} }) {
-  const { locationId } = useLocation()
+  const { locationId, timezone } = useLocation()
   const [events, setEvents]         = useState([])
   const [selectedEvent, setSelectedEvent] = useState(activeEventId || '')
   const [eventData, setEventData]   = useState(null)   // { course, pars[] }
@@ -41,6 +45,7 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
   const [holeScores, setHoleScores] = useState({})     // { p1Id: [..9], p2Id: [..9] }
   const [skinsResult, setSkinsResult] = useState(null)
   const [subMap, setSubMap]           = useState({})  // { player_id: { sub_first_name, sub_last_name, sub_handicap } }
+  const [leagueId, setLeagueId]       = useState(null)
 
   useEffect(() => {
     if (locationId) loadEvents()
@@ -54,14 +59,22 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
   }, [activeEventId])
 
   useEffect(() => {
-    if (selectedEvent) loadEventData(selectedEvent)
-  }, [selectedEvent])
+    if (selectedEvent && leagueId) loadEventData(selectedEvent)
+  }, [selectedEvent, leagueId])
 
   async function loadEvents() {
+    let league
+    try {
+      league = await loadWorkingLeague(supabase, locationId)
+    } catch (leagueError) {
+      showToast(leagueError.message, 'error'); setLoading(false); return
+    }
+    setLeagueId(league.id)
     const { data, error } = await supabase
       .from('events')
       .select('id, name, event_date, start_date, status, course_id, week_number, is_bye')
       .eq('location_id', locationId)
+      .eq('league_id', league.id)
       .order('week_number', { ascending: true, nullsFirst: false })
 
     // Filter bye weeks client-side (safe even if is_bye column doesn't exist yet)
@@ -70,18 +83,13 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
 
     // Only compute a local default if the parent hasn't given us one yet
     if (playable.length && !activeEventId) {
-      const today = new Date()
-      today.setHours(0, 0, 0, 0)
       const open = playable.find(e => e.status === 'open')
       const current = !open && playable.find(e => {
         if (!e.start_date || !e.end_date) return false
-        const start = new Date(e.start_date + 'T00:00:00')
-        const end   = new Date(e.end_date   + 'T23:59:59')
-        return today >= start && today <= end
+        return isDateInRange(e.start_date, e.end_date, timezone)
       })
       const upcoming = !open && !current && playable.find(e => {
-        if (!e.start_date) return false
-        return new Date(e.start_date + 'T00:00:00') > today
+        return isFutureDate(e.start_date, timezone)
       })
       const chosen = open || current || upcoming || playable[0]
       setSelectedEvent(chosen.id)
@@ -101,6 +109,8 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
       .from('events')
       .select('*')
       .eq('id', eventId)
+      .eq('location_id', locationId)
+      .eq('league_id', leagueId)
       .single()
 
     // Fetch course independently if one is assigned
@@ -108,17 +118,19 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
     if (evt?.course_id) {
       const { data: courseData } = await supabase
         .from('courses')
-        .select('id, name, hole_pars')
+        .select('id, name, num_holes, hole_pars, total_par')
         .eq('id', evt.course_id)
+        .eq('location_id', locationId)
         .single()
       course = courseData
     }
 
     // Load teams, players, scores, and approved subs independently
-    const [{ data: teamRows }, { data: allPlayers }, { data: scoreRows }, { data: subRows }] = await Promise.all([
-      supabase.from('teams').select('id, name, player1_id, player2_id').eq('location_id', locationId).order('created_at', { ascending: true }),
+    const [{ data: teamRows }, { data: rosterRows }, { data: allPlayers }, { data: scoreRows }, { data: subRows }] = await Promise.all([
+      supabase.from('teams').select('id, name').eq('location_id', locationId).eq('league_id', evt.league_id).order('created_at', { ascending: true }),
+      supabase.from('roster_at').select('team_id, player_id').eq('event_id', eventId),
       supabase.from('players').select('id, name, handicap, in_skins').eq('location_id', locationId),
-      supabase.from('scores').select('*').eq('event_id', eventId).eq('location_id', locationId),
+      supabase.from('scores').select('*').eq('event_id', eventId).eq('location_id', locationId).neq('status', 'rejected'),
       supabase.from('subs').select('player_id, sub_first_name, sub_last_name, sub_handicap, sub_player_id').eq('event_id', eventId).eq('location_id', locationId).eq('status', 'approved'),
     ])
 
@@ -132,21 +144,33 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
     ;(allPlayers || []).forEach(p => { playerById[p.id] = p })
 
     const scoreByPlayer = {}
-    ;(scoreRows || []).forEach(s => { scoreByPlayer[s.player_id] = s })
+    ;(scoreRows || []).sort(compareEffectiveScores).forEach(s => {
+      if (!scoreByPlayer[s.player_id]) scoreByPlayer[s.player_id] = s
+    })
+
+    const rosterByTeam = {}
+    ;(rosterRows || []).forEach(row => {
+      if (!rosterByTeam[row.team_id]) rosterByTeam[row.team_id] = []
+      rosterByTeam[row.team_id].push(row.player_id)
+    })
 
     // Build teams list — client-side join, no FK dependency
     const builtTeams = (teamRows || []).map(t => ({
       id: t.id,
       name: t.name,
-      p1: playerById[t.player1_id] || null,
-      p2: playerById[t.player2_id] || null,
-      score1: scoreByPlayer[t.player1_id] || null,
-      score2: scoreByPlayer[t.player2_id] || null,
+      p1: playerById[rosterByTeam[t.id]?.[0]] || null,
+      p2: playerById[rosterByTeam[t.id]?.[1]] || null,
+      score1: scoreByPlayer[rosterByTeam[t.id]?.[0]] || null,
+      score2: scoreByPlayer[rosterByTeam[t.id]?.[1]] || null,
     })).filter(t => t.p1 && t.p2)
 
-    const holePars = course?.hole_pars || Array(9).fill(4)
-
-    setEventData({ event: evt, course, holePars })
+    const courseReady = hasCompleteCoursePars(course)
+    setEventData({
+      event: evt,
+      course,
+      holePars: courseReady ? course.hole_pars : [],
+      courseError: courseReady ? null : 'Assign a course with complete, valid pars before entering scores.',
+    })
     setTeams(builtTeams)
     setLoading(false)
   }
@@ -157,8 +181,10 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
   }
 
   function startEditTeam(team) {
-    const p1holes = team.score1?.hole_scores || Array(9).fill('')
-    const p2holes = team.score2?.hole_scores || Array(9).fill('')
+    if (eventData?.courseError) { showToast(eventData.courseError, 'error'); return }
+    const holeCount = eventData.holePars.length
+    const p1holes = team.score1?.hole_scores || Array(holeCount).fill('')
+    const p2holes = team.score2?.hole_scores || Array(holeCount).fill('')
     setHoleScores({
       [team.p1.id]: p1holes.map(v => v === null ? '' : String(v)),
       [team.p2.id]: p2holes.map(v => v === null ? '' : String(v)),
@@ -169,7 +195,7 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
 
   function updateHole(playerId, holeIdx, val) {
     setHoleScores(prev => {
-      const updated = [...(prev[playerId] || Array(9).fill(''))]
+      const updated = [...(prev[playerId] || Array(eventData?.holePars?.length || 0).fill(''))]
       updated[holeIdx] = val
       return { ...prev, [playerId]: updated }
     })
@@ -190,65 +216,50 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
   }
 
   async function handleSaveTeamScores(team) {
+    if (eventData?.courseError) { showToast(eventData.courseError, 'error'); return }
     setSaving(true)
     const players = [
-      { player: team.p1, existingScore: team.score1 },
-      { player: team.p2, existingScore: team.score2 },
+      { player: team.p1 },
+      { player: team.p2 },
     ]
+    const entries = []
 
-    for (const { player, existingScore } of players) {
-      const holes = (holeScores[player.id] || []).map(v => parseInt(v) || null)
-      const gross = holes.reduce((s, v) => s + (v || 0), 0)
+    for (const { player } of players) {
+      const holes = (holeScores[player.id] || []).map(v => parseInt(v, 10) || null)
+      if (holes.length !== eventData.holePars.length || holes.some(value => value == null || value < 1 || value > 20)) {
+        showToast(`Enter all ${eventData.holePars.length} hole scores from 1 to 20.`, 'error')
+        setSaving(false)
+        return
+      }
       // Use sub's handicap if an approved sub exists for this player/event
       const sub = subMap[player.id]
       const effectiveHandicap = sub != null ? (sub.sub_handicap || 0) : (player.handicap || 0)
-      const net   = Math.round(gross - effectiveHandicap)
-
-      const payload = {
-        event_id:      selectedEvent,
-        player_id:     player.id,
-        hole_scores:   holes,
-        gross_total:   gross,
-        net_total:     net,
+      entries.push({
+        player_id: player.id,
+        hole_scores: holes,
         handicap_used: Math.round(effectiveHandicap),
-        sub_played:    sub != null,  // true = player sat out; don't count toward their history
-        location_id:   locationId,
-      }
-
-      let error
-      if (existingScore) {
-        ;({ error } = await supabase.from('scores').update(payload).eq('id', existingScore.id))
-      } else {
-        ;({ error } = await supabase.from('scores').insert(payload))
-      }
-      if (error) { showToast('Error saving: ' + error.message, 'error'); setSaving(false); return }
+        sub_played: sub != null,
+      })
 
       // If an approved sub played AND has a player profile, save their own score record
       if (sub?.sub_player_id) {
-        const subScorePayload = {
-          event_id:      selectedEvent,
-          player_id:     sub.sub_player_id,
-          hole_scores:   holes,
-          gross_total:   gross,
-          net_total:     net,
+        entries.push({
+          player_id: sub.sub_player_id,
+          hole_scores: holes,
           handicap_used: Math.round(effectiveHandicap),
-          sub_played:    false,  // from the sub's perspective, they actually played
-          location_id:   locationId,
-        }
-        // Upsert: update if a record already exists for this sub + event, else insert
-        const { data: existingSubScore } = await supabase
-          .from('scores')
-          .select('id')
-          .eq('event_id', selectedEvent)
-          .eq('player_id', sub.sub_player_id)
-          .maybeSingle()
-
-        if (existingSubScore) {
-          await supabase.from('scores').update(subScorePayload).eq('id', existingSubScore.id)
-        } else {
-          await supabase.from('scores').insert(subScorePayload)
-        }
+          sub_played: false,
+        })
       }
+    }
+
+    const { error } = await supabase.rpc('admin_upsert_score', {
+      p_event_id: selectedEvent,
+      p_entries: entries,
+    })
+    if (error) {
+      showToast('Error saving: ' + mutationErrorMessage(error, 'save scores'), 'error')
+      setSaving(false)
+      return
     }
 
     setSaving(false)
@@ -256,10 +267,9 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
     setEditingTeam(null)
     loadEventData(selectedEvent)
 
-    // Silently recalculate handicaps for both players now that new scores are in.
-    // Fire-and-forget — never blocks the UI or shows an error to the admin.
-    const playerIds = [team.p1?.id, team.p2?.id].filter(Boolean)
-    Promise.all(playerIds.map(id => recalcPlayerHandicap(supabase, id, locationId)))
+    // Server-authoritative recalculation is audited by the database.
+    const playerIds = [...new Set(entries.filter(entry => !entry.sub_played).map(entry => entry.player_id))]
+    Promise.all(playerIds.map(id => supabase.rpc('recalculate_player_handicap', { p_player_id: id }).then(({ data }) => data || {})))
       .then(results => {
         results.forEach((r, i) => {
           if (r.updated) console.log(`Handicap updated: player ${playerIds[i]} → ${r.newHcp} (was ${r.oldHcp})`)
@@ -285,22 +295,25 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
     // must go too so the sub's profile doesn't keep a stale round.
     const sub = subMap[player.id]
 
-    const { error: delErr } = await supabase
-      .from('scores')
-      .delete()
-      .eq('id', existingScore.id)
+    const { error: delErr } = await supabase.rpc('admin_delete_score', {
+      p_score_id: existingScore.id,
+    })
 
-    if (delErr) { showToast('Error removing score: ' + delErr.message, 'error'); return }
+    if (delErr) { showToast('Error removing score: ' + mutationErrorMessage(delErr, 'remove a score'), 'error'); return }
 
     let subPlayerId = null
     if (sub?.sub_player_id) {
       subPlayerId = sub.sub_player_id
-      await supabase
+      const { data: mirrorRows } = await supabase
         .from('scores')
-        .delete()
+        .select('id')
         .eq('event_id', selectedEvent)
         .eq('player_id', subPlayerId)
         .eq('location_id', locationId)
+        .neq('status', 'rejected')
+      await Promise.all((mirrorRows || []).map(row =>
+        supabase.rpc('admin_delete_score', { p_score_id: row.id })
+      ))
     }
 
     showToast(`Removed ${player.name}'s score`)
@@ -309,7 +322,7 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
 
     // Silently recalc handicaps for the player (and the sub if they played).
     const ids = [player.id, subPlayerId].filter(Boolean)
-    Promise.all(ids.map(id => recalcPlayerHandicap(supabase, id, locationId)))
+    Promise.all(ids.map(id => supabase.rpc('recalculate_player_handicap', { p_player_id: id }).then(({ data }) => data || {})))
       .then(results => {
         results.forEach((r, i) => {
           if (r.updated) console.log(`Handicap updated: player ${ids[i]} → ${r.newHcp} (was ${r.oldHcp})`)
@@ -320,7 +333,7 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
   async function handleCalculateSkins() {
     // Load scores + all players independently (avoids FK join issues)
     const [{ data: allScores }, { data: skinPlayers }] = await Promise.all([
-      supabase.from('scores').select('player_id, hole_scores').eq('event_id', selectedEvent).eq('location_id', locationId).eq('entry_type', 'played'),
+      supabase.from('scores').select('player_id, hole_scores').eq('event_id', selectedEvent).eq('location_id', locationId).eq('entry_type', 'played').eq('status', 'verified'),
       supabase.from('players').select('id, name, in_skins').eq('location_id', locationId),
     ])
 
@@ -347,14 +360,14 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
       }
     })
 
-    const skins = calcSkins(playerScoreMap)
+    const skins = calcSkins(playerScoreMap, eventData?.holePars?.length || 0)
     setSkinsResult({ skins, playerNames, allScores: skinsScores })
   }
 
   // ── UI Helpers ──────────────────────────────────────────────────────────────
   const submitted   = teams.filter(t => t.score1 || t.score2)
   const unsubmitted = teams.filter(t => !t.score1 && !t.score2)
-  const holePars    = eventData?.holePars || Array(9).fill(4)
+  const holePars    = eventData?.holePars || []
   const totalPar    = holePars.reduce((s, p) => s + p, 0)
 
   if (loading && !events.length) return <div style={styles.loading}>Loading…</div>
@@ -375,11 +388,18 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
           ))}
         </select>
         {eventData && (
-          <div style={styles.eventMeta}>
-            Course: <strong>{eventData.course?.name || 'Not assigned'}</strong>
-            {' · '}Par {totalPar}
-            {' · '}{submitted.length}/{teams.length} teams submitted
-          </div>
+          <>
+            <div style={styles.eventMeta}>
+              Course: <strong>{eventData.course?.name || 'Not assigned'}</strong>
+              {' · '}Par {totalPar || '—'}
+              {' · '}{submitted.length}/{teams.length} teams submitted
+            </div>
+            {eventData.courseError && (
+              <div style={{ marginTop: 10, color: '#c53030', fontSize: 13, fontWeight: 600 }}>
+                {eventData.courseError}
+              </div>
+            )}
+          </>
         )}
       </div>
 
@@ -459,6 +479,7 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
             fullWidth
             icon={<Target size={16} strokeWidth={2.25} />}
             onClick={handleCalculateSkins}
+            disabled={Boolean(eventData?.courseError)}
             style={{
               background: 'var(--gold)',
               borderColor: 'var(--gold)',
@@ -476,7 +497,7 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
                 Skins Results
               </h3>
               <p style={styles.skinsNote}>Lowest unique score per hole wins. No carryovers.</p>
-              {Array.from({ length: 9 }, (_, i) => i + 1).map(hole => {
+              {Array.from({ length: holePars.length }, (_, i) => i + 1).map(hole => {
                 const winnerId = skinsResult.skins[hole]
                 const allHoleScores = skinsResult.allScores.map(s => ({
                   name: s.players?.name,
@@ -554,6 +575,9 @@ function TeamRow({ team, holePars, isEditing, holeScores, saving, subMap = {}, o
             <div style={trStyles.teamTotals}>
               <span>Gross {(team.score1?.gross_total || 0) + (team.score2?.gross_total || 0)}</span>
               <span>Net {(team.score1?.net_total || 0) + (team.score2?.net_total || 0)}</span>
+              {(team.score1?.status === 'pending' || team.score2?.status === 'pending') && (
+                <span style={{ color: '#b45309', fontWeight: 700 }}>Pending review</span>
+              )}
             </div>
             <Button
               variant="secondary"
@@ -659,7 +683,7 @@ function TeamRow({ team, holePars, isEditing, holeScores, saving, subMap = {}, o
                             <input
                               type="number"
                               min="1"
-                              max="15"
+                              max="20"
                               value={val}
                               onChange={e => onHoleChange(player.id, i, e.target.value)}
                               style={{

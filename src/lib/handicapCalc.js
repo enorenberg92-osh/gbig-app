@@ -1,5 +1,6 @@
 // ── Shared handicap calculation utility ───────────────────────────────────────
 // Used by AdminHandicap (display/bulk) and AdminScores (auto-recalc after save).
+import { compareRoundsChronologically } from './roundUtils'
 
 // Core rules for GBIG's default league. The `minHandicap`/`maxHandicap` bounds
 // are a hard clamp after truncation — a scratch or plus golfer caps at -2, a
@@ -108,6 +109,7 @@ export async function recalcPlayerHandicap(supabase, playerId, locationId, setti
       .eq('player_id', playerId)
       .eq('location_id', locationId)
       .eq('entry_type', 'played')
+      .eq('status', 'verified')
       // Skip sit-out marker rows: when this player sat out and a sub played
       // for them, AdminScores wrote a row with sub_played=true whose gross
       // is the sub's. Without this filter, the sub's score contaminates the
@@ -117,16 +119,7 @@ export async function recalcPlayerHandicap(supabase, playerId, locationId, setti
       .not('gross_total', 'is', null)
 
     // Sort by week_number ascending (nulls last), then start_date ascending.
-    const sortedScores = [...(scores || [])].sort((a, b) => {
-      const aw = a.events?.week_number
-      const bw = b.events?.week_number
-      if (aw != null && bw != null && aw !== bw) return aw - bw
-      if (aw == null && bw != null) return 1
-      if (aw != null && bw == null) return -1
-      const ad = a.events?.start_date || ''
-      const bd = b.events?.start_date || ''
-      return ad.localeCompare(bd)
-    })
+    const sortedScores = [...(scores || [])].sort(compareRoundsChronologically)
 
     const diffs = sortedScores
       .map(s => {
@@ -142,8 +135,9 @@ export async function recalcPlayerHandicap(supabase, playerId, locationId, setti
     // Only write if the value actually changed
     if (newHcp === player.handicap) return { skipped: true, newHcp }
 
-    await supabase.from('players').update({ handicap: newHcp }).eq('id', playerId)
-    return { updated: true, newHcp, oldHcp: player.handicap }
+    const { data: recalcResult, error: recalcErr } = await supabase.rpc('recalculate_player_handicap', { p_player_id: playerId })
+    if (recalcErr) throw recalcErr
+    return recalcResult || { updated: true, newHcp, oldHcp: player.handicap }
 
   } catch (e) {
     console.warn(`recalcPlayerHandicap(${playerId}) failed:`, e)

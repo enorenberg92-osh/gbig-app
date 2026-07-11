@@ -1,9 +1,12 @@
 import React, { useState, useEffect } from 'react'
 import { Settings, RefreshCw, Lock, Inbox } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
-import { DEFAULT_SETTINGS, calcHandicap, calcBreakdown } from '../../lib/handicapCalc'
+import { DEFAULT_SETTINGS, calcBreakdown } from '../../lib/handicapCalc'
 import { useLocation } from '../../context/LocationContext'
 import { Button, Toast, EmptyState } from '../ui'
+import { formatLocalDate } from '../../lib/dateUtils'
+import { compareRoundsChronologically } from '../../lib/roundUtils'
+import { mutationErrorMessage } from '../../lib/rpcErrors'
 
 // ── Component ────────────────────────────────────────────────────────────────
 export default function AdminHandicap() {
@@ -40,8 +43,9 @@ export default function AdminHandicap() {
         .select('player_id, gross_total, sub_played, events(id, name, start_date, event_date, week_number, courses(name, hole_pars))')
         .eq('location_id', locationId)
         .eq('entry_type', 'played')
+        .eq('status', 'verified')
         .eq('sub_played', false),
-      supabase.from('league_config').select('num_weeks').eq('location_id', locationId).limit(1).single(),
+      supabase.from('league_config').select('num_weeks').eq('location_id', locationId).eq('is_working', true).maybeSingle(),
     ])
 
     // Merge league num_weeks into settings
@@ -52,16 +56,7 @@ export default function AdminHandicap() {
     // Sort client-side by events.week_number ascending (nulls last), then
     // start_date. Mirrors handicapCalc.js so `scoresUsed` (slice -N) really
     // does pick the N most recent rounds.
-    const sortedScores = [...(scores || [])].sort((a, b) => {
-      const aw = a.events?.week_number
-      const bw = b.events?.week_number
-      if (aw != null && bw != null && aw !== bw) return aw - bw
-      if (aw == null && bw != null) return 1
-      if (aw != null && bw == null) return -1
-      const ad = a.events?.start_date || a.events?.event_date || ''
-      const bd = b.events?.start_date || b.events?.event_date || ''
-      return ad.localeCompare(bd)
-    })
+    const sortedScores = [...(scores || [])].sort(compareRoundsChronologically)
 
     // Build score history per player
     const history = {}
@@ -95,33 +90,15 @@ export default function AdminHandicap() {
 
   async function handleRecalcAll() {
     setUpdating(true)
-
-    // Compute all new handicaps in memory first (no DB calls yet)
-    const toUpdate = players
-      .filter(p => !p.handicap_locked)
-      .map(p => {
-        const diffs  = (scoreHistory[p.id] || []).filter(r => r.diff != null).map(r => r.diff)
-        const newHcp = calcHandicap(diffs, settings)
-        // Only queue a write if the value actually changed
-        return (newHcp != null && newHcp !== p.handicap) ? { id: p.id, newHcp } : null
-      })
-      .filter(Boolean)
-
-    // Fire all DB updates in parallel instead of one-by-one
-    const results = await Promise.all(
-      toUpdate.map(({ id, newHcp }) =>
-        supabase.from('players').update({ handicap: newHcp }).eq('id', id)
-      )
-    )
-    const updated = results.filter(r => !r.error).length
-    const errors  = results.filter(r =>  r.error).length
+    const { data, error } = await supabase.rpc('recalculate_handicaps')
+    const updated = data?.updated || 0
 
     setUpdating(false)
     showToast(
-      errors
-        ? `Updated ${updated} player(s) — ${errors} error(s).`
+      error
+        ? mutationErrorMessage(error, 'recalculate handicaps')
         : `${updated} handicap${updated !== 1 ? 's' : ''} updated!`,
-      errors ? 'error' : 'success'
+      error ? 'error' : 'success'
     )
     loadAll()
   }
@@ -132,7 +109,7 @@ export default function AdminHandicap() {
 
   function formatDate(d) {
     if (!d) return ''
-    return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' })
+    return formatLocalDate(d, { month: 'short', day: 'numeric', year: '2-digit' })
   }
 
   if (loading) return <div style={styles.loading}>Loading handicaps…</div>

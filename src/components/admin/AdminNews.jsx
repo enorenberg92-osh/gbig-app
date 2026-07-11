@@ -46,7 +46,7 @@ export default function AdminNews() {
 
     let error
     if (editing) {
-      ;({ error } = await supabase.from('news_posts').update(payload).eq('id', editing.id))
+      ;({ error } = await supabase.from('news_posts').update(payload).eq('id', editing.id).eq('location_id', locationId))
     } else {
       ;({ error } = await supabase.from('news_posts').insert({ ...payload, location_id: locationId }))
     }
@@ -68,7 +68,7 @@ export default function AdminNews() {
       message: `Delete "${post.title}"?`,
       confirmLabel: 'Delete',
       onConfirm: async () => {
-        const { error } = await supabase.from('news_posts').delete().eq('id', post.id)
+        const { error } = await supabase.from('news_posts').delete().eq('id', post.id).eq('location_id', locationId)
         if (error) {
           showToast('Error: ' + error.message, 'error')
         } else {

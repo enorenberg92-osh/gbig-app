@@ -3,6 +3,8 @@ import { AlertTriangle, Target, Inbox } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useLocation } from '../../context/LocationContext'
 import { Button, Toast, EmptyState } from '../ui'
+import { hasCompleteCoursePars } from '../../lib/holeUtils'
+import { loadWorkingLeague } from '../../lib/leagueUtils'
 
 const SCORE_LABELS = [
   { diff: -3, label: 'Albatross', color: '#b8860b', bg: '#fef9c3' },
@@ -34,10 +36,14 @@ export default function AdminSkins({ activeEventId = null, onEventChange = () =>
   useEffect(() => {
     if (!locationId) return
     async function load() {
+      let league
+      try { league = await loadWorkingLeague(supabase, locationId) }
+      catch (error) { showToast(error.message, 'error'); setLoading(false); return }
       const [{ data: evts }, { data: plrs }] = await Promise.all([
         supabase.from('events')
           .select('id, name, week_number, start_date, course_id, status')
           .eq('location_id', locationId)
+          .eq('league_id', league.id)
           .neq('is_bye', true)
           .order('week_number', { ascending: true }),
         supabase.from('players')
@@ -71,8 +77,8 @@ export default function AdminSkins({ activeEventId = null, onEventChange = () =>
     setSkinResults(null)
     if (!selectedEvent) return
     // Load event details (for course par info)
-    supabase.from('events').select('*, courses(id, name, hole_pars, total_par)')
-      .eq('id', selectedEvent).single()
+    supabase.from('events').select('*, courses(id, name, num_holes, hole_pars, total_par)')
+      .eq('id', selectedEvent).eq('location_id', locationId).single()
       .then(({ data }) => setEventDetails(data || null))
   }, [selectedEvent])
 
@@ -94,6 +100,7 @@ export default function AdminSkins({ activeEventId = null, onEventChange = () =>
       .eq('event_id', selectedEvent)
       .eq('location_id', locationId)
       .eq('entry_type', 'played')
+      .eq('status', 'verified')
 
     if (error) {
       showToast('Error loading scores: ' + error.message, 'error')
@@ -123,17 +130,25 @@ export default function AdminSkins({ activeEventId = null, onEventChange = () =>
 
     // 3. Get hole pars from the course attached to this event
     let holePars = null
+    let resolvedCourse = eventDetails?.courses || null
     if (eventDetails?.courses?.hole_pars) {
       holePars = eventDetails.courses.hole_pars
     } else if (eventDetails?.course_id) {
       const { data: course } = await supabase
-        .from('courses').select('hole_pars').eq('id', eventDetails.course_id).single()
+        .from('courses').select('num_holes, hole_pars').eq('id', eventDetails.course_id).eq('location_id', locationId).single()
+      resolvedCourse = course || null
       holePars = course?.hole_pars || null
+    }
+
+    if (!hasCompleteCoursePars(resolvedCourse)) {
+      showToast('This event needs a course with complete, valid pars before skins can be calculated.', 'error')
+      setCalculating(false)
+      return
     }
 
     // 4. Calculate skins hole by hole
     const results = []
-    for (let h = 0; h < 9; h++) {
+    for (let h = 0; h < resolvedCourse.num_holes; h++) {
       const par = holePars ? holePars[h] : null
 
       // Collect each skins player's score on this hole

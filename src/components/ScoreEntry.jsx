@@ -4,6 +4,9 @@ import { supabase } from '../lib/supabase'
 import HoleEventAnimation from './HoleEventAnimation'
 import { useLocation } from '../context/LocationContext'
 import { scoreColor, scoreBg, vsParLabel } from '../lib/scoreUtils'
+import { hasCompleteCoursePars } from '../lib/holeUtils'
+import { loadWorkingLeague } from '../lib/leagueUtils'
+import { mutationErrorMessage } from '../lib/rpcErrors'
 import { Button, Toast } from './ui'
 
 /**
@@ -30,7 +33,7 @@ export default function ScoreEntry({ session, onBack }) {
   const [toast, setToast]               = useState(null)
   const [error, setError]               = useState(null)
 
-  const NUM_HOLES = 9
+  const numHoles = course?.num_holes || 0
 
   useEffect(() => { if (locationId) init() }, [locationId])
 
@@ -46,42 +49,14 @@ export default function ScoreEntry({ session, onBack }) {
 
       if (pErr || !playerRow) { setError('No player record found for your account. Ask your admin.'); setLoading(false); return }
 
-      // 2. Find their team (load players separately to avoid FK join issues)
-      const { data: teamRow, error: tErr } = await supabase
-        .from('teams')
-        .select('id, player1_id, player2_id')
-        .eq('location_id', locationId)
-        .or(`player1_id.eq.${playerRow.id},player2_id.eq.${playerRow.id}`)
-        .single()
+      const league = await loadWorkingLeague(supabase, locationId)
 
-      if (tErr || !teamRow) { setError('No team found for your account. Ask your admin.'); setLoading(false); return }
-
-      // Load both players independently
-      const { data: teamPlayers } = await supabase
-        .from('players')
-        .select('id, name, handicap')
-        .eq('location_id', locationId)
-        .in('id', [teamRow.player1_id, teamRow.player2_id].filter(Boolean))
-
-      const playerById = {}
-      ;(teamPlayers || []).forEach(p => { playerById[p.id] = p })
-
-      const hydratedTeam = {
-        ...teamRow,
-        p1: playerById[teamRow.player1_id] || null,
-        p2: playerById[teamRow.player2_id] || null,
-      }
-      setTeam(hydratedTeam)
-
-      // 3. Find the current open event. Status is the single source of
-      // truth -- an event is active iff an admin has flipped it to
-      // 'open'. We do NOT filter by calendar dates so admins can stage
-      // events weeks in advance and control activation on their own
-      // timeline.
+      // 2. Find the working league's open event.
       const { data: evtRow } = await supabase
         .from('events')
         .select('*')
         .eq('location_id', locationId)
+        .eq('league_id', league.id)
         .eq('status', 'open')
         .order('week_number', { ascending: true })
         .limit(1)
@@ -90,14 +65,55 @@ export default function ScoreEntry({ session, onBack }) {
       if (!evtRow) { setError('No active round right now. Check back soon!'); setLoading(false); return }
       setEvent(evtRow)
 
+      // 3. Resolve the dated roster; legacy team slot columns are display-only.
+      const { data: myRoster, error: rosterErr } = await supabase
+        .from('roster_at')
+        .select('team_id')
+        .eq('event_id', evtRow.id)
+        .eq('player_id', playerRow.id)
+        .maybeSingle()
+      if (rosterErr || !myRoster) { setError('No team found for your account in this league. Ask your admin.'); setLoading(false); return }
+
+      const [{ data: teamRow }, { data: rosterRows }] = await Promise.all([
+        supabase.from('teams').select('id, name').eq('id', myRoster.team_id).eq('league_id', league.id).single(),
+        supabase.from('roster_at').select('player_id').eq('event_id', evtRow.id).eq('team_id', myRoster.team_id),
+      ])
+      const rosterPlayerIds = (rosterRows || []).map(row => row.player_id)
+      const { data: teamPlayers } = await supabase
+        .from('players')
+        .select('id, name, handicap')
+        .eq('location_id', locationId)
+        .in('id', rosterPlayerIds)
+      const playerById = {}
+      ;(teamPlayers || []).forEach(p => { playerById[p.id] = p })
+      const hydratedTeam = {
+        ...teamRow,
+        p1: playerById[rosterPlayerIds[0]] || null,
+        p2: playerById[rosterPlayerIds[1]] || null,
+      }
+      if (!hydratedTeam.p1 || !hydratedTeam.p2) { setError('This team roster must contain exactly two players.'); setLoading(false); return }
+      setTeam(hydratedTeam)
+
       // Load course separately to avoid FK join issues
+      let loadedCourse = null
       if (evtRow.course_id) {
         const { data: courseRow } = await supabase
           .from('courses')
-          .select('id, name, hole_pars, total_par, start_hole')
+          .select('id, name, num_holes, hole_pars, total_par, start_hole')
           .eq('id', evtRow.course_id)
+          .eq('location_id', locationId)
           .single()
-        if (courseRow) setCourse(courseRow)
+        if (!hasCompleteCoursePars(courseRow)) {
+          setError('Score entry is unavailable because this course is missing valid hole pars. Ask your admin to fix the course setup.')
+          setLoading(false)
+          return
+        }
+        loadedCourse = courseRow
+        setCourse(courseRow)
+      } else {
+        setError('Score entry is unavailable until an admin assigns a course to this event.')
+        setLoading(false)
+        return
       }
 
       // 4. Check if already submitted — only 'played' entries count.
@@ -110,13 +126,14 @@ export default function ScoreEntry({ session, onBack }) {
         .eq('location_id', locationId)
         .eq('player_id', playerRow.id)
         .eq('entry_type', 'played')
+        .neq('status', 'rejected')
 
       if (existing && existing.length > 0) { setAlreadySubmitted(true); setLoading(false); return }
 
       // 5. Initialize blank scores
       setScores({
-        p1: Array(NUM_HOLES).fill(null),
-        p2: Array(NUM_HOLES).fill(null),
+        p1: Array(loadedCourse.num_holes).fill(null),
+        p2: Array(loadedCourse.num_holes).fill(null),
       })
 
       setLoading(false)
@@ -166,7 +183,7 @@ export default function ScoreEntry({ session, onBack }) {
   }
 
   function goNext() {
-    if (currentHole < NUM_HOLES - 1) setCurrentHole(h => h + 1)
+    if (currentHole < numHoles - 1) setCurrentHole(h => h + 1)
   }
 
   function goPrev() {
@@ -180,7 +197,7 @@ export default function ScoreEntry({ session, onBack }) {
 
   function totalPar() {
     if (!course?.hole_pars) return null
-    return course.hole_pars.slice(0, NUM_HOLES).reduce((a, b) => a + b, 0)
+    return course.hole_pars.slice(0, numHoles).reduce((a, b) => a + b, 0)
   }
 
   function vsPar(player) {
@@ -195,51 +212,30 @@ export default function ScoreEntry({ session, onBack }) {
   async function handleSubmit() {
     const allFilled = scores.p1.every(s => s != null) && scores.p2.every(s => s != null)
     if (!allFilled) {
-      showToast('Please enter scores for all 9 holes before submitting.', 'error')
+      showToast(`Please enter scores for all ${numHoles} holes before submitting.`, 'error')
       return
     }
 
     setSaving(true)
 
-    const coursePar = course?.total_par ?? 36
-
-    const p1Gross = totalScore('p1')
-    const p2Gross = totalScore('p2')
-    const p1Hcp = Math.round(team.p1.handicap ?? 0)
-    const p2Hcp = Math.round(team.p2.handicap ?? 0)
-
-    const rows = [
-      {
-        event_id:      event.id,
-        player_id:     team.p1.id,
-        hole_scores:   scores.p1,
-        gross_total:   p1Gross,
-        net_total:     p1Gross - p1Hcp,
-        handicap_used: p1Hcp,
-        location_id:   locationId,
-      },
-      {
-        event_id:      event.id,
-        player_id:     team.p2.id,
-        hole_scores:   scores.p2,
-        gross_total:   p2Gross,
-        net_total:     p2Gross - p2Hcp,
-        handicap_used: p2Hcp,
-        location_id:   locationId,
-      },
+    const entries = [
+      { player_id: team.p1.id, hole_scores: scores.p1 },
+      { player_id: team.p2.id, hole_scores: scores.p2 },
     ]
-
-    const { error: insertErr } = await supabase.from('scores').insert(rows)
+    const { data: result, error: insertErr } = await supabase.rpc('submit_scores', {
+      p_event_id: event.id,
+      p_entries: entries,
+    })
 
     if (insertErr) {
-      showToast('Error saving scores: ' + insertErr.message, 'error')
+      showToast('Error saving scores: ' + mutationErrorMessage(insertErr, 'submit scores'), 'error')
       setSaving(false)
       return
     }
 
     setSaving(false)
     setAlreadySubmitted(true)
-    showToast('Scores submitted! Great round! 🏌️')
+    showToast(result?.already_submitted ? 'Your team already submitted scores for this round.' : 'Scores submitted and awaiting admin review!')
   }
 
   function showToast(msg, type = 'success') {
@@ -335,7 +331,7 @@ export default function ScoreEntry({ session, onBack }) {
 
   const hole = currentHole + 1  // display number (1-indexed)
   const par = getPar(currentHole)
-  const isLastHole = currentHole === NUM_HOLES - 1
+  const isLastHole = currentHole === numHoles - 1
   const allDone = scores.p1.every(s => s != null) && scores.p2.every(s => s != null)
 
   return (
@@ -363,7 +359,7 @@ export default function ScoreEntry({ session, onBack }) {
 
       {/* Progress dots */}
       <div style={styles.progressRow}>
-        {Array.from({ length: NUM_HOLES }, (_, i) => {
+        {Array.from({ length: numHoles }, (_, i) => {
           const done = scores.p1[i] != null && scores.p2[i] != null
           const active = i === currentHole
           return (
@@ -523,7 +519,7 @@ export default function ScoreEntry({ session, onBack }) {
           <div style={styles.scorecardGrid}>
             {/* Header row */}
             <div style={styles.scHdr}></div>
-            {Array.from({ length: NUM_HOLES }, (_, i) => (
+            {Array.from({ length: numHoles }, (_, i) => (
               <div key={i} style={{ ...styles.scHdr, ...(i === currentHole ? { color: 'var(--green)', fontWeight: 700 } : {}) }}>
                 {i + 1}
               </div>
@@ -532,7 +528,7 @@ export default function ScoreEntry({ session, onBack }) {
 
             {/* Par row */}
             <div style={styles.scLabel}>Par</div>
-            {Array.from({ length: NUM_HOLES }, (_, i) => (
+            {Array.from({ length: numHoles }, (_, i) => (
               <div key={i} style={styles.scPar}>{getPar(i) ?? '—'}</div>
             ))}
             <div style={styles.scPar}>{totalPar() ?? '—'}</div>

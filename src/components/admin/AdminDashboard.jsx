@@ -5,6 +5,9 @@ import {
 } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useLocation } from '../../context/LocationContext'
+import { formatLocalDate } from '../../lib/dateUtils'
+import { loadWorkingLeague } from '../../lib/leagueUtils'
+import { mutationErrorMessage } from '../../lib/rpcErrors'
 import ConfirmDialog from '../ConfirmDialog'
 import { Button } from '../ui'
 
@@ -19,7 +22,7 @@ const STEPS = [
 function generateEmail(evt, scores, teams, players, skins, appName = 'Golf League App') {
   const evtName = evt.name || evt.title || `Event ${evt.week_number || ''}`
   const date = evt.start_date
-    ? new Date(evt.start_date).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
+    ? formatLocalDate(evt.start_date, { weekday: 'long', month: 'long', day: 'numeric' })
     : ''
 
   // Build player→team map (scores may only have player_id, not team_id)
@@ -30,6 +33,7 @@ function generateEmail(evt, scores, teams, players, skins, appName = 'Golf Leagu
   })
   const byTeam = {}
   scores.forEach(s => {
+    if (s.status !== 'verified') return
     const team = s.team_id ? teams.find(t => t.id === s.team_id) : plrTeamMap[s.player_id]
     if (!team) return
     if (!byTeam[team.id]) byTeam[team.id] = { team, gross: 0, net: 0 }
@@ -68,6 +72,7 @@ export default function AdminDashboard({ onWeekClosed = () => {} }) {
   const [scores, setScores]         = useState([])
   const [teams, setTeams]           = useState([])
   const [players, setPlayers]       = useState([])
+  const [rosterRows, setRosterRows] = useState([])
   const [skins, setSkins]           = useState([])
   const [activeStep, setActiveStep] = useState('scores')
   const [emailBody, setEmailBody]   = useState('')
@@ -76,7 +81,7 @@ export default function AdminDashboard({ onWeekClosed = () => {} }) {
   // Close-week penalty — on by default so a missing player is never
   // silently omitted from the season totals. Admin can untick if
   // they want to handle it manually.
-  const [applyPenalty, setApplyPenalty] = useState(true)
+  const applyPenalty = true
   const [copied, setCopied]         = useState(false)
   const [loading, setLoading]       = useState(true)
   const [dialog, setDialog]         = useState(null)
@@ -87,6 +92,14 @@ export default function AdminDashboard({ onWeekClosed = () => {} }) {
 
   async function load() {
     setLoading(true)
+    let league
+    try {
+      league = await loadWorkingLeague(supabase, locationId)
+    } catch (leagueError) {
+      alert(leagueError.message)
+      setLoading(false)
+      return
+    }
     const [
       { count: playerCount },
       { count: eventCount },
@@ -96,16 +109,17 @@ export default function AdminDashboard({ onWeekClosed = () => {} }) {
       { data: plrs },
     ] = await Promise.all([
       supabase.from('players').select('*', { count: 'exact', head: true }).eq('location_id', locationId),
-      supabase.from('events').select('*', { count: 'exact', head: true }).eq('location_id', locationId),
-      supabase.from('teams').select('*', { count: 'exact', head: true }).eq('location_id', locationId),
-      supabase.from('events').select('*').eq('location_id', locationId).eq('status', 'open').order('week_number', { ascending: true }).limit(1),
-      supabase.from('teams').select('id, name, player1_id, player2_id').eq('location_id', locationId),
-      supabase.from('players').select('id, name, first_name, last_name, email, in_skins, handicap, team_id').eq('location_id', locationId),
+      supabase.from('events').select('*', { count: 'exact', head: true }).eq('location_id', locationId).eq('league_id', league.id),
+      supabase.from('teams').select('*', { count: 'exact', head: true }).eq('location_id', locationId).eq('league_id', league.id),
+      supabase.from('events').select('*').eq('location_id', locationId).eq('league_id', league.id).eq('status', 'open').order('week_number', { ascending: true }).limit(1),
+      supabase.from('teams').select('id, name').eq('location_id', locationId).eq('league_id', league.id),
+      supabase.from('players').select('id, name, first_name, last_name, email, in_skins, handicap').eq('location_id', locationId),
     ])
 
     setStats({ players: playerCount || 0, events: eventCount || 0, teams: teamCount || 0 })
     setTeams(tms || [])
     setPlayers(plrs || [])
+    setRosterRows([])
 
     const evt = openEvts?.[0] || null
     setOpenEvent(evt)
@@ -114,12 +128,14 @@ export default function AdminDashboard({ onWeekClosed = () => {} }) {
 
     if (evt) {
       // Load scores + course info for skins calculation
-      const [{ data: scrs }, evtDetail] = await Promise.all([
-        supabase.from('scores').select('*').eq('event_id', evt.id).eq('location_id', locationId),
-        supabase.from('events').select('*, courses(id, name, hole_pars)').eq('id', evt.id).eq('location_id', locationId).single(),
+      const [{ data: scrs }, evtDetail, { data: eventRoster }] = await Promise.all([
+        supabase.from('scores').select('*').eq('event_id', evt.id).eq('location_id', locationId).neq('status', 'rejected'),
+        supabase.from('events').select('*, courses(id, name, num_holes, hole_pars)').eq('id', evt.id).eq('location_id', locationId).eq('league_id', league.id).single(),
+        supabase.from('roster_at').select('team_id, player_id').eq('event_id', evt.id),
       ])
       const s = scrs || []
       setScores(s)
+      setRosterRows(eventRoster || [])
 
       // ── Calculate skins from hole_scores (same logic as AdminSkins tab) ──
       // Penalty rows carry no hole_scores so the per-hole loop below skips them
@@ -128,12 +144,14 @@ export default function AdminDashboard({ onWeekClosed = () => {} }) {
       const skinsPlayerIds = new Set((plrs || []).filter(p => p.in_skins).map(p => p.id))
       const skinsScores    = s.filter(sc =>
         skinsPlayerIds.has(sc.player_id) &&
-        (!sc.entry_type || sc.entry_type === 'played')
+        (!sc.entry_type || sc.entry_type === 'played') &&
+        sc.status === 'verified'
       )
       const holePars       = evtDetail?.data?.courses?.hole_pars || null
+      const holeCount      = evtDetail?.data?.courses?.num_holes || 0
 
       const computed = []
-      for (let h = 0; h < 9; h++) {
+      for (let h = 0; h < holeCount; h++) {
         const entries = skinsScores
           .filter(sc => Array.isArray(sc.hole_scores) && sc.hole_scores[h] != null)
           .map(sc => ({ playerId: sc.player_id, score: sc.hole_scores[h] }))
@@ -166,57 +184,16 @@ export default function AdminDashboard({ onWeekClosed = () => {} }) {
 
   async function doPublish() {
     setPublishing(true)
-
-    // Missed-week penalties — insert BEFORE closing so the penalty
-    // rows are in place when the event flips to 'closed' and the
-    // season standings refresh. Each row: net_total = handicap + 7,
-    // no hole_scores, no gross_total. Handicap/skins/hole-level
-    // queries filter entry_type='played' and ignore these rows.
-    if (applyPenalty && missingPlayers.length > 0) {
-      const penaltyRows = missingPlayers.map(pl => ({
-        event_id:      openEvent.id,
-        player_id:     pl.id,
-        hole_scores:   null,
-        gross_total:   null,
-        net_total:     (pl.handicap ?? 0) + 7,
-        handicap_used: pl.handicap ?? 0,
-        entry_type:    'missed_penalty',
-        location_id:   locationId,
-      }))
-      const { error: penErr } = await supabase.from('scores').insert(penaltyRows)
-      if (penErr) {
-        alert('Error applying missed-week penalty: ' + penErr.message)
-        setPublishing(false)
-        return
-      }
-    }
-
-    // Close the current event
-    const { error } = await supabase.from('events').update({ status: 'closed' }).eq('id', openEvent.id)
-    if (error) { alert('Error: ' + error.message); setPublishing(false); return }
-
-    // Find the next event in sequence (next week_number, not a bye, currently draft)
-    const { data: nextEvents } = await supabase
-      .from('events')
-      .select('id, name, week_number, is_bye, status')
-      .eq('location_id', locationId)
-      .neq('is_bye', true)
-      .eq('status', 'draft')
-      .gt('week_number', openEvent.week_number ?? 0)
-      .order('week_number', { ascending: true })
-      .limit(1)
-
-    let nextEventId = null
-    if (nextEvents?.length) {
-      const next = nextEvents[0]
-      // Auto-open the next event
-      await supabase.from('events').update({ status: 'open' }).eq('id', next.id)
-      nextEventId = next.id
+    const { data, error } = await supabase.rpc('publish_week', { p_event_id: openEvent.id })
+    if (error) {
+      alert('Error: ' + mutationErrorMessage(error, 'publish this week'))
+      setPublishing(false)
+      return
     }
 
     setPublishing(false)
     setPublished(true)
-    onWeekClosed(nextEventId)  // tell AdminPanel the new active event
+    onWeekClosed(data?.next_event_id || null)  // tell AdminPanel the new active event
   }
 
   function ack(step, next) {
@@ -234,17 +211,17 @@ export default function AdminDashboard({ onWeekClosed = () => {} }) {
   if (loading) return <div style={s.loading}>Loading…</div>
 
   // ── derived state ──────────────────────────────────────────────────────────
-  // Build player → team map so we can look up a team from a player_id
-  // (scores submitted by players only have player_id, not team_id)
+  // Build player → team map from the dated event roster.
   const playerTeamMap = {}
-  teams.forEach(t => {
-    if (t.player1_id) playerTeamMap[t.player1_id] = t
-    if (t.player2_id) playerTeamMap[t.player2_id] = t
+  rosterRows.forEach(row => {
+    const team = teams.find(candidate => candidate.id === row.team_id)
+    if (team) playerTeamMap[row.player_id] = team
   })
 
   // Group scores by team, using team_id if present, otherwise player_id lookup
   const scoresByTeam = {}
   scores.forEach(s => {
+    if (s.status !== 'verified') return
     const team = s.team_id ? teams.find(t => t.id === s.team_id) : playerTeamMap[s.player_id]
     if (!team) return
     if (!scoresByTeam[team.id]) scoresByTeam[team.id] = { team, scores: [] }
@@ -259,16 +236,13 @@ export default function AdminDashboard({ onWeekClosed = () => {} }) {
   })).sort((a, b) => a.totalNet - b.totalNet)
 
   // ── Missed-week penalty: who needs one? ────────────────────────────────
-  // Rostered player = any player assigned to a team (team_id set, and that
-  // team still exists at this location). They're the 'should have played'
-  // roster for league purposes.
-  const teamIdSet = new Set(teams.map(t => t.id))
-  const rosteredPlayers = players.filter(pl => pl.team_id && teamIdSet.has(pl.team_id))
+  const rosteredPlayerIds = new Set(rosterRows.map(row => row.player_id))
+  const rosteredPlayers = players.filter(pl => rosteredPlayerIds.has(pl.id))
   // A 'played' entry counts as submitted. Treat missing entry_type as
   // 'played' for backward compat with pre-migration data.
   const submittedPlayerIds = new Set(
     scores
-      .filter(sc => !sc.entry_type || sc.entry_type === 'played')
+      .filter(sc => (!sc.entry_type || sc.entry_type === 'played') && sc.status === 'verified')
       .map(sc => sc.player_id)
   )
   const missingPlayers = rosteredPlayers.filter(pl => !submittedPlayerIds.has(pl.id))
@@ -298,7 +272,7 @@ export default function AdminDashboard({ onWeekClosed = () => {} }) {
   const eventSub = openEvent ? [
     openEvent.week_number ? `Week ${openEvent.week_number}` : null,
     openEvent.start_date
-      ? `Week of ${new Date(openEvent.start_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
+      ? `Week of ${formatLocalDate(openEvent.start_date, { month: 'short', day: 'numeric', year: 'numeric' })}`
       : null,
   ].filter(Boolean).join(' · ') : ''
 
@@ -558,7 +532,7 @@ export default function AdminDashboard({ onWeekClosed = () => {} }) {
                     <input
                       type="checkbox"
                       checked={applyPenalty}
-                      onChange={e => setApplyPenalty(e.target.checked)}
+                      disabled
                       style={s.penaltyCheckbox}
                     />
                     <div style={s.penaltyTextWrap}>

@@ -18,6 +18,8 @@ import AdminSkins     from './AdminSkins'
 import AdminHandicap  from './AdminHandicap'
 import AdminLeague    from './AdminLeague'
 import AdminStandings from './AdminStandings'
+import { isFutureDate } from '../../lib/dateUtils'
+import { loadWorkingLeague } from '../../lib/leagueUtils'
 
 const SECTIONS = [
   { id: 'dashboard',  label: 'Overview',     Icon: LayoutDashboard },
@@ -44,7 +46,7 @@ function sectionFromPath(pathname) {
 }
 
 export default function AdminPanel({ session, onBack }) {
-  const { locationId, appName } = useLocation()
+  const { locationId, appName, timezone } = useLocation()
   const routerLocation = useRouterLocation()
   const navigate = useNavigate()
   const activeSection = sectionFromPath(routerLocation.pathname)
@@ -59,22 +61,30 @@ export default function AdminPanel({ session, onBack }) {
   useEffect(() => {
     loadActiveEvent()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [locationId, timezone])
 
   async function loadActiveEvent() {
+    let league
+    try {
+      league = await loadWorkingLeague(supabase, locationId)
+    } catch {
+      setAllEvents([])
+      setActiveEventId(null)
+      return
+    }
     // Fetch all playable events for this location
     const { data: evts } = await supabase
       .from('events')
       .select('id, name, week_number, status, start_date, is_bye')
       .eq('location_id', locationId)
+      .eq('league_id', league.id)
       .order('week_number', { ascending: true, nullsFirst: false })
     const playable = (evts || []).filter(e => !e.is_bye)
     setAllEvents(playable)
 
     // Default: the open event, then the first upcoming, then week 1
     const open = playable.find(e => e.status === 'open')
-    const today = new Date(); today.setHours(0,0,0,0)
-    const upcoming = !open && playable.find(e => e.start_date && new Date(e.start_date + 'T00:00:00') > today)
+    const upcoming = !open && playable.find(e => isFutureDate(e.start_date, timezone))
     const chosen = open || upcoming || playable[0]
     if (chosen) {
       setActiveEventId(chosen.id)

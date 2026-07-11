@@ -3,6 +3,10 @@ import { ArrowLeft, Camera, ZoomIn, ZoomOut, Inbox, Check } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useLocation } from '../context/LocationContext'
 import { Button, Callout, EmptyState, Input } from './ui'
+import { formatLocalDate } from '../lib/dateUtils'
+import { zipHoleScoresWithPars } from '../lib/holeUtils'
+import { loadWorkingLeague } from '../lib/leagueUtils'
+import { compareRoundsChronologically } from '../lib/roundUtils'
 
 // ── Crop Modal ────────────────────────────────────────────────────────────────
 function CropModal({ file, onConfirm, onCancel }) {
@@ -161,12 +165,14 @@ export default function PlayerProfile({ session, onBack, playerId: adminPlayerId
           .from('players')
           .select('id, first_name, last_name, name, handicap, email, avatar_url')
           .eq('id', adminPlayerId)
+          .eq('location_id', locationId)
           .single())
       } else {
         ;({ data: playerRow, error: pErr } = await supabase
           .from('players')
           .select('id, first_name, last_name, name, handicap, email, avatar_url')
           .eq('user_id', session.user.id)
+          .eq('location_id', locationId)
           .single())
       }
 
@@ -177,56 +183,50 @@ export default function PlayerProfile({ session, onBack, playerId: adminPlayerId
       }
       setPlayer(playerRow)
 
-      // 2. Load teams, all players, and this player's scores in parallel
-      const [teamsRes, allPlayersRes, scoresRes] = await Promise.all([
-        supabase.from('teams').select('id, name, player1_id, player2_id').eq('location_id', locationId),
-        supabase.from('players').select('id, first_name, last_name, name, handicap').eq('location_id', locationId),
-        supabase.from('scores')
-          .select('id, event_id, gross_total, net_total, hole_scores, handicap_used, entry_type')
+      // 2. Resolve the active roster from memberships and fetch only the most
+      // recent verified effective rounds. The nested event join supplies the
+      // canonical chronological keys at the query boundary.
+      const league = await loadWorkingLeague(supabase, locationId)
+      const [{ data: membership }, scoresRes] = await Promise.all([
+        supabase.from('team_memberships')
+          .select('team_id, teams(id, name)')
           .eq('player_id', playerRow.id)
-          .eq('location_id', locationId),
+          .eq('league_id', league.id)
+          .is('effective_to', null)
+          .maybeSingle(),
+        supabase.from('scores')
+          .select('id, event_id, gross_total, net_total, hole_scores, handicap_used, entry_type, status, sub_played, created_at, events!inner(id, name, week_number, start_date, league_id, courses(id, name, num_holes, hole_pars, total_par))')
+          .eq('player_id', playerRow.id)
+          .eq('location_id', locationId)
+          .eq('status', 'verified')
+          .or('sub_played.eq.false,sub_played.is.null')
+          .order('week_number', { referencedTable: 'events', ascending: false, nullsFirst: false })
+          .order('start_date', { referencedTable: 'events', ascending: false, nullsFirst: false })
+          .order('created_at', { ascending: false })
+          .limit(24),
       ])
 
-      // Team + teammate
-      const myTeam = (teamsRes.data || []).find(
-        t => t.player1_id === playerRow.id || t.player2_id === playerRow.id
-      )
-      setTeam(myTeam || null)
-      if (myTeam) {
-        const tmId = myTeam.player1_id === playerRow.id ? myTeam.player2_id : myTeam.player1_id
-        const tm = (allPlayersRes.data || []).find(p => p.id === tmId)
-        setTeammate(tm || null)
+      const myTeam = membership?.teams || null
+      setTeam(myTeam)
+      if (membership?.team_id) {
+        const { data: teammateMembership } = await supabase
+          .from('team_memberships')
+          .select('players(id, first_name, last_name, name, handicap)')
+          .eq('team_id', membership.team_id)
+          .neq('player_id', playerRow.id)
+          .is('effective_to', null)
+          .maybeSingle()
+        setTeammate(teammateMembership?.players || null)
       }
 
       const scoreRows = scoresRes.data || []
       if (scoreRows.length === 0) { setRounds([]); setLoading(false); return }
 
-      // 3. Load events for these scores
-      const eventIds = [...new Set(scoreRows.map(s => s.event_id))]
-      const { data: eventsData } = await supabase
-        .from('events')
-        .select('id, name, week_number, start_date, course_id')
-        .in('id', eventIds)
-
-      const eventMap = {}
-      ;(eventsData || []).forEach(e => { eventMap[e.id] = e })
-
-      // 4. Load courses
-      const courseIds = [...new Set((eventsData || []).map(e => e.course_id).filter(Boolean))]
-      const courseMap = {}
-      if (courseIds.length > 0) {
-        const { data: coursesData } = await supabase
-          .from('courses')
-          .select('id, name, hole_pars, total_par')
-          .in('id', courseIds)
-        ;(coursesData || []).forEach(c => { courseMap[c.id] = c })
-      }
-
-      // 5. Merge into rounds
+      // 3. Normalize into chronological rounds for both the trend and list.
       const rds = scoreRows.map(s => {
-        const evt    = eventMap[s.event_id] || {}
-        const course = courseMap[evt.course_id] || {}
-        const coursePar = course.total_par ?? 36
+        const evt    = s.events || {}
+        const course = evt.courses || {}
+        const coursePar = course.total_par ?? null
         const holePars  = course.hole_pars || null
         const gross = s.gross_total
         const net   = s.net_total
@@ -236,16 +236,17 @@ export default function PlayerProfile({ session, onBack, playerId: adminPlayerId
           eventName:    evt.name || 'Round',
           weekNumber:   evt.week_number || null,
           startDate:    evt.start_date || null,
+          createdAt:    s.created_at,
           gross,
           net,
           isPenalty,
           handicapUsed: s.handicap_used,
           coursePar,
-          vsPar:        gross != null ? gross - coursePar : null,
+          vsPar:        gross != null && coursePar != null ? gross - coursePar : null,
           holeScores:   Array.isArray(s.hole_scores) ? s.hole_scores : [],
           holePars,
         }
-      })
+      }).sort(compareRoundsChronologically)
 
       setRounds(rds)
       setParBreakdown(calcParTypeBreakdown(rds))
@@ -265,9 +266,7 @@ export default function PlayerProfile({ session, onBack, playerId: adminPlayerId
       5: { birdie: 0, par: 0, bogey: 0, double: 0, total: 0, sum: 0 },
     }
     rds.forEach(rd => {
-      if (!rd.holeScores?.length || !rd.holePars?.length) return
-      rd.holeScores.forEach((s, i) => {
-        const p = rd.holePars[i]
+      zipHoleScoresWithPars(rd.holeScores, rd.holePars).forEach(({ score: s, par: p }) => {
         if (!s || ![3, 4, 5].includes(p)) return
         const b = byPar[p]
         b.total++; b.sum += s
@@ -476,7 +475,7 @@ export default function PlayerProfile({ session, onBack, playerId: adminPlayerId
 
     const { data: { publicUrl } } = supabase.storage.from('avatars').getPublicUrl(path)
     const urlWithBust = `${publicUrl}?t=${Date.now()}`
-    await supabase.from('players').update({ avatar_url: urlWithBust }).eq('id', player.id)
+    await supabase.from('players').update({ avatar_url: urlWithBust }).eq('id', player.id).eq('location_id', locationId)
     setPlayer(prev => ({ ...prev, avatar_url: urlWithBust }))
     setAvatarUploading(false)
   }
@@ -499,7 +498,7 @@ export default function PlayerProfile({ session, onBack, playerId: adminPlayerId
     }
     // Also update the visible password in the players table
     if (player?.id) {
-      await supabase.from('players').update({ league_password: pwForm.next }).eq('id', player.id)
+      await supabase.from('players').update({ league_password: pwForm.next }).eq('id', player.id).eq('location_id', locationId)
     }
     setPwMsg({ text: 'Password updated successfully!', type: 'success' })
     setPwForm({ current: '', next: '', confirm: '' })
@@ -683,7 +682,7 @@ export default function PlayerProfile({ session, onBack, playerId: adminPlayerId
                     {rd.isPenalty
                       ? 'Missed week — penalty applied'
                       : (rd.startDate
-                          ? new Date(rd.startDate).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+                          ? formatLocalDate(rd.startDate, { weekday: 'short', month: 'short', day: 'numeric' })
                           : 'No date')}
                   </div>
                 </div>

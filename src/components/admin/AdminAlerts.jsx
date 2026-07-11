@@ -124,7 +124,7 @@ export default function AdminAlerts() {
   const handleDelete = async (id) => {
     if (!confirm('Delete this alert? Players will no longer see it.')) return
     setDeletingId(id)
-    const { error } = await supabase.from('alerts').delete().eq('id', id)
+    const { error } = await supabase.from('alerts').delete().eq('id', id).eq('location_id', locationId)
     setDeletingId(null)
     if (error) { showToast('Delete failed: ' + error.message, 'error'); return }
     setAlerts(prev => prev.filter(a => a.id !== id))

@@ -10,6 +10,8 @@ import AdminImport from './AdminImport'
 import { useLocation } from '../../context/LocationContext'
 import ConfirmDialog from '../ConfirmDialog'
 import { Button, Toast, EmptyState, Input } from '../ui'
+import { loadWorkingLeague } from '../../lib/leagueUtils'
+import { mutationErrorMessage } from '../../lib/rpcErrors'
 
 const EMPTY_PLAYER_FORM = { name: '', email: '', handicap: '', in_skins: false, handicap_locked: false, league_password: 'password' }
 const EMPTY_TEAM_FORM   = { name: '', player1_id: '', player2_id: '' }
@@ -29,6 +31,7 @@ export default function AdminPlayers() {
   const [toast, setToast]             = useState(null)
   const [dialog, setDialog]           = useState(null)
   const [search, setSearch]           = useState('')
+  const [workingLeague, setWorkingLeague] = useState(null)
 
   // ── URL-driven sub-view state ────────────────────────────────────────────
   // /league/admin/players            → main list + teams (default)
@@ -48,9 +51,13 @@ export default function AdminPlayers() {
   useEffect(() => { if (locationId) loadAll() }, [locationId])
 
   async function loadAll() {
+    let league
+    try { league = await loadWorkingLeague(supabase, locationId) }
+    catch (error) { showToast(error.message, 'error'); setLoading(false); return }
+    setWorkingLeague(league)
     const [{ data: plrs, error: plrErr }, { data: tms }] = await Promise.all([
       supabase.from('players').select('*').eq('location_id', locationId).order('name'),
-      supabase.from('teams').select('id, name, player1_id, player2_id').eq('location_id', locationId).order('created_at', { ascending: true }),
+      supabase.from('teams').select('id, name, player1_id, player2_id').eq('location_id', locationId).eq('league_id', league.id).order('created_at', { ascending: true }),
     ])
     if (plrErr) console.error('Players load error:', plrErr)
     setPlayers(plrs || [])
@@ -89,9 +96,12 @@ export default function AdminPlayers() {
 
     if (editingPlayer) {
       setSaving(true)
-      const { error } = await supabase.from('players').update(payload).eq('id', editingPlayer.id)
+      const { error } = await supabase.rpc('admin_update_player', {
+        p_player_id: editingPlayer.id,
+        p_payload: payload,
+      })
       setSaving(false)
-      if (error) { showToast('Error: ' + error.message, 'error'); return }
+      if (error) { showToast('Error: ' + mutationErrorMessage(error, 'update this player'), 'error'); return }
       showToast('Player updated!')
       setShowPlayerForm(false); setEditingPlayer(null); setPlayerForm(EMPTY_PLAYER_FORM)
       loadAll()
@@ -144,17 +154,16 @@ export default function AdminPlayers() {
   async function doInsertNewPlayer(payload) {
     setSaving(true)
 
-    const { data: newPlayer, error: insertError } = await supabase
-      .from('players')
-      .insert({ ...payload, location_id: locationId })
-      .select('id')
-      .single()
+    const { data: newPlayerId, error: insertError } = await supabase.rpc('admin_create_player', {
+      p_location_id: locationId,
+      p_payload: payload,
+    })
 
     setSaving(false)
     if (insertError) { showToast('Error: ' + insertError.message, 'error'); return }
 
     // Automatically create a login account if an email was provided
-    if (payload.email && newPlayer?.id) {
+    if (payload.email && newPlayerId) {
       try {
         // Forward the caller's access token so the Edge Function verifies
         // we're an admin for this player's location before creating anything.
@@ -171,7 +180,7 @@ export default function AdminPlayers() {
               'Authorization': 'Bearer ' + accessToken,
             },
             body: JSON.stringify({
-              player_id: newPlayer.id,
+              player_id: newPlayerId,
               email:     payload.email,
               password:  payload.league_password || 'password',
             }),
@@ -254,38 +263,8 @@ export default function AdminPlayers() {
       confirmLabel: 'Remove Player',
       destructive: true,
       onConfirm: async () => {
-        // 1. Unlink from team (nullify the slot on the team row, clear team_id
-        //    on the player). Doing this before the row delete keeps the team
-        //    display sane even if a later step fails.
-        if (player.team_id) {
-          const team = teams.find(t => t.id === player.team_id)
-          if (team) {
-            const otherField = team.player1_id === player.id ? 'player1_id' : 'player2_id'
-            await supabase.from('teams').update({ [otherField]: null }).eq('id', team.id)
-          }
-          await supabase.from('players').update({ team_id: null }).eq('id', player.id)
-        }
-
-        // 2. Delete children in FK-dependency order. Any error here aborts and
-        //    surfaces to the admin so they can investigate — we do NOT try to
-        //    press through a partial delete.
-        const steps = [
-          { label: 'scores',   q: supabase.from('scores').delete().eq('player_id', player.id) },
-          { label: 'subs',     q: supabase.from('subs').delete().or(`player_id.eq.${player.id},sub_player_id.eq.${player.id}`) },
-          { label: 'follows',  q: supabase.from('follows').delete().or(`follower_id.eq.${player.id},following_id.eq.${player.id}`) },
-          { label: 'messages', q: supabase.from('messages').delete().or(`sender_id.eq.${player.id},recipient_id.eq.${player.id}`) },
-        ]
-        for (const step of steps) {
-          const { error } = await step.q
-          if (error) {
-            showToast(`Error deleting ${step.label}: ${error.message}`, 'error')
-            return
-          }
-        }
-
-        // 3. Finally, the player row itself.
-        const { error } = await supabase.from('players').delete().eq('id', player.id)
-        if (error) { showToast('Error: ' + error.message, 'error'); return }
+        const { error } = await supabase.rpc('admin_delete_player', { p_player_id: player.id })
+        if (error) { showToast('Error: ' + mutationErrorMessage(error, 'remove this player'), 'error'); return }
         showToast(`${player.name} and all related data removed.`)
         loadAll()
       },
@@ -361,34 +340,19 @@ export default function AdminPlayers() {
       player2_id: teamForm.player2_id || null,
     }
 
-    let error, data
-
-    if (editingTeam) {
-      // Figure out which players changed so we can update team_id on players
-      const oldP1 = editingTeam.player1_id
-      const oldP2 = editingTeam.player2_id
-      const newP1 = payload.player1_id
-      const newP2 = payload.player2_id
-
-      ;({ error } = await supabase.from('teams').update(payload).eq('id', editingTeam.id))
-      if (!error) {
-        // Unassign removed players
-        const removed = [oldP1, oldP2].filter(id => id && id !== newP1 && id !== newP2)
-        if (removed.length) await supabase.from('players').update({ team_id: null }).in('id', removed)
-        // Assign new players
-        const added = [newP1, newP2].filter(Boolean)
-        if (added.length) await supabase.from('players').update({ team_id: editingTeam.id }).in('id', added)
-      }
-    } else {
-      ;({ error, data } = await supabase.from('teams').insert({ ...payload, location_id: locationId }).select().single())
-      if (!error && data) {
-        const toAssign = [payload.player1_id, payload.player2_id].filter(Boolean)
-        if (toAssign.length) await supabase.from('players').update({ team_id: data.id }).in('id', toAssign)
-      }
+    if (!workingLeague) { setSaving(false); showToast('Choose a working league first.', 'error'); return }
+    if (!payload.player1_id || !payload.player2_id) {
+      setSaving(false); showToast('A team requires exactly two players.', 'error'); return
     }
+    const { error } = await supabase.rpc('admin_save_team', {
+      p_team_id: editingTeam?.id || null,
+      p_league_id: workingLeague.id,
+      p_name: payload.name,
+      p_player_ids: [payload.player1_id, payload.player2_id],
+    })
 
     setSaving(false)
-    if (error) { showToast('Error: ' + error.message, 'error'); return }
+    if (error) { showToast('Error: ' + mutationErrorMessage(error, 'save this team'), 'error'); return }
     showToast(editingTeam ? 'Team updated!' : 'Team created!')
     setShowTeamForm(false); setEditingTeam(null); setTeamForm(EMPTY_TEAM_FORM)
     loadAll()
@@ -402,9 +366,8 @@ export default function AdminPlayers() {
       message: `Delete Team ${teamNumber(team)} "${team.name}"${names ? ` (${names})` : ''}? Players will become unassigned.`,
       confirmLabel: 'Delete Team',
       onConfirm: async () => {
-        const ids = [team.player1_id, team.player2_id].filter(Boolean)
-        if (ids.length) await supabase.from('players').update({ team_id: null }).in('id', ids)
-        await supabase.from('teams').delete().eq('id', team.id)
+        const { error } = await supabase.rpc('admin_delete_team', { p_team_id: team.id })
+        if (error) { showToast('Error: ' + mutationErrorMessage(error, 'delete this team'), 'error'); return }
         showToast('Team deleted.')
         loadAll()
       },
@@ -483,7 +446,7 @@ export default function AdminPlayers() {
           </button>
         </div>
         <div style={{ flex: 1, overflowY: 'auto' }}>
-          <AdminImport />
+        <AdminImport leagueId={workingLeague?.id || null} />
         </div>
       </div>
     )

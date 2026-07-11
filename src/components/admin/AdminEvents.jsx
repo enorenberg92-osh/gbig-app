@@ -139,7 +139,7 @@ export default function AdminEvents() {
 
     let error
     if (form.id) {
-      ;({ error } = await supabase.from('app_events').update(payload).eq('id', form.id))
+      ;({ error } = await supabase.from('app_events').update(payload).eq('id', form.id).eq('location_id', locationId))
     } else {
       ;({ error } = await supabase.from('app_events').insert(payload))
     }
@@ -160,7 +160,7 @@ export default function AdminEvents() {
       confirmLabel: 'Delete',
       onConfirm: async () => {
         // event_signups cascades via FK; just delete the parent row.
-        const { error } = await supabase.from('app_events').delete().eq('id', evt.id)
+        const { error } = await supabase.from('app_events').delete().eq('id', evt.id).eq('location_id', locationId)
         if (error) { showToast('Error: ' + error.message, 'error'); return }
         showToast('Event deleted.')
         load()
@@ -175,7 +175,7 @@ export default function AdminEvents() {
       message: `Remove ${signup.name} from this event?`,
       confirmLabel: 'Remove',
       onConfirm: async () => {
-        const { error } = await supabase.from('event_signups').delete().eq('id', signup.signup_id)
+        const { error } = await supabase.from('event_signups').delete().eq('id', signup.signup_id).eq('location_id', locationId)
         if (error) { showToast('Error: ' + error.message, 'error'); return }
         showToast(`${signup.name} removed.`)
         load()

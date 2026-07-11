@@ -13,6 +13,14 @@ _Kept in the repo so we can both pick up the thread at any time. Update as we go
 
 ---
 
+## Phase 1 dead-code decision (Jul 10, 2026)
+
+- `NewsPage.jsx` and `AdminNews.jsx` remain parked and unrouted; news is not part of the frozen Phase 1 surface.
+- `AdminBookings.jsx` remains parked and unrouted. Native reservations are explicitly out of scope; the live `ReservationsPage` WordPress iframe is unchanged.
+- No dead route/import references remain for those three components. The files are retained for a later explicit product decision rather than deleted during hardening.
+
+---
+
 ## Phase 0 — SHIPPED this session ✅
 
 _All changes touch existing files only; no new dependencies._

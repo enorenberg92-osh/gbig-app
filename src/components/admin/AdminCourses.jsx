@@ -75,8 +75,8 @@ export default function AdminCourses() {
   function startEdit(course) {
     setCourseName(course.name || '')
     const hp = course.hole_pars || []
-    setNumHoles(hp.length || DEFAULT_HOLES)
-    setPars(hp.map(String))
+    setNumHoles(course.num_holes || hp.length || DEFAULT_HOLES)
+    setPars(hp.length ? hp.map(String) : emptyPars(course.num_holes || DEFAULT_HOLES))
     setStartHole(course.start_hole || 1)
     setEditing(course)
     setShowForm(true)
@@ -86,7 +86,11 @@ export default function AdminCourses() {
     e.preventDefault()
     if (!courseName.trim()) return
 
-    const parsedPars = pars.map(p => parseInt(p) || 4) // default par 4
+    const parsedPars = pars.map(p => parseInt(p, 10))
+    if (parsedPars.length !== numHoles || parsedPars.some(par => !Number.isInteger(par) || par < 3 || par > 6)) {
+      showToast(`Enter a whole-number par from 3 to 6 for all ${numHoles} holes.`, 'error')
+      return
+    }
     setSaving(true)
 
     const payload = {
@@ -99,7 +103,7 @@ export default function AdminCourses() {
 
     let error
     if (editing) {
-      ;({ error } = await supabase.from('courses').update(payload).eq('id', editing.id))
+      ;({ error } = await supabase.from('courses').update(payload).eq('id', editing.id).eq('location_id', locationId))
     } else {
       ;({ error } = await supabase.from('courses').insert({ ...payload, location_id: locationId }))
     }
@@ -119,7 +123,7 @@ export default function AdminCourses() {
       message: `Delete "${course.name}"? This cannot be undone.`,
       confirmLabel: 'Delete',
       onConfirm: async () => {
-        const { error } = await supabase.from('courses').delete().eq('id', course.id)
+        const { error } = await supabase.from('courses').delete().eq('id', course.id).eq('location_id', locationId)
         if (error) {
           showToast('Error: ' + error.message, 'error')
         } else {

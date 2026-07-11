@@ -101,6 +101,7 @@ export default function EventsPage({ session }) {
         .delete()
         .eq('event_id', evt.id)
         .eq('player_id', myPlayer.id)
+        .eq('location_id', locationId)
       setBusyId(null)
       if (error) { showToast('Error: ' + error.message, 'error'); return }
       showToast('RSVP cancelled.')
