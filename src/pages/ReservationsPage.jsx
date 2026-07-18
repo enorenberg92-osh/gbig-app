@@ -27,6 +27,10 @@ export default function ReservationsPage() {
   // Booking page is per-location (locations.booking_url via the boot payload);
   // env/GBIG fallback keeps dev builds working.
   const { location } = useLocation()
+  // Never mount the iframe before the location resolves — the fallback URL is
+  // GBIG's booking page and must not flash (or take bookings!) on another
+  // location's domain. Dev builds keep the env fallback.
+  const resolving = !import.meta.env.DEV && !location?.id
   const BOOKING_URL = location?.booking_url || FALLBACK_BOOKING_URL
   // A resolved location with no booking_url means this venue hasn't wired
   // online booking yet — say so instead of iframing another venue's page.
@@ -52,6 +56,14 @@ export default function ReservationsPage() {
       // eslint-disable-next-line no-self-assign
       iframeRef.current.src = iframeRef.current.src
     }
+  }
+
+  if (resolving) {
+    return (
+      <div style={styles.container}>
+        <ReservationsSkeleton />
+      </div>
+    )
   }
 
   if (bookingMissing) {

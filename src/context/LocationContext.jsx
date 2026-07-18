@@ -26,8 +26,14 @@ export function LocationProvider({ children }) {
       const slug = hostname.split('.')[0].replace(/-app$/, '')
       let data = null
       if (!import.meta.env.DEV && slug && slug !== 'www' && slug !== 'localhost') {
-        const result = await supabase.from('location_public').select('*').eq('slug', slug).maybeSingle()
-        data = result.data
+        // A transient fetch failure must not silently boot a DIFFERENT
+        // location (the env fallback is GBIG). Retry the slug lookup; only a
+        // definitive "no such slug" falls through to the fallback.
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const result = await supabase.from('location_public').select('*').eq('slug', slug).maybeSingle()
+          if (!result.error) { data = result.data; break }
+          await new Promise(r => setTimeout(r, 400 * (attempt + 1)))
+        }
       }
       if (!data && fallbackId) {
         const result = await supabase.from('location_public').select('*').eq('id', fallbackId).maybeSingle()
