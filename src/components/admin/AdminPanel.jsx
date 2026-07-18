@@ -21,6 +21,7 @@ import AdminStandings from './AdminStandings'
 import AdminCup       from './AdminCup'
 import AdminMoney     from './AdminMoney'
 import AdminReports   from './AdminReports'
+import AdminTournaments from './AdminTournaments'
 import { isFutureDate } from '../../lib/dateUtils'
 import { loadWorkingLeague } from '../../lib/leagueUtils'
 import { useFeature } from '../../context/FeatureContext'
@@ -35,6 +36,7 @@ const SECTIONS = [
   { id: 'schedule',   label: 'Schedule',     Icon: Calendar },
   { id: 'subs',       label: 'Subs',         Icon: Repeat2 },
   { id: 'events',     label: 'Events',       Icon: CalendarPlus },
+  { id: 'tournaments', label: 'Tournaments', Icon: Trophy },
   { id: 'courses',    label: 'Courses',      Icon: Map },
   { id: 'skins',      label: 'Skins',        Icon: Target },
   { id: 'cup',        label: 'Cup',          Icon: Trophy },
@@ -61,11 +63,13 @@ export default function AdminPanel({ session, onBack }) {
   const skinsEnabled = useFeature('skins')
   const cupsEnabled = useFeature('cups')
   const moneyEnabled = useFeature('money')
+  const tournamentsEnabled = useFeature('tournaments')
   const visibleSections = SECTIONS.filter(section =>
     (section.id !== 'subs' || subsEnabled)
     && (section.id !== 'skins' || skinsEnabled)
     && (section.id !== 'cup' || cupsEnabled)
     && (section.id !== 'money' || moneyEnabled)
+    && (section.id !== 'tournaments' || tournamentsEnabled)
   )
 
   const [isDesktop, setIsDesktop] = useState(() => window.innerWidth >= 768)
@@ -158,6 +162,7 @@ export default function AdminPanel({ session, onBack }) {
       <Route path="cup"        element={cupsEnabled ? <AdminCup /> : <Navigate to="/league/admin/dashboard" replace />} />
       <Route path="money"      element={moneyEnabled ? <AdminMoney /> : <Navigate to="/league/admin/dashboard" replace />} />
       <Route path="reports"    element={<AdminReports />} />
+      <Route path="tournaments" element={tournamentsEnabled ? <AdminTournaments /> : <Navigate to="/league/admin/dashboard" replace />} />
       <Route path="alerts"     element={<AdminAlerts />} />
       <Route path="*"          element={<Navigate to="/league/admin/dashboard" replace />} />
     </Routes>

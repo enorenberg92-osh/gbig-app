@@ -25,6 +25,12 @@ export default function EventsPage({ session }) {
   const [loading,  setLoading]  = useState(true)
   const [busyId,   setBusyId]   = useState(null)    // which event's button is mid-request
   const [toast,    setToast]    = useState(null)
+  // Tournaments (scored, standalone) — separate from social RSVPs above.
+  const [tournaments, setTournaments] = useState([])
+  const [tCounts, setTCounts]         = useState({})   // tournamentId -> entry count
+  const [myTEntries, setMyTEntries]   = useState(new Set())
+  const [boards, setBoards]           = useState({})   // tournamentId -> leaderboard rows
+  const [expandedT, setExpandedT]     = useState(null)
 
   useEffect(() => {
     if (!locationId) return
@@ -45,6 +51,8 @@ export default function EventsPage({ session }) {
       { data: evRows,     error: evErr },
       { data: signupRows, error: suErr },
       playerRes,
+      { data: tRows },
+      { data: tEntryRows },
     ] = await Promise.all([
       supabase.from('app_events')
         .select('id, title, description, event_date, capacity')
@@ -60,6 +68,14 @@ export default function EventsPage({ session }) {
             .eq('location_id', locationId)
             .maybeSingle()
         : Promise.resolve({ data: null }),
+      supabase.from('tournaments')
+        .select('id, name, tournament_date, format, team_size, capacity, notes, status')
+        .eq('location_id', locationId)
+        .neq('status', 'cancelled')
+        .order('tournament_date', { ascending: true, nullsFirst: false }),
+      supabase.from('tournament_entries')
+        .select('tournament_id, player_id')
+        .eq('location_id', locationId),
     ])
 
     if (evErr) console.error('EventsPage events error:', evErr.message)
@@ -83,7 +99,44 @@ export default function EventsPage({ session }) {
     setCounts(cnt)
     setMyRsvps(mine)
     setMyPlayer(myId ? { id: myId } : null)
+
+    const tCnt = {}
+    const tMine = new Set()
+    ;(tEntryRows || []).forEach(e => {
+      tCnt[e.tournament_id] = (tCnt[e.tournament_id] || 0) + 1
+      if (myId && e.player_id === myId) tMine.add(e.tournament_id)
+    })
+    setTournaments(tRows || [])
+    setTCounts(tCnt)
+    setMyTEntries(tMine)
     setLoading(false)
+  }
+
+  async function toggleTournament(t) {
+    if (!myPlayer?.id) { showToast('Sign in to enter tournaments.', 'error'); return }
+    setBusyId(t.id)
+    const joined = myTEntries.has(t.id)
+    const { error } = joined
+      ? await supabase.rpc('withdraw_tournament', { p_tournament_id: t.id })
+      : await supabase.rpc('signup_tournament', { p_tournament_id: t.id })
+    setBusyId(null)
+    if (error) { showToast(error.message, 'error'); return }
+    showToast(joined ? 'Withdrawn.' : `You're in — ${t.name}!`)
+    setMyTEntries(prev => {
+      const n = new Set(prev)
+      joined ? n.delete(t.id) : n.add(t.id)
+      return n
+    })
+    setTCounts(prev => ({ ...prev, [t.id]: Math.max(0, (prev[t.id] || 0) + (joined ? -1 : 1)) }))
+  }
+
+  async function toggleBoard(t) {
+    const next = expandedT === t.id ? null : t.id
+    setExpandedT(next)
+    if (next && !boards[t.id]) {
+      const { data } = await supabase.rpc('tournament_leaderboard', { p_tournament_id: t.id })
+      setBoards(prev => ({ ...prev, [t.id]: Array.isArray(data) ? data : [] }))
+    }
   }
 
   async function toggleRsvp(evt) {
@@ -147,9 +200,99 @@ export default function EventsPage({ session }) {
         <p style={styles.pageSubtitle}>Tournaments & special events</p>
       </div>
 
+      {/* Tournaments — scored standalone events */}
+      {!loading && tournaments.length > 0 && (
+        <div style={{ ...styles.list, marginBottom: 16 }}>
+          <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--green-dark)', textTransform: 'uppercase', letterSpacing: '0.5px', padding: '0 2px' }}>
+            Tournaments
+          </div>
+          {tournaments.map(t => {
+            const count = tCounts[t.id] || 0
+            const joined = myTEntries.has(t.id)
+            const isFull = t.capacity != null && count >= t.capacity
+            const busy = busyId === t.id
+            const fmtLabel = { stroke: 'Stroke play', scramble: 'Scramble', best_ball: 'Best ball', stableford: 'Stableford' }[t.format] || t.format
+            const board = boards[t.id]
+            return (
+              <div key={t.id} style={{ ...styles.card, flexDirection: 'column' }}>
+                <div style={{ display: 'flex', gap: 12, width: '100%' }}>
+                  <div style={styles.cardBody}>
+                    <div style={styles.cardTitle}>
+                      {t.name}
+                      <span style={{
+                        marginLeft: 8, fontSize: 9, fontWeight: 800, textTransform: 'uppercase',
+                        padding: '2px 7px', borderRadius: 10,
+                        background: t.status === 'signup' ? 'var(--green-xlight)' : t.status === 'scoring' ? '#fef3c7' : 'var(--gray-100)',
+                        color: t.status === 'signup' ? 'var(--green-dark)' : t.status === 'scoring' ? '#92400e' : 'var(--gray-500)',
+                      }}>
+                        {t.status === 'signup' ? 'Sign-ups open' : t.status === 'scoring' ? 'In progress' : 'Final'}
+                      </span>
+                    </div>
+                    <div style={styles.cardDesc}>
+                      {fmtLabel}{t.team_size > 1 ? ` · teams of ${t.team_size}` : ''}
+                      {t.tournament_date ? ` · ${new Date(t.tournament_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : ''}
+                      {t.notes ? ` — ${t.notes}` : ''}
+                    </div>
+                    <div style={styles.meterRow}>
+                      <Users size={13} strokeWidth={2} style={{ color: 'var(--gray-500)' }} />
+                      <span style={styles.meterText}>
+                        {t.capacity != null ? `${count} / ${t.capacity} entered` : `${count} entered`}
+                      </span>
+                      {isFull && <span style={styles.fullBadge}>FULL</span>}
+                    </div>
+                    <div style={styles.actionsRow}>
+                      {t.status === 'signup' && (
+                        joined ? (
+                          <>
+                            <div style={styles.goingPill}>
+                              <CalendarCheck size={13} strokeWidth={2.25} />
+                              <span>You're in</span>
+                            </div>
+                            <Button variant="ghost" size="sm" loading={busy} onClick={() => toggleTournament(t)}>
+                              Withdraw
+                            </Button>
+                          </>
+                        ) : (
+                          <Button variant="primary" size="sm" loading={busy}
+                            disabled={isFull || !myPlayer?.id}
+                            onClick={() => toggleTournament(t)}>
+                            {isFull ? 'Full' : 'Sign up'}
+                          </Button>
+                        )
+                      )}
+                      {t.status !== 'signup' && (
+                        <Button variant="secondary" size="sm" onClick={() => toggleBoard(t)}>
+                          {expandedT === t.id ? 'Hide leaderboard' : 'Leaderboard'}
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                {expandedT === t.id && (
+                  <div style={{ width: '100%', marginTop: 10, paddingTop: 8, borderTop: '1px solid var(--gray-100)' }}>
+                    {!board ? (
+                      <div style={{ fontSize: 12, color: 'var(--gray-400)' }}>Loading…</div>
+                    ) : board.length === 0 ? (
+                      <div style={{ fontSize: 12, color: 'var(--gray-400)' }}>No scores yet.</div>
+                    ) : board.map((r, i) => (
+                      <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '5px 0', borderBottom: '1px solid var(--gray-100)' }}>
+                        <span style={{ width: 20, fontSize: 12, fontWeight: 800, color: 'var(--gray-400)', textAlign: 'center' }}>{i + 1}</span>
+                        <span style={{ flex: 1, fontSize: 13, fontWeight: 600 }}>{r.name}</span>
+                        {r.gross != null && <span style={{ fontSize: 11, color: 'var(--gray-400)' }}>gross {r.gross}</span>}
+                        <span style={{ fontSize: 14, fontWeight: 800, color: 'var(--green-dark)' }}>{Number(r.result)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+
       {loading ? (
         <div style={styles.loading}>Loading events...</div>
-      ) : events.length === 0 ? (
+      ) : events.length === 0 && tournaments.length === 0 ? (
         <div style={styles.emptyWrap}>
           <EmptyState
             icon={<CalendarX size={38} strokeWidth={1.5} />}
