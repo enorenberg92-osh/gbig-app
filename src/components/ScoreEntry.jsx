@@ -27,6 +27,8 @@ export default function ScoreEntry({ session, onBack }) {
   const [course, setCourse]             = useState(null)       // course with hole_pars
   const [currentHole, setCurrentHole]  = useState(0)          // 0-indexed (0 = hole 1)
   const [scores, setScores]             = useState({})         // { p1: [null×9], p2: [null×9] }
+  const [stats, setStats]               = useState({ p1: [], p2: [] }) // per-hole {putts, fir, gir}, all optional
+  const [showStats, setShowStats]       = useState(false)
   const [showHoleEvent, setShowHoleEvent] = useState(false)
   const [alreadySubmitted, setAlreadySubmitted] = useState(false)
   const [pendingReview, setPendingReview]       = useState(false)
@@ -139,6 +141,10 @@ export default function ScoreEntry({ session, onBack }) {
         p1: Array(loadedCourse.num_holes).fill(null),
         p2: Array(loadedCourse.num_holes).fill(null),
       })
+      setStats({
+        p1: Array.from({ length: loadedCourse.num_holes }, () => ({})),
+        p2: Array.from({ length: loadedCourse.num_holes }, () => ({})),
+      })
 
       setLoading(false)
     } catch (e) {
@@ -173,6 +179,21 @@ export default function ScoreEntry({ session, onBack }) {
         [player]: prev[player].map((s, i) => i === holeIdx ? next : s),
       }
     })
+  }
+
+  function setStat(pk, holeIdx, key, value) {
+    setStats(prev => ({
+      ...prev,
+      [pk]: prev[pk].map((h, i) => i === holeIdx ? { ...h, [key]: value } : h),
+    }))
+  }
+
+  // null when the player tracked nothing — stats stay fully optional.
+  function statsPayload(pk) {
+    const arr = stats[pk] || []
+    const any = arr.some(h => h.putts != null || h.fir != null || h.gir != null)
+    if (!any) return null
+    return arr.map(h => ({ putts: h.putts ?? null, fir: h.fir ?? null, gir: h.gir ?? null }))
   }
 
   function getPar(holeIdx) {
@@ -223,8 +244,8 @@ export default function ScoreEntry({ session, onBack }) {
     setSaving(true)
 
     const entries = [
-      { player_id: team.p1.id, hole_scores: scores.p1 },
-      { player_id: team.p2.id, hole_scores: scores.p2 },
+      { player_id: team.p1.id, hole_scores: scores.p1, hole_stats: statsPayload('p1') },
+      { player_id: team.p2.id, hole_scores: scores.p2, hole_stats: statsPayload('p2') },
     ]
     const { data: result, error: insertErr } = await supabase.rpc('submit_scores', {
       p_event_id: event.id,
@@ -445,6 +466,38 @@ export default function ScoreEntry({ session, onBack }) {
             </div>
           )
         })}
+
+        {/* Optional per-hole stats — always skippable */}
+        <button type="button" style={statStyles.toggle} onClick={() => setShowStats(v => !v)}>
+          {showStats ? '− Hide stats' : '+ Track stats (putts · fairway · green)'}
+        </button>
+        {showStats && ['p1', 'p2'].map(pk => {
+          const h = stats[pk]?.[currentHole] || {}
+          return (
+            <div key={pk} style={statStyles.row}>
+              <span style={statStyles.name}>{team[pk].name.split(' ')[0]}</span>
+              <div style={statStyles.putts}>
+                <button type="button" style={statStyles.puttBtn}
+                  onClick={() => setStat(pk, currentHole, 'putts', Math.max(0, (h.putts ?? 2) - 1))}>−</button>
+                <span style={statStyles.puttVal}>{h.putts ?? '–'} putts</span>
+                <button type="button" style={statStyles.puttBtn}
+                  onClick={() => setStat(pk, currentHole, 'putts', Math.min(10, (h.putts ?? 1) + 1))}>+</button>
+              </div>
+              {par !== 3 && (
+                <button type="button"
+                  style={{ ...statStyles.chip, ...(h.fir === true ? statStyles.chipOn : h.fir === false ? statStyles.chipOff : {}) }}
+                  onClick={() => setStat(pk, currentHole, 'fir', h.fir === true ? false : h.fir === false ? null : true)}>
+                  FW {h.fir === true ? '✓' : h.fir === false ? '✗' : ''}
+                </button>
+              )}
+              <button type="button"
+                style={{ ...statStyles.chip, ...(h.gir === true ? statStyles.chipOn : h.gir === false ? statStyles.chipOff : {}) }}
+                onClick={() => setStat(pk, currentHole, 'gir', h.gir === true ? false : h.gir === false ? null : true)}>
+                GIR {h.gir === true ? '✓' : h.gir === false ? '✗' : ''}
+              </button>
+            </div>
+          )
+        })}
       </div>
 
       {/* Running totals */}
@@ -574,6 +627,18 @@ export default function ScoreEntry({ session, onBack }) {
       )}
     </div>
   )
+}
+
+const statStyles = {
+  toggle: { background: 'transparent', border: 'none', color: 'var(--green-dark)', fontSize: 12, fontWeight: 700, cursor: 'pointer', padding: '8px 0 2px', textAlign: 'left' },
+  row: { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderTop: '1px dashed var(--gray-200)' },
+  name: { fontSize: 12, fontWeight: 600, color: 'var(--gray-600)', width: 64, flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  putts: { display: 'flex', alignItems: 'center', gap: 4 },
+  puttBtn: { width: 26, height: 26, borderRadius: 6, border: '1px solid var(--gray-200)', background: 'var(--gray-100)', fontSize: 14, fontWeight: 700, cursor: 'pointer', color: 'var(--gray-600)' },
+  puttVal: { fontSize: 12, fontWeight: 600, color: 'var(--black)', minWidth: 52, textAlign: 'center' },
+  chip: { fontSize: 11, fontWeight: 700, padding: '5px 10px', borderRadius: 14, border: '1px solid var(--gray-200)', background: 'var(--gray-100)', color: 'var(--gray-500)', cursor: 'pointer' },
+  chipOn: { background: 'var(--green-xlight)', borderColor: 'var(--green)', color: 'var(--green-dark)' },
+  chipOff: { background: '#fee2e2', borderColor: '#fca5a5', color: '#c53030' },
 }
 
 const styles = {
