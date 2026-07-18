@@ -68,12 +68,14 @@ function SplashScreen({ onDone, appFullName }) {
       ...splash.screen,
       animation: phase === 'out' ? 'splashFadeOut 0.5s ease forwards' : undefined,
     }}>
-      {/* Full wordmark logo — white on the deep-green splash gradient */}
-      <img
-        src={logoUrl || '/logo-full-white.png'}
-        alt={appFullName}
-        style={splash.wordmark}
-      />
+      {/* Full wordmark logo — white on the deep-green splash gradient.
+          No logo resolved yet (very first visit) = no logo: never flash
+          another location's brand. */}
+      {logoUrl ? (
+        <img src={logoUrl} alt={appFullName} style={splash.wordmark} />
+      ) : (
+        <div style={{ ...splash.wordmark, visibility: 'hidden' }} />
+      )}
 
       {/* Gold divider line */}
       <div style={splash.line} />
@@ -201,12 +203,14 @@ export default function App() {
         <header style={styles.header}>
           <div style={styles.headerInner}>
             <span style={styles.headerLogo}>
-              <img
-                src={logoIconUrl || '/logo-icon-white.png'}
-                alt=""
-                aria-hidden="true"
-                style={styles.headerLogoImg}
-              />
+              {logoIconUrl && (
+                <img
+                  src={logoIconUrl}
+                  alt=""
+                  aria-hidden="true"
+                  style={styles.headerLogoImg}
+                />
+              )}
             </span>
             <div style={styles.headerTitleWrap}>
               <span style={styles.headerTitle}>{headerTitle}</span>

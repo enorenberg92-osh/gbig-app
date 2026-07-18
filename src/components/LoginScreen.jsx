@@ -45,7 +45,7 @@ export default function LoginScreen() {
     <div style={styles.container}>
       {/* Hero */}
       <div style={styles.hero}>
-        <img src={logoUrl || '/logo-full-white.png'} alt="" aria-hidden="true" style={styles.heroLogo} />
+        {logoUrl && <img src={logoUrl} alt="" aria-hidden="true" style={styles.heroLogo} />}
         <h1 style={styles.heroTitle}>League Portal</h1>
         <p style={styles.heroSubtitle}>{appName}</p>
       </div>

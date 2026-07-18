@@ -97,7 +97,12 @@ export function deriveBrandPalette(primaryHex) {
 export function ThemeProvider({ children }) {
   const { locationId, location } = useLocation()
   const [ready, setReady] = useState(false)
-  const [brand, setBrand] = useState({ logoUrl: null, logoIconUrl: null })
+  // Seed from the cached location so the first paint already carries the
+  // right logos — no fallback brand ever flashes on a warm boot.
+  const [brand, setBrand] = useState(() => ({
+    logoUrl:     location?.logo_url      || null,
+    logoIconUrl: location?.logo_icon_url || null,
+  }))
 
   useEffect(() => {
     if (!locationId) { setReady(true); return }

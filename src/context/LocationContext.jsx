@@ -8,9 +8,20 @@ const LocationContext = createContext(null)
  * Values come from build-time env vars so each deployment is
  * independently configured with no runtime overhead.
  */
+// Cache the resolved location per hostname so every boot after the first
+// paints the right brand immediately — no other tenant's logo ever flashes.
+const CACHE_KEY = `loc:${window.location.hostname.toLowerCase()}`
+
+function readCachedLocation() {
+  try {
+    const raw = localStorage.getItem(CACHE_KEY)
+    return raw ? JSON.parse(raw) : null
+  } catch { return null }
+}
+
 export function LocationProvider({ children }) {
   const fallbackId = import.meta.env.VITE_LOCATION_ID
-  const [resolved, setResolved] = useState(null)
+  const [resolved, setResolved] = useState(readCachedLocation)
   const locationId = resolved?.id || fallbackId
   const appName     = resolved?.name || import.meta.env.VITE_APP_NAME || 'Golf League App'
   const appFullName = resolved?.name || import.meta.env.VITE_APP_FULL_NAME || appName
@@ -39,7 +50,12 @@ export function LocationProvider({ children }) {
         const result = await supabase.from('location_public').select('*').eq('id', fallbackId).maybeSingle()
         data = result.data
       }
-      if (!cancelled) setResolved(data || (fallbackId ? { id: fallbackId } : {}))
+      if (!cancelled) {
+        setResolved(data || (fallbackId ? { id: fallbackId } : {}))
+        if (data?.id) {
+          try { localStorage.setItem(CACHE_KEY, JSON.stringify(data)) } catch { /* private mode */ }
+        }
+      }
     }
     resolveLocation()
     return () => { cancelled = true }
