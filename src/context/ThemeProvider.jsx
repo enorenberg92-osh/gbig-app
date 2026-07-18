@@ -106,7 +106,7 @@ export function ThemeProvider({ children }) {
     async function applyTheme() {
       const result = location?.primary_color
         ? { data: location, error: null }
-        : await supabase.from('location_public').select('primary_color, logo_url, logo_icon_url').eq('id', locationId).maybeSingle()
+        : await supabase.from('location_public').select('slug, name, primary_color, logo_url, logo_icon_url').eq('id', locationId).maybeSingle()
       const { data, error } = result
 
       if (cancelled) return
@@ -131,6 +131,31 @@ export function ThemeProvider({ children }) {
         logoUrl:     data?.logo_url      || null,
         logoIconUrl: data?.logo_icon_url || null,
       })
+
+      // Per-location document branding: title, favicon, iOS icon, theme color.
+      // Icons follow the /branding/<slug>-icon-*.png onboarding convention;
+      // GBIG's baked-in defaults stay when there's no slug (dev fallback).
+      if (data?.name) {
+        document.title = data.name
+        const iosTitle = document.querySelector('meta[name="apple-mobile-web-app-title"]')
+        if (iosTitle) iosTitle.content = data.name
+      }
+      if (data?.slug) {
+        const setLink = (selector, href, create) => {
+          let el = document.querySelector(selector)
+          if (!el && create) { el = document.createElement('link'); create(el); document.head.appendChild(el) }
+          if (el) el.href = href
+        }
+        setLink('link[rel="apple-touch-icon"]', `/branding/${data.slug}-icon-apple.png`)
+        setLink('link[rel="icon"][type="image/png"]', `/branding/${data.slug}-icon-192.png`)
+        // The SVG favicon outranks PNG in Chrome; retarget it too.
+        const svgIcon = document.querySelector('link[rel="icon"][type="image/svg+xml"]')
+        if (svgIcon) { svgIcon.type = 'image/png'; svgIcon.href = `/branding/${data.slug}-icon-192.png` }
+      }
+      if (primary && /^#[0-9a-f]{6}$/i.test(primary)) {
+        const meta = document.querySelector('meta[name="theme-color"]')
+        if (meta) meta.content = primary
+      }
 
       setReady(true)
     }
