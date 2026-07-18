@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
+import { useLocation } from '../context/LocationContext'
 
-const BOOKING_URL =
+const FALLBACK_BOOKING_URL =
   import.meta.env.VITE_BOOKING_URL ||
   'https://greenbayindoorgolf.com/app-page-booking/'
 
@@ -23,6 +24,13 @@ const BOOKING_URL =
  * the form typography, buttons, and inputs.
  */
 export default function ReservationsPage() {
+  // Booking page is per-location (locations.booking_url via the boot payload);
+  // env/GBIG fallback keeps dev builds working.
+  const { location } = useLocation()
+  const BOOKING_URL = location?.booking_url || FALLBACK_BOOKING_URL
+  // A resolved location with no booking_url means this venue hasn't wired
+  // online booking yet — say so instead of iframing another venue's page.
+  const bookingMissing = Boolean(location?.id && location?.slug && !location.booking_url && !import.meta.env.DEV)
   const iframeRef = useRef(null)
   const [loaded, setLoaded]   = useState(false)
   const [errored, setErrored] = useState(false)
@@ -44,6 +52,19 @@ export default function ReservationsPage() {
       // eslint-disable-next-line no-self-assign
       iframeRef.current.src = iframeRef.current.src
     }
+  }
+
+  if (bookingMissing) {
+    return (
+      <div style={styles.container}>
+        <div style={styles.errorState}>
+          <p style={styles.errorTitle}>Online booking coming soon</p>
+          <p style={styles.errorBody}>
+            This location hasn't connected its reservation system yet. Call the shop to book a bay.
+          </p>
+        </div>
+      </div>
+    )
   }
 
   return (
