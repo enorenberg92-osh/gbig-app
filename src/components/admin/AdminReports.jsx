@@ -165,6 +165,34 @@ export default function AdminReports() {
     setReport({ kind: 'standings', rows })
   }
 
+  // ── Attendance: players × closed weeks (P played, S sub covered, M missed) ─
+  async function buildAttendance() {
+    const ids = closedEvents.map(e => e.id)
+    if (!ids.length) { showToast('No closed weeks yet.', 'error'); return }
+    const [{ data: scoreRows }, { data: subRows }] = await Promise.all([
+      supabase.from('scores').select('player_id, event_id, entry_type, sub_played')
+        .in('event_id', ids).eq('location_id', locationId).eq('status', 'verified'),
+      supabase.from('subs').select('player_id, event_id').in('event_id', ids)
+        .eq('location_id', locationId).eq('status', 'approved'),
+    ])
+    const cell = {}
+    ;(scoreRows || []).forEach(s => {
+      const key = `${s.player_id}:${s.event_id}`
+      if (s.entry_type === 'missed_penalty') { cell[key] = cell[key] || 'M' }
+      else if (s.entry_type === 'played') { cell[key] = s.sub_played ? 'S' : 'P' }
+    })
+    ;(subRows || []).forEach(s => {
+      const key = `${s.player_id}:${s.event_id}`
+      if (cell[key] === 'P' || !cell[key]) cell[key] = 'S'
+    })
+    const rows = players.filter(p => !p.is_sub).map(p => ({
+      name: p.name,
+      cells: closedEvents.map(e => cell[`${p.id}:${e.id}`] || ''),
+      played: closedEvents.filter(e => cell[`${p.id}:${e.id}`] === 'P').length,
+    }))
+    setReport({ kind: 'attendance', weeks: closedEvents, rows })
+  }
+
   async function buildMoney() {
     const { data: entries } = await supabase.from('ledger').select('*')
       .eq('location_id', locationId).eq('league_id', league.id).order('created_at')
@@ -245,6 +273,7 @@ export default function AdminReports() {
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <Button variant="secondary" size="sm" onClick={buildStandings}>Standings report</Button>
           <Button variant="secondary" size="sm" onClick={buildMoney}>Money list</Button>
+          <Button variant="secondary" size="sm" onClick={buildAttendance}>Attendance grid</Button>
           {report && (
             <Button variant="primary" size="sm" icon={<Printer size={14} strokeWidth={2.25} />} onClick={() => window.print()}>
               Print
@@ -275,6 +304,7 @@ export default function AdminReports() {
               {report.kind === 'recap' && ` — ${report.evt.week_number != null ? `Week ${report.evt.week_number}: ` : ''}${report.evt.name}`}
               {report.kind === 'standings' && ' — Season Standings'}
               {report.kind === 'money' && ' — Money List'}
+              {report.kind === 'attendance' && ' — Attendance'}
             </div>
           </div>
 
@@ -359,6 +389,37 @@ export default function AdminReports() {
                 ))}
               </tbody>
             </table>
+          )}
+
+          {report.kind === 'attendance' && (
+            <>
+              <p style={{ fontSize: 10, margin: '2px 0 6px' }}>P = played · S = sub covered · M = missed (penalty)</p>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={st.table}>
+                  <thead>
+                    <tr>
+                      <th style={st.th}>Player</th>
+                      {report.weeks.map(w => <th key={w.id} style={{ ...st.th, textAlign: 'center' }}>W{w.week_number ?? '?'}</th>)}
+                      <th style={{ ...st.th, textAlign: 'center' }}>Played</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {report.rows.map(r => (
+                      <tr key={r.name}>
+                        <td style={st.td}>{r.name}</td>
+                        {r.cells.map((c, i) => (
+                          <td key={i} style={{ ...st.td, textAlign: 'center', fontWeight: 700,
+                            color: c === 'P' ? '#1a7a3a' : c === 'S' ? '#b45309' : c === 'M' ? '#c02020' : '#bbb' }}>
+                            {c || '·'}
+                          </td>
+                        ))}
+                        <td style={{ ...st.td, textAlign: 'center', fontWeight: 700 }}>{r.played}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
 
           {report.kind === 'money' && (

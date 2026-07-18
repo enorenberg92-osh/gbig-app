@@ -27,6 +27,7 @@ export default function AdminPlayers() {
   const [showTeamForm, setShowTeamForm]   = useState(false)
   const [teamForm, setTeamForm]       = useState(EMPTY_TEAM_FORM)
   const [editingTeam, setEditingTeam] = useState(null)
+  const [swapForm, setSwapForm]       = useState({ out: '', in: '', date: '' })
   const [saving, setSaving]           = useState(false)
   const [toast, setToast]             = useState(null)
   const [dialog, setDialog]           = useState(null)
@@ -374,8 +375,23 @@ export default function AdminPlayers() {
     })
   }
 
+  async function handleMidSeasonSwap() {
+    const { error } = await supabase.rpc('admin_swap_team_member', {
+      p_team_id: editingTeam.id,
+      p_out_player_id: swapForm.out,
+      p_in_player_id: swapForm.in,
+      p_effective_date: swapForm.date,
+    })
+    if (error) { showToast('Error: ' + mutationErrorMessage(error, 'swap players'), 'error'); return }
+    showToast('Swap saved — past weeks stay with the outgoing player.')
+    setSwapForm({ out: '', in: '', date: '' })
+    setShowTeamForm(false); setEditingTeam(null)
+    loadAll()
+  }
+
   function startEditTeam(team) {
     setTeamForm({ name: team.name || '', player1_id: team.player1_id || '', player2_id: team.player2_id || '' })
+    setSwapForm({ out: '', in: '', date: '' })
     setEditingTeam(team)
     setShowTeamForm(true)
     setShowPlayerForm(false)
@@ -756,6 +772,34 @@ export default function AdminPlayers() {
               </Button>
             </div>
           </form>
+
+          {/* Mid-season swap: history stays with the outgoing player; the team
+              slot changes only from the effective date forward. Team edit above
+              instead corrects the roster from the start of the season. */}
+          {editingTeam && (
+            <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px dashed var(--gray-200)' }}>
+              <div style={{ ...styles.label, marginBottom: 8 }}>Mid-season swap (keeps past weeks with the outgoing player)</div>
+              <div style={styles.row}>
+                <select style={{ ...styles.select, flex: 1 }} value={swapForm.out} onChange={e => setSwapForm(f => ({ ...f, out: e.target.value }))}>
+                  <option value="">— out —</option>
+                  {[editingTeam.player1_id, editingTeam.player2_id].filter(Boolean).map(id => (
+                    <option key={id} value={id}>{players.find(p => p.id === id)?.name || '?'}</option>
+                  ))}
+                </select>
+                <select style={{ ...styles.select, flex: 1 }} value={swapForm.in} onChange={e => setSwapForm(f => ({ ...f, in: e.target.value }))}>
+                  <option value="">— in —</option>
+                  {unassigned.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+                <input type="date" style={{ ...styles.input, width: 140 }} value={swapForm.date}
+                  onChange={e => setSwapForm(f => ({ ...f, date: e.target.value }))} />
+              </div>
+              <Button type="button" variant="secondary" size="sm" style={{ marginTop: 8 }}
+                disabled={!swapForm.out || !swapForm.in || !swapForm.date}
+                onClick={handleMidSeasonSwap}>
+                Swap from this date
+              </Button>
+            </div>
+          )}
         </div>
       )}
 
