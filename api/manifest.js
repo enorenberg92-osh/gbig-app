@@ -12,7 +12,9 @@ const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY
 const DEFAULTS = { slug: 'gbig', name: 'Green Bay Indoor Golf', primary_color: '#1b4332' }
 
 export default async function handler(req, res) {
-  const hostLabel = String(req.headers.host || '').split('.')[0].toLowerCase()
+  // Same slug rule as the client boot resolver: first host label, "-app"
+  // suffix stripped (gbig-app → gbig, appleton-app → appleton).
+  const hostLabel = String(req.headers.host || '').split('.')[0].toLowerCase().replace(/-app$/, '')
   let loc = null
   try {
     const r = await fetch(

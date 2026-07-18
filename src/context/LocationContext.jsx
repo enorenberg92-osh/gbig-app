@@ -20,7 +20,10 @@ export function LocationProvider({ children }) {
     let cancelled = false
     async function resolveLocation() {
       const hostname = window.location.hostname.toLowerCase()
-      const slug = hostname.split('.')[0]
+      // Hostname's first label is the location slug. Vercel project names end
+      // in "-app" (gbig-app, appleton-app) — strip that suffix so the same
+      // rule covers both *.vercel.app aliases and future <slug>.domain hosts.
+      const slug = hostname.split('.')[0].replace(/-app$/, '')
       let data = null
       if (!import.meta.env.DEV && slug && slug !== 'www' && slug !== 'localhost') {
         const result = await supabase.from('location_public').select('*').eq('slug', slug).maybeSingle()
