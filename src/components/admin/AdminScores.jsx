@@ -332,6 +332,36 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
       })
   }
 
+  // Fire-and-forget handicap recalc for players whose scores just became verified.
+  function recalcHandicaps(playerIds) {
+    ;[...new Set(playerIds)].filter(Boolean).forEach(id =>
+      supabase.rpc('recalculate_player_handicap', { p_player_id: id })
+    )
+  }
+
+  async function handleReviewScore(score, status) {
+    const { error } = await supabase.rpc('admin_review_score', {
+      p_score_id: score.id,
+      p_status: status,
+    })
+    if (error) { showToast(mutationErrorMessage(error, 'review a score'), 'error'); return }
+    showToast(status === 'verified' ? 'Score approved' : 'Score rejected — the team can resubmit')
+    if (status === 'verified') recalcHandicaps([score.player_id])
+    loadEventData(selectedEvent)
+  }
+
+  async function handleApproveAll() {
+    setSaving(true)
+    const { data, error } = await supabase.rpc('admin_bulk_approve_scores', {
+      p_event_id: selectedEvent,
+    })
+    setSaving(false)
+    if (error) { showToast(mutationErrorMessage(error, 'approve scores'), 'error'); return }
+    showToast(`Approved ${data?.approved ?? 0} score(s)`)
+    recalcHandicaps(data?.player_ids || [])
+    loadEventData(selectedEvent)
+  }
+
   async function handleCalculateSkins() {
     // Load scores + all players independently (avoids FK join issues)
     const [{ data: allScores }, { data: skinPlayers }] = await Promise.all([
@@ -369,6 +399,8 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
   // ── UI Helpers ──────────────────────────────────────────────────────────────
   const submitted   = teams.filter(t => t.score1 || t.score2)
   const unsubmitted = teams.filter(t => !t.score1 && !t.score2)
+  const pendingCount = teams.reduce((n, t) =>
+    n + (t.score1?.status === 'pending' ? 1 : 0) + (t.score2?.status === 'pending' ? 1 : 0), 0)
   const holePars    = eventData?.holePars || []
   const totalPar    = holePars.reduce((s, p) => s + p, 0)
 
@@ -409,6 +441,32 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
 
       {!loading && (
         <>
+          {/* Review Queue */}
+          {pendingCount > 0 && (
+            <div style={{ ...styles.card, borderColor: '#f6c453', background: '#fffbeb' }}>
+              <div style={styles.cardTitleRow}>
+                <h3 style={{ ...styles.cardTitle, color: '#92400e' }}>⏳ Review Queue</h3>
+                <span style={{ ...styles.badge, background: '#fef3c7', color: '#92400e' }}>
+                  {pendingCount} pending
+                </span>
+              </div>
+              <p style={{ fontSize: 12, color: '#92400e', marginBottom: 10 }}>
+                Player-submitted scores await review. Approve, edit a team to fix-and-approve,
+                or reject below. Publishing is blocked until the queue is empty.
+              </p>
+              <Button
+                variant="primary"
+                fullWidth
+                loading={saving}
+                loadingText="Approving…"
+                icon={<Check size={14} strokeWidth={2.5} />}
+                onClick={handleApproveAll}
+              >
+                Approve all {pendingCount} pending score{pendingCount === 1 ? '' : 's'}
+              </Button>
+            </div>
+          )}
+
           {/* Unsubmitted Teams */}
           {unsubmitted.length > 0 && (
             <div style={styles.card}>
@@ -432,6 +490,7 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
                   onSave={() => handleSaveTeamScores(team)}
                   onCancel={() => setEditingTeam(null)}
                   onDeleteScore={handleDeleteScore}
+                  onReview={handleReviewScore}
                   calcGross={calcGross}
                   calcNet={calcNet}
                   calcNetVsPar={calcNetVsPar}
@@ -466,6 +525,7 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
                   onSave={() => handleSaveTeamScores(team)}
                   onCancel={() => setEditingTeam(null)}
                   onDeleteScore={handleDeleteScore}
+                  onReview={handleReviewScore}
                   calcGross={calcGross}
                   calcNet={calcNet}
                   calcNetVsPar={calcNetVsPar}
@@ -541,7 +601,7 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
 }
 
 // ─── Team Row Component ───────────────────────────────────────────────────────
-function TeamRow({ team, holePars, isEditing, holeScores, saving, subMap = {}, onEdit, onHoleChange, onSave, onCancel, onDeleteScore, calcGross, calcNet, calcNetVsPar }) {
+function TeamRow({ team, holePars, isEditing, holeScores, saving, subMap = {}, onEdit, onHoleChange, onSave, onCancel, onDeleteScore, onReview, calcGross, calcNet, calcNetVsPar }) {
   const totalPar = holePars.reduce((s, p) => s + p, 0)
   const submitted = !!(team.score1 || team.score2)
 
@@ -808,6 +868,17 @@ function TeamRow({ team, holePars, isEditing, holeScores, saving, subMap = {}, o
                 <span style={trStyles.submittedScores}>
                   Gross {s?.gross_total ?? '—'} · Net {s?.net_total ?? '—'}
                 </span>
+                {s?.status === 'pending' && onReview && (
+                  <span style={trStyles.reviewActions}>
+                    <span style={trStyles.pendingPill}>pending</span>
+                    <button type="button" style={trStyles.approveBtn} onClick={() => onReview(s, 'verified')}>
+                      Approve
+                    </button>
+                    <button type="button" style={trStyles.rejectBtn} onClick={() => onReview(s, 'rejected')}>
+                      Reject
+                    </button>
+                  </span>
+                )}
               </div>
             )
           })}
@@ -896,6 +967,10 @@ const trStyles = {
   submittedRow: { display: 'flex', gap: '8px', alignItems: 'center' },
   submittedName: { fontSize: '12px', fontWeight: 600, color: 'var(--black)' },
   submittedScores: { fontSize: '12px', color: 'var(--gray-400)' },
+  reviewActions: { display: 'flex', alignItems: 'center', gap: '6px' },
+  pendingPill: { fontSize: '10px', fontWeight: 700, background: '#fef3c7', color: '#92400e', padding: '1px 6px', borderRadius: '10px' },
+  approveBtn: { background: 'var(--green-xlight)', border: 'none', color: 'var(--green)', fontSize: '11px', fontWeight: 700, cursor: 'pointer', padding: '3px 10px', borderRadius: '6px' },
+  rejectBtn: { background: '#fee2e2', border: 'none', color: '#c53030', fontSize: '11px', fontWeight: 700, cursor: 'pointer', padding: '3px 10px', borderRadius: '6px' },
   subPill: { fontSize: '10px', fontWeight: 700, background: '#fff3cd', color: '#7a5c00', padding: '1px 6px', borderRadius: '10px', marginLeft: '4px', verticalAlign: 'middle' },
   subPillSm: { fontSize: '9px', fontWeight: 700, background: '#fff3cd', color: '#7a5c00', padding: '1px 5px', borderRadius: '8px', marginLeft: '3px', verticalAlign: 'middle' },
   subForLabel: { fontSize: '9px', color: '#7a5c00', fontStyle: 'italic' },

@@ -29,6 +29,7 @@ export default function ScoreEntry({ session, onBack }) {
   const [scores, setScores]             = useState({})         // { p1: [null×9], p2: [null×9] }
   const [showHoleEvent, setShowHoleEvent] = useState(false)
   const [alreadySubmitted, setAlreadySubmitted] = useState(false)
+  const [pendingReview, setPendingReview]       = useState(false)
   const [saving, setSaving]             = useState(false)
   const [toast, setToast]               = useState(null)
   const [error, setError]               = useState(null)
@@ -121,14 +122,17 @@ export default function ScoreEntry({ session, onBack }) {
       // their actual score (admin-driven edge case, but cheap to get right).
       const { data: existing } = await supabase
         .from('scores')
-        .select('id')
+        .select('id, status')
         .eq('event_id', evtRow.id)
         .eq('location_id', locationId)
         .eq('player_id', playerRow.id)
         .eq('entry_type', 'played')
         .neq('status', 'rejected')
 
-      if (existing && existing.length > 0) { setAlreadySubmitted(true); setLoading(false); return }
+      if (existing && existing.length > 0) {
+        setPendingReview(existing.some(s => s.status === 'pending'))
+        setAlreadySubmitted(true); setLoading(false); return
+      }
 
       // 5. Initialize blank scores
       setScores({
@@ -234,6 +238,7 @@ export default function ScoreEntry({ session, onBack }) {
     }
 
     setSaving(false)
+    setPendingReview(true)
     setAlreadySubmitted(true)
     showToast(result?.already_submitted ? 'Your team already submitted scores for this round.' : 'Scores submitted and awaiting admin review!')
   }
@@ -287,6 +292,14 @@ export default function ScoreEntry({ session, onBack }) {
               ? `Nice round, ${team?.p1?.name?.split(' ')[0]}!`
               : `Your team already entered scores for this week's round.`}
           </p>
+          {pendingReview && (
+            <p style={{
+              fontSize: 12, fontWeight: 700, color: '#92400e', background: '#fef3c7',
+              padding: '6px 12px', borderRadius: 20, display: 'inline-block', marginTop: 4,
+            }}>
+              ⏳ Awaiting admin review
+            </p>
+          )}
           {hasScores && (
             <div style={styles.doneSummary}>
               <div style={styles.doneSummaryRow}>
