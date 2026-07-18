@@ -6,9 +6,10 @@ import ConfirmDialog from '../ConfirmDialog'
 import { Button, Toast, EmptyState } from '../ui'
 import { formatLocalDate } from '../../lib/dateUtils'
 import { mutationErrorMessage } from '../../lib/rpcErrors'
+import { useFeature } from '../../context/FeatureContext'
 
 const EMPTY_FORM = { name: '', num_weeks: '', start_date: '', is_active: false, default_format: 'stroke' }
-const FEATURE_KEYS = ['friends', 'events', 'skins', 'subs', 'news', 'cups']
+const FEATURE_KEYS = ['friends', 'events', 'skins', 'subs', 'news', 'cups', 'flights']
 const FORMAT_OPTIONS = [
   ['stroke',           'Stroke play'],
   ['match_team',       'Team match play'],
@@ -194,6 +195,82 @@ export default function AdminLeague() {
     else { showToast(`${key} ${features[key] ? 'enabled' : 'disabled'}`); loadLeagues() }
   }
 
+  // ── Flights (working league) ───────────────────────────────────────────────
+  const flightsEnabled = useFeature('flights')
+  const [flights, setFlights] = useState([])
+  const [flightTeams, setFlightTeams] = useState([]) // {id, name, flight_id, combinedHcp}
+  const workingId = leagues.find(l => l.is_working)?.id
+
+  useEffect(() => {
+    if (!workingId || !flightsEnabled) return
+    let cancelled = false
+    Promise.all([
+      supabase.from('flights').select('*').eq('league_id', workingId).eq('location_id', locationId).order('sort_order'),
+      supabase.from('teams').select('id, name, flight_id').eq('league_id', workingId).eq('location_id', locationId).order('created_at'),
+      supabase.from('players').select('team_id, handicap').eq('location_id', locationId).not('team_id', 'is', null),
+    ]).then(([f, t, p]) => {
+      if (cancelled) return
+      const hcpByTeam = {}
+      ;(p.data || []).forEach(pl => { hcpByTeam[pl.team_id] = (hcpByTeam[pl.team_id] || 0) + (pl.handicap || 0) })
+      setFlights(f.data || [])
+      setFlightTeams((t.data || []).map(team => ({ ...team, combinedHcp: hcpByTeam[team.id] ?? null })))
+    })
+    return () => { cancelled = true }
+  }, [workingId, locationId, flightsEnabled])
+
+  async function addFlight() {
+    const name = `Flight ${String.fromCharCode(65 + flights.length)}` // A, B, C…
+    const { error } = await supabase.from('flights').insert({
+      location_id: locationId, league_id: workingId, name, sort_order: flights.length,
+    })
+    if (error) { showToast('Error: ' + error.message, 'error'); return }
+    refreshFlights()
+  }
+
+  async function renameFlight(flight, name) {
+    await supabase.from('flights').update({ name }).eq('id', flight.id).eq('location_id', locationId)
+  }
+
+  async function deleteFlight(flight) {
+    const { error } = await supabase.from('flights').delete().eq('id', flight.id).eq('location_id', locationId)
+    if (error) { showToast('Error: ' + error.message, 'error'); return }
+    refreshFlights()
+  }
+
+  async function refreshFlights() {
+    const [f, t] = await Promise.all([
+      supabase.from('flights').select('*').eq('league_id', workingId).eq('location_id', locationId).order('sort_order'),
+      supabase.from('teams').select('id, name, flight_id').eq('league_id', workingId).eq('location_id', locationId).order('created_at'),
+    ])
+    setFlights(f.data || [])
+    setFlightTeams(prev => (t.data || []).map(team => ({
+      ...team, combinedHcp: prev.find(x => x.id === team.id)?.combinedHcp ?? null,
+    })))
+  }
+
+  async function saveAssignments(assignments) {
+    const { error } = await supabase.rpc('admin_assign_flights', {
+      p_league_id: workingId,
+      p_assignments: assignments,
+    })
+    if (error) { showToast(mutationErrorMessage(error, 'assign flights'), 'error'); return }
+    showToast('Flight assignments saved.')
+    refreshFlights()
+  }
+
+  // Auto-suggest: teams ordered by combined handicap (low → high), split evenly
+  // across flights in sort order. Admin can still adjust per team.
+  function autoSuggestFlights() {
+    if (!flights.length) { showToast('Add at least one flight first.', 'error'); return }
+    const ordered = [...flightTeams].sort((a, b) => (a.combinedHcp ?? 99) - (b.combinedHcp ?? 99))
+    const per = Math.ceil(ordered.length / flights.length)
+    const assignments = ordered.map((team, i) => ({
+      team_id: team.id,
+      flight_id: flights[Math.min(Math.floor(i / per), flights.length - 1)].id,
+    }))
+    saveAssignments(assignments)
+  }
+
   // ── Season segments (working league) ──────────────────────────────────────
   const [segmentDraft, setSegmentDraft] = useState(null) // null = not editing
   async function saveSegments() {
@@ -344,6 +421,52 @@ export default function AdminLeague() {
           })}
         </div>
       </div>
+
+      {/* ── Flights ───────────────────────────────────────────────────────── */}
+      {flightsEnabled && workingLeague && (
+        <div style={s.card}>
+          <h3 style={s.formTitle}>Flights / Divisions</h3>
+          <div style={s.form}>
+            <div style={s.hint}>Group teams into flights for per-flight standings. Auto-suggest splits by combined handicap.</div>
+            {flights.map(f => (
+              <div key={f.id} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <input
+                  style={{ ...s.input, flex: 1 }}
+                  defaultValue={f.name}
+                  onBlur={e => e.target.value.trim() && e.target.value !== f.name && renameFlight(f, e.target.value.trim())}
+                />
+                <span style={s.hint}>
+                  {flightTeams.filter(t => t.flight_id === f.id).length} teams
+                </span>
+                <button type="button" style={{ background: 'none', border: 'none', color: '#c53030', cursor: 'pointer' }}
+                  onClick={() => deleteFlight(f)}>✕</button>
+              </div>
+            ))}
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <Button variant="secondary" size="sm" onClick={addFlight}>+ Add Flight</Button>
+              {flights.length > 0 && flightTeams.length > 0 && (
+                <Button variant="secondary" size="sm" onClick={autoSuggestFlights}>⚡ Auto-suggest by handicap</Button>
+              )}
+            </div>
+            {flights.length > 0 && flightTeams.map(team => (
+              <div key={team.id} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <span style={{ flex: 1, fontSize: 13 }}>
+                  {team.name}
+                  {team.combinedHcp != null && <span style={{ color: 'var(--gray-400)', fontSize: 11 }}> · hcp {team.combinedHcp}</span>}
+                </span>
+                <select
+                  style={{ ...s.input, width: 150 }}
+                  value={team.flight_id || ''}
+                  onChange={e => saveAssignments([{ team_id: team.id, flight_id: e.target.value || null }])}
+                >
+                  <option value="">No flight</option>
+                  {flights.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
+                </select>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ── Season segments ───────────────────────────────────────────────── */}
       <div style={s.card}>

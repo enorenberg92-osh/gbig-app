@@ -20,6 +20,9 @@ export default function Standings({ session, onBack, adminMode = false }) {
   const [segmentIdx, setSegmentIdx]       = useState(-1)   // -1 = full season
   const [hasPoints, setHasPoints]         = useState(false)
   const [weekMatchups, setWeekMatchups]   = useState([])
+  const [flights, setFlights]             = useState([])
+  const [flightFilter, setFlightFilter]   = useState('')
+  const [teamFlightMap, setTeamFlightMap] = useState({})
 
   // ── 1. On mount, fetch the event list ────────────────────────────
   useEffect(() => { if (locationId) loadEvents() }, [locationId])
@@ -53,6 +56,15 @@ export default function Standings({ session, onBack, adminMode = false }) {
     }
     setLeagueId(league.id)
     setSegments(Array.isArray(league.segments) ? league.segments : [])
+    // Flights (empty unless the league uses them)
+    supabase.from('flights').select('id, name, sort_order').eq('league_id', league.id).eq('location_id', locationId).order('sort_order')
+      .then(({ data: fl }) => setFlights(fl || []))
+    supabase.from('teams').select('id, flight_id').eq('league_id', league.id).eq('location_id', locationId)
+      .then(({ data: tf }) => {
+        const map = {}
+        ;(tf || []).forEach(t => { map[t.id] = t.flight_id })
+        setTeamFlightMap(map)
+      })
     const { data, error } = await supabase
       .from('events')
       .select('id, name, week_number, start_date, status, format')
@@ -298,6 +310,10 @@ export default function Standings({ session, onBack, adminMode = false }) {
     return ['#FFD700', '#C0C0C0', '#CD7F32'][rank] ?? null
   }
 
+  const displayRows = flightFilter
+    ? rows.filter(r => teamFlightMap[r.teamId] === flightFilter)
+    : rows
+
   // Team-of-the-night column (scramble / best ball, once results are computed)
   const isNightEvent = view === 'week'
     && ['scramble', 'best_ball'].includes(selectedEvent?.format)
@@ -384,6 +400,16 @@ export default function Standings({ session, onBack, adminMode = false }) {
         </div>
       )}
 
+      {/* Flight filter */}
+      {flights.length > 0 && (
+        <div style={styles.eventPicker}>
+          <select style={styles.eventSelect} value={flightFilter} onChange={e => setFlightFilter(e.target.value)}>
+            <option value="">All flights</option>
+            {flights.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
+          </select>
+        </div>
+      )}
+
       {/* Net / Gross / Points sort */}
       <div style={styles.sortRow}>
         <span style={styles.sortLabel}>Sort by:</span>
@@ -430,7 +456,7 @@ export default function Standings({ session, onBack, adminMode = false }) {
       {/* Content */}
       {loading ? (
         <div style={styles.loading}>Loading standings…</div>
-      ) : rows.length === 0 ? (
+      ) : displayRows.length === 0 ? (
         <div style={styles.empty}>
           <div style={{ fontSize: 36, marginBottom: 10 }}>📭</div>
           <p style={{ margin: 0 }}>
@@ -456,7 +482,7 @@ export default function Standings({ session, onBack, adminMode = false }) {
             <div style={{ ...styles.thCell, width: 56, textAlign: 'right' }}>Net</div>
           </div>
 
-          {rows.map((row, idx) => (
+          {displayRows.map((row, idx) => (
             <div key={row.teamId} style={{ ...styles.teamRow, ...(idx < 3 ? styles.teamRowTop : {}) }}>
               <div style={{ ...styles.rankCell, color: medalColor(idx) || 'var(--gray-400)' }}>
                 {medalEmoji(idx) ?? idx + 1}
