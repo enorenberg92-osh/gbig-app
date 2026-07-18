@@ -9,7 +9,7 @@ import { mutationErrorMessage } from '../../lib/rpcErrors'
 import { useFeature } from '../../context/FeatureContext'
 
 const EMPTY_FORM = { name: '', num_weeks: '', start_date: '', is_active: false, default_format: 'stroke' }
-const FEATURE_KEYS = ['friends', 'events', 'skins', 'subs', 'news', 'cups', 'flights']
+const FEATURE_KEYS = ['friends', 'events', 'skins', 'subs', 'news', 'cups', 'flights', 'money']
 const FORMAT_OPTIONS = [
   ['stroke',           'Stroke play'],
   ['match_team',       'Team match play'],
