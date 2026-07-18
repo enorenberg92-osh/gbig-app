@@ -20,6 +20,7 @@ import AdminLeague    from './AdminLeague'
 import AdminStandings from './AdminStandings'
 import AdminCup       from './AdminCup'
 import AdminMoney     from './AdminMoney'
+import AdminReports   from './AdminReports'
 import { isFutureDate } from '../../lib/dateUtils'
 import { loadWorkingLeague } from '../../lib/leagueUtils'
 import { useFeature } from '../../context/FeatureContext'
@@ -38,6 +39,7 @@ const SECTIONS = [
   { id: 'skins',      label: 'Skins',        Icon: Target },
   { id: 'cup',        label: 'Cup',          Icon: Trophy },
   { id: 'money',      label: 'Money',        Icon: Target },
+  { id: 'reports',    label: 'Reports',      Icon: LayoutDashboard },
   { id: 'alerts',     label: 'Alerts',       Icon: Bell },
 ]
 
@@ -155,6 +157,7 @@ export default function AdminPanel({ session, onBack }) {
       <Route path="skins"      element={skinsEnabled ? <AdminSkins activeEventId={activeEventId} onEventChange={handleEventChange} /> : <Navigate to="/league/admin/dashboard" replace />} />
       <Route path="cup"        element={cupsEnabled ? <AdminCup /> : <Navigate to="/league/admin/dashboard" replace />} />
       <Route path="money"      element={moneyEnabled ? <AdminMoney /> : <Navigate to="/league/admin/dashboard" replace />} />
+      <Route path="reports"    element={<AdminReports />} />
       <Route path="alerts"     element={<AdminAlerts />} />
       <Route path="*"          element={<Navigate to="/league/admin/dashboard" replace />} />
     </Routes>

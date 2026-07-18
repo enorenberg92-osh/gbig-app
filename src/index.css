@@ -168,3 +168,18 @@ a {
     transition-duration:  0.001ms !important;
   }
 }
+
+/* ── Print reports (Phase 5.3) ─────────────────────────────────────────────
+   When printing, only the .print-area subtree renders. Browser print is the
+   whole PDF story — no PDF library. */
+@media print {
+  body * { visibility: hidden; }
+  .print-area, .print-area * { visibility: visible; }
+  .print-area {
+    position: absolute; top: 0; left: 0; width: 100%;
+    background: #fff; color: #000; padding: 0; margin: 0;
+  }
+  .print-area table { page-break-inside: auto; }
+  .print-area tr { page-break-inside: avoid; }
+  .no-print { display: none !important; }
+}
