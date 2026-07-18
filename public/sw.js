@@ -9,11 +9,11 @@ self.addEventListener('push', event => {
   let data = {}
   try { data = event.data?.json() ?? {} } catch { data = { title: 'GBIG Alert', body: event.data?.text() ?? '' } }
 
-  const title   = data.title || 'Green Bay Indoor Golf'
+  const title   = data.title || 'League Alert'
   const options = {
     body:              data.body  || '',
-    icon:              '/icon-192.png',
-    badge:             '/icon-96.png',
+    icon:              data.icon  || '/icon-192.png',
+    badge:             data.badge || '/icon-96.png',
     tag:               data.tag  || 'gbig-alert',
     renotify:          true,
     requireInteraction: false,

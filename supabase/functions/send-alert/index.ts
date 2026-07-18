@@ -72,16 +72,26 @@ Deno.serve(async (req) => {
       auth: { autoRefreshToken: false, persistSession: false },
     })
 
-    const { data: adminRow, error: adminErr } = await admin
+    // An admin can run multiple locations; a maybeSingle() here would throw
+    // the moment someone administers two. Take all rows and pick the first
+    // (single-location admins — the normal case — are unaffected).
+    const { data: adminRows, error: adminErr } = await admin
       .from('location_admins')
       .select('location_id, role')
       .eq('user_id', userId)
-      .maybeSingle()
 
     if (adminErr) throw adminErr
-    if (!adminRow) return json({ error: 'Not an admin for any location' }, 403)
+    if (!adminRows?.length) return json({ error: 'Not an admin for any location' }, 403)
 
-    const locationId = adminRow.location_id
+    const locationId = adminRows[0].location_id
+
+    // Per-location push branding: icon convention /branding/<slug>-icon-192.png.
+    const { data: locRow } = await admin
+      .from('locations')
+      .select('slug')
+      .eq('id', locationId)
+      .maybeSingle()
+    const iconPath = locRow?.slug ? `/branding/${locRow.slug}-icon-192.png` : '/icon-192.png'
 
     // ── 3. Configure web-push and record the alert ──────────────────────────
     webpush.setVapidDetails(`mailto:${vapidEmail}`, vapidPub, vapidPriv)
@@ -119,9 +129,9 @@ Deno.serve(async (req) => {
     const payload = JSON.stringify({
       title,
       body,
-      tag:  'gbig-alert',
+      tag:  'league-alert',
       url:  '/#/alerts',
-      icon: '/icon-192.png',
+      icon: iconPath,
     })
 
     // webpush options: TTL (offline queue, 24h) + urgency=high (league alerts
