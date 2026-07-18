@@ -195,7 +195,7 @@ export default function PlayerProfile({ session, onBack, playerId: adminPlayerId
           .is('effective_to', null)
           .maybeSingle(),
         supabase.from('scores')
-          .select('id, event_id, gross_total, net_total, hole_scores, handicap_used, entry_type, status, sub_played, created_at, events!inner(id, name, week_number, start_date, league_id, courses(id, name, num_holes, hole_pars, total_par))')
+          .select('id, event_id, gross_total, net_total, hole_scores, hole_stats, handicap_used, entry_type, status, sub_played, created_at, events!inner(id, name, week_number, start_date, league_id, courses(id, name, num_holes, hole_pars, total_par))')
           .eq('player_id', playerRow.id)
           .eq('location_id', locationId)
           .eq('status', 'verified')
@@ -244,6 +244,7 @@ export default function PlayerProfile({ session, onBack, playerId: adminPlayerId
           coursePar,
           vsPar:        gross != null && coursePar != null ? gross - coursePar : null,
           holeScores:   Array.isArray(s.hole_scores) ? s.hole_scores : [],
+          holeStats:    Array.isArray(s.hole_stats) ? s.hole_stats : null,
           holePars,
         }
       }).sort(compareRoundsChronologically)
@@ -319,6 +320,37 @@ export default function PlayerProfile({ session, onBack, playerId: adminPlayerId
   const sortedByNet = [...validNet].sort((a, b) => a.net - b.net)
   const bestRound  = sortedByNet[0]   || null
   const worstRound = sortedByNet[sortedByNet.length - 1] || null
+  const bestGrossRound = validGross.length
+    ? validGross.reduce((best, r) => r.gross < best.gross ? r : best) : null
+
+  // Birdies per round (from hole scores) — personal best.
+  const birdiesIn = rd => zipHoleScoresWithPars(rd.holeScores, rd.holePars)
+    .filter(({ score, par }) => score && par && score - par <= -1).length
+  const mostBirdiesRound = rounds.reduce((best, rd) => {
+    const n = birdiesIn(rd)
+    return !best || n > best.n ? { rd, n } : best
+  }, null)
+
+  // On-course stats from tracked hole_stats (putts / fairways / greens).
+  const courseStats = (() => {
+    let putts = 0, puttRounds = 0, firHit = 0, firTotal = 0, girHit = 0, girTotal = 0
+    rounds.forEach(rd => {
+      if (!rd.holeStats) return
+      let roundPutts = 0, hasPutts = false
+      rd.holeStats.forEach(h => {
+        if (h?.putts != null) { roundPutts += h.putts; hasPutts = true }
+        if (h?.fir != null) { firTotal++; if (h.fir) firHit++ }
+        if (h?.gir != null) { girTotal++; if (h.gir) girHit++ }
+      })
+      if (hasPutts) { putts += roundPutts; puttRounds++ }
+    })
+    if (!puttRounds && !firTotal && !girTotal) return null
+    return {
+      puttsPerRound: puttRounds ? (putts / puttRounds).toFixed(1) : null,
+      firPct: firTotal ? Math.round((firHit / firTotal) * 100) : null,
+      girPct: girTotal ? Math.round((girHit / girTotal) * 100) : null,
+    }
+  })()
 
   // ── SVG line chart ───────────────────────────────────────────────────────────
 
@@ -611,10 +643,44 @@ export default function PlayerProfile({ session, onBack, playerId: adminPlayerId
           </div>
         )}
 
+        {/* ── On-course stats (tracked per hole; only shows once tracked) ── */}
+        {courseStats && (
+          <div style={styles.card}>
+            <div style={styles.cardTitle}>ON-COURSE STATS</div>
+            <div style={styles.tilesRow}>
+              <div style={{ ...styles.tile, boxShadow: 'none', border: 'none' }}>
+                <div style={styles.tileLabel}>PUTTS</div>
+                <div style={styles.tileNum}>{courseStats.puttsPerRound ?? '—'}</div>
+                <div style={styles.tileSub}>per round</div>
+              </div>
+              <div style={{ ...styles.tile, boxShadow: 'none', border: 'none' }}>
+                <div style={styles.tileLabel}>FAIRWAYS</div>
+                <div style={styles.tileNum}>{courseStats.firPct != null ? `${courseStats.firPct}%` : '—'}</div>
+                <div style={styles.tileSub}>hit</div>
+              </div>
+              <div style={{ ...styles.tile, boxShadow: 'none', border: 'none', borderRight: 'none' }}>
+                <div style={styles.tileLabel}>GREENS</div>
+                <div style={{ ...styles.tileNum, color: 'var(--green-dark)' }}>{courseStats.girPct != null ? `${courseStats.girPct}%` : '—'}</div>
+                <div style={styles.tileSub}>in regulation</div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* ── Best & Worst rounds ── */}
         {bestRound && worstRound && bestRound.id !== worstRound.id && (
           <div style={styles.card}>
             <div style={styles.cardTitle}>BEST &amp; WORST ROUNDS</div>
+            {(bestGrossRound || (mostBirdiesRound && mostBirdiesRound.n > 0)) && (
+              <div style={{ display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+                {bestGrossRound && (
+                  <span style={styles.badge}>🏅 Best gross {bestGrossRound.gross} ({bestGrossRound.eventName})</span>
+                )}
+                {mostBirdiesRound && mostBirdiesRound.n > 0 && (
+                  <span style={styles.badge}>🐦 {mostBirdiesRound.n} birdie{mostBirdiesRound.n > 1 ? 's' : ''} in a round</span>
+                )}
+              </div>
+            )}
             <div style={styles.bwRow}>
               <div style={styles.bestCard}>
                 <div style={styles.bwLabel}>BEST NET</div>
