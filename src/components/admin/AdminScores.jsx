@@ -11,27 +11,7 @@ import { compareEffectiveScores } from '../../lib/roundUtils'
 import { Button, Toast } from '../ui'
 import { useFeature } from '../../context/FeatureContext'
 
-// ─── Skins calculation ───────────────────────────────────────────────────────
-// For each hole: find the lowest score. If exactly one player shot it → skin won.
-// No carryovers. Each hole is independent.
-function calcSkins(playerScoreMap, numHoles) {
-  // playerScoreMap: { playerId: [h1, h2, ..., h9] }
-  const entries = Object.entries(playerScoreMap)
-  const skins = {} // hole (1-indexed) → playerId or null
-
-  for (let hole = 0; hole < numHoles; hole++) {
-    const holeScores = entries
-      .map(([pid, scores]) => ({ pid, score: scores[hole] }))
-      .filter(x => x.score != null && x.score > 0)
-
-    if (holeScores.length === 0) { skins[hole + 1] = null; continue }
-
-    const min = Math.min(...holeScores.map(x => x.score))
-    const winners = holeScores.filter(x => x.score === min)
-    skins[hole + 1] = winners.length === 1 ? winners[0].pid : null // null = tie
-  }
-  return skins
-}
+import { calcSkins } from '../../lib/skinsUtils'
 
 export default function AdminScores({ activeEventId = null, onEventChange = () => {} }) {
   const { locationId, timezone } = useLocation()

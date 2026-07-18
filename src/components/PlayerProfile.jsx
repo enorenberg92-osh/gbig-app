@@ -7,6 +7,81 @@ import { formatLocalDate } from '../lib/dateUtils'
 import { zipHoleScoresWithPars } from '../lib/holeUtils'
 import { loadWorkingLeague } from '../lib/leagueUtils'
 import { compareRoundsChronologically } from '../lib/roundUtils'
+import { scoreColor } from '../lib/scoreUtils'
+import { calcSkins } from '../lib/skinsUtils'
+import { useFeature } from '../context/FeatureContext'
+
+// ── Round detail: hole-by-hole scorecard + tracked stats + skins ─────────────
+function RoundDetail({ rd, skinsWon, skinsEnabled }) {
+  const holes = zipHoleScoresWithPars(rd.holeScores, rd.holePars)
+  if (!holes.length) return null
+  const hasStats = Array.isArray(rd.holeStats) && rd.holeStats.some(h => h && (h.putts != null || h.fir != null || h.gir != null))
+  const totalPutts = hasStats ? rd.holeStats.reduce((s, h) => s + (h?.putts ?? 0), 0) : null
+
+  const cell = { padding: '4px 6px', textAlign: 'center', fontSize: 12, minWidth: 30 }
+  const labelCell = { ...cell, textAlign: 'left', fontWeight: 600, color: 'var(--gray-500)', fontSize: 10, textTransform: 'uppercase', whiteSpace: 'nowrap' }
+
+  return (
+    <div style={{ background: 'var(--gray-100)', borderRadius: 8, padding: '8px 10px', margin: '0 0 10px' }}>
+      <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+        <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+          <tbody>
+            <tr>
+              <td style={labelCell}>Hole</td>
+              {holes.map((_, i) => <td key={i} style={{ ...cell, fontWeight: 700, color: 'var(--gray-500)', fontSize: 10 }}>{i + 1}</td>)}
+              <td style={{ ...cell, fontWeight: 700, fontSize: 10, color: 'var(--gray-500)' }}>TOT</td>
+            </tr>
+            <tr>
+              <td style={labelCell}>Par</td>
+              {holes.map(({ par }, i) => <td key={i} style={{ ...cell, color: 'var(--gray-500)' }}>{par ?? '—'}</td>)}
+              <td style={{ ...cell, color: 'var(--gray-500)' }}>{rd.coursePar ?? '—'}</td>
+            </tr>
+            <tr>
+              <td style={labelCell}>Score</td>
+              {holes.map(({ score, par }, i) => (
+                <td key={i} style={{ ...cell, fontWeight: 700, color: scoreColor(score, par) }}>
+                  {score ?? '—'}
+                  {skinsEnabled && Array.isArray(skinsWon) && skinsWon.includes(i + 1) && ' 🏆'}
+                </td>
+              ))}
+              <td style={{ ...cell, fontWeight: 800 }}>{rd.gross ?? '—'}</td>
+            </tr>
+            {hasStats && (
+              <tr>
+                <td style={labelCell}>Putts</td>
+                {holes.map((_, i) => <td key={i} style={cell}>{rd.holeStats[i]?.putts ?? '—'}</td>)}
+                <td style={{ ...cell, fontWeight: 700 }}>{totalPutts}</td>
+              </tr>
+            )}
+            {hasStats && (
+              <tr>
+                <td style={labelCell}>FW/GIR</td>
+                {holes.map((_, i) => {
+                  const h = rd.holeStats[i] || {}
+                  return (
+                    <td key={i} style={{ ...cell, fontSize: 10 }}>
+                      {h.fir === true ? '✓' : h.fir === false ? '✗' : '·'}
+                      {'/'}
+                      {h.gir === true ? '✓' : h.gir === false ? '✗' : '·'}
+                    </td>
+                  )
+                })}
+                <td style={cell} />
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      {skinsEnabled && Array.isArray(skinsWon) && (
+        <div style={{ fontSize: 11, fontWeight: 700, color: '#7a5c00', marginTop: 6 }}>
+          {skinsWon.length
+            ? `🏆 Skins won: ${skinsWon.map(h => `H${h}`).join(', ')}`
+            : 'No skins won this night'}
+        </div>
+      )}
+    </div>
+  )
+}
 
 // ── Crop Modal ────────────────────────────────────────────────────────────────
 function CropModal({ file, onConfirm, onCancel }) {
@@ -152,6 +227,9 @@ export default function PlayerProfile({ session, onBack, playerId: adminPlayerId
   const [pwMsg, setPwMsg]           = useState(null)  // { text, type }
   const [avatarUploading, setAvatarUploading] = useState(false)
   const [cropFile, setCropFile] = useState(null)
+  const [expandedRoundId, setExpandedRoundId] = useState(null)
+  const [skinsByRound, setSkinsByRound] = useState({})   // roundId -> [holeNums won] | null
+  const skinsEnabled = useFeature('skins')
   const fileInputRef = useRef(null)
 
   useEffect(() => { if (locationId) load() }, [locationId])
@@ -233,6 +311,7 @@ export default function PlayerProfile({ session, onBack, playerId: adminPlayerId
         const isPenalty = s.entry_type === 'missed_penalty'
         return {
           id:           s.id,
+          eventId:      s.event_id,
           eventName:    evt.name || 'Round',
           weekNumber:   evt.week_number || null,
           startDate:    evt.start_date || null,
@@ -256,6 +335,29 @@ export default function PlayerProfile({ session, onBack, playerId: adminPlayerId
       setError('Something went wrong loading your profile.')
       setLoading(false)
     }
+  }
+
+  // ── Round detail (4.3) ──────────────────────────────────────────────────────
+  async function toggleRound(rd) {
+    const next = expandedRoundId === rd.id ? null : rd.id
+    setExpandedRoundId(next)
+    if (!next || rd.isPenalty || !skinsEnabled || skinsByRound[rd.id] !== undefined) return
+    // Skins for that night: everyone's verified scores + in_skins flags.
+    const [{ data: evtScores }, { data: skinPlayers }] = await Promise.all([
+      supabase.from('scores').select('player_id, hole_scores')
+        .eq('event_id', rd.eventId).eq('location_id', locationId)
+        .eq('entry_type', 'played').eq('status', 'verified'),
+      supabase.from('players').select('id, in_skins').eq('location_id', locationId),
+    ])
+    const inSkins = new Set((skinPlayers || []).filter(p => p.in_skins).map(p => p.id))
+    if (!inSkins.has(player.id)) { setSkinsByRound(prev => ({ ...prev, [rd.id]: null })); return }
+    const scoreMap = {}
+    ;(evtScores || []).forEach(s => {
+      if (inSkins.has(s.player_id) && Array.isArray(s.hole_scores)) scoreMap[s.player_id] = s.hole_scores
+    })
+    const skins = calcSkins(scoreMap, rd.holeScores.length)
+    const won = Object.entries(skins).filter(([, pid]) => pid === player.id).map(([h]) => Number(h))
+    setSkinsByRound(prev => ({ ...prev, [rd.id]: won }))
   }
 
   // ── Stat helpers ────────────────────────────────────────────────────────────
@@ -736,31 +838,39 @@ export default function PlayerProfile({ session, onBack, playerId: adminPlayerId
           <div style={styles.card}>
             <div style={styles.cardTitle}>RECENT ROUNDS</div>
             {[...rounds].reverse().slice(0, 8).map(rd => (
-              <div key={rd.id} style={{ ...styles.roundRow, ...(rd.isPenalty ? styles.roundRowPenalty : {}) }}>
-                <div style={styles.roundInfo}>
-                  <div style={styles.roundName}>
-                    {rd.weekNumber ? `Wk ${rd.weekNumber} — ` : ''}{rd.eventName}
-                    {rd.isPenalty && (
-                      <span style={styles.roundPenaltyPill}>Missed</span>
+              <div key={rd.id}>
+                <div
+                  style={{ ...styles.roundRow, ...(rd.isPenalty ? styles.roundRowPenalty : {}), cursor: rd.isPenalty ? 'default' : 'pointer' }}
+                  onClick={() => !rd.isPenalty && toggleRound(rd)}
+                >
+                  <div style={styles.roundInfo}>
+                    <div style={styles.roundName}>
+                      {rd.weekNumber ? `Wk ${rd.weekNumber} — ` : ''}{rd.eventName}
+                      {rd.isPenalty && (
+                        <span style={styles.roundPenaltyPill}>Missed</span>
+                      )}
+                    </div>
+                    <div style={styles.roundDate}>
+                      {rd.isPenalty
+                        ? 'Missed week — penalty applied'
+                        : (rd.startDate
+                            ? formatLocalDate(rd.startDate, { weekday: 'short', month: 'short', day: 'numeric' })
+                            : 'No date')}
+                    </div>
+                  </div>
+                  <div style={styles.roundScores}>
+                    <div style={styles.roundGross}>{rd.gross ?? '—'}</div>
+                    <div style={styles.roundNet}>Net {rd.net ?? '—'}</div>
+                    {!rd.isPenalty && (
+                      <div style={{ ...styles.roundVsPar, color: vsParColor(rd.vsPar) }}>
+                        {vsParLabel(rd.vsPar)}
+                      </div>
                     )}
                   </div>
-                  <div style={styles.roundDate}>
-                    {rd.isPenalty
-                      ? 'Missed week — penalty applied'
-                      : (rd.startDate
-                          ? formatLocalDate(rd.startDate, { weekday: 'short', month: 'short', day: 'numeric' })
-                          : 'No date')}
-                  </div>
                 </div>
-                <div style={styles.roundScores}>
-                  <div style={styles.roundGross}>{rd.gross ?? '—'}</div>
-                  <div style={styles.roundNet}>Net {rd.net ?? '—'}</div>
-                  {!rd.isPenalty && (
-                    <div style={{ ...styles.roundVsPar, color: vsParColor(rd.vsPar) }}>
-                      {vsParLabel(rd.vsPar)}
-                    </div>
-                  )}
-                </div>
+                {expandedRoundId === rd.id && !rd.isPenalty && (
+                  <RoundDetail rd={rd} skinsWon={skinsByRound[rd.id]} skinsEnabled={skinsEnabled} />
+                )}
               </div>
             ))}
           </div>
