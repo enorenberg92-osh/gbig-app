@@ -7,8 +7,16 @@ import { Button, Toast, EmptyState } from '../ui'
 import { formatLocalDate } from '../../lib/dateUtils'
 import { mutationErrorMessage } from '../../lib/rpcErrors'
 
-const EMPTY_FORM = { name: '', num_weeks: '', start_date: '', is_active: false }
+const EMPTY_FORM = { name: '', num_weeks: '', start_date: '', is_active: false, default_format: 'stroke' }
 const FEATURE_KEYS = ['friends', 'events', 'skins', 'subs', 'news']
+const FORMAT_OPTIONS = [
+  ['stroke',           'Stroke play'],
+  ['match_team',       'Team match play'],
+  ['match_individual', 'Individual match play'],
+  ['stableford',       'Stableford'],
+  ['scramble',         'Scramble'],
+  ['best_ball',        'Best ball'],
+]
 
 export default function AdminLeague() {
   const { locationId } = useLocation()
@@ -85,6 +93,7 @@ export default function AdminLeague() {
       num_weeks:  parseInt(form.num_weeks) || null,
       start_date: form.start_date || null,
       is_active:  form.is_active,
+      default_format: form.default_format,
     }
     let error
     if (editing) {
@@ -164,6 +173,7 @@ export default function AdminLeague() {
       num_weeks:  String(league.num_weeks || ''),
       start_date: league.start_date || '',
       is_active:  league.is_active || false,
+      default_format: league.default_format || 'stroke',
     })
     setEditing(league)
     setShowForm(true)
@@ -357,6 +367,20 @@ export default function AdminLeague() {
               </div>
             </div>
             <div style={s.hint}>The start date is Week 1. Each subsequent week begins 7 days later.</div>
+
+            <div style={{ ...s.fieldGroup, maxWidth: 260 }}>
+              <label style={s.label}>Default Scoring Format</label>
+              <select
+                style={s.input}
+                value={form.default_format}
+                onChange={e => setForm(f => ({ ...f, default_format: e.target.value }))}
+              >
+                {FORMAT_OPTIONS.map(([v, label]) => (
+                  <option key={v} value={v}>{label}</option>
+                ))}
+              </select>
+              <div style={s.hint}>New weeks use this format unless overridden on the event.</div>
+            </div>
 
             {/* Display on website toggle */}
             <div

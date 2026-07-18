@@ -27,6 +27,7 @@ export default function AdminCourses() {
   const [numHoles, setNumHoles]     = useState(DEFAULT_HOLES)
   const [pars, setPars]             = useState(emptyPars(DEFAULT_HOLES))
   const [startHole, setStartHole]   = useState(1) // 1 for front 9, 10 for back 9
+  const [strokeIndex, setStrokeIndex] = useState(emptyPars(DEFAULT_HOLES)) // hole difficulty rank, optional
 
   useEffect(() => { if (locationId) load() }, [locationId])
 
@@ -48,7 +49,16 @@ export default function AdminCourses() {
   function handleNumHolesChange(n) {
     setNumHoles(n)
     setPars(emptyPars(n))
+    setStrokeIndex(emptyPars(n))
     setStartHole(n === 9 ? 1 : 1)
+  }
+
+  function updateStrokeIndex(idx, val) {
+    setStrokeIndex(prev => {
+      const updated = [...prev]
+      updated[idx] = val
+      return updated
+    })
   }
 
   function updatePar(idx, val) {
@@ -67,6 +77,7 @@ export default function AdminCourses() {
     setCourseName('')
     setNumHoles(DEFAULT_HOLES)
     setPars(emptyPars(DEFAULT_HOLES))
+    setStrokeIndex(emptyPars(DEFAULT_HOLES))
     setStartHole(1)
     setEditing(null)
     setShowForm(false)
@@ -75,8 +86,11 @@ export default function AdminCourses() {
   function startEdit(course) {
     setCourseName(course.name || '')
     const hp = course.hole_pars || []
-    setNumHoles(course.num_holes || hp.length || DEFAULT_HOLES)
-    setPars(hp.length ? hp.map(String) : emptyPars(course.num_holes || DEFAULT_HOLES))
+    const holes = course.num_holes || hp.length || DEFAULT_HOLES
+    setNumHoles(holes)
+    setPars(hp.length ? hp.map(String) : emptyPars(holes))
+    const si = course.stroke_index || []
+    setStrokeIndex(si.length ? si.map(String) : emptyPars(holes))
     setStartHole(course.start_hole || 1)
     setEditing(course)
     setShowForm(true)
@@ -91,6 +105,22 @@ export default function AdminCourses() {
       showToast(`Enter a whole-number par from 3 to 6 for all ${numHoles} holes.`, 'error')
       return
     }
+    // Stroke index is optional, but if any hole has one, every hole needs one
+    // and together they must rank each hole exactly once (1..numHoles).
+    const rawIndex = strokeIndex.map(v => String(v).trim())
+    const anyIndex = rawIndex.some(v => v !== '')
+    let parsedIndex = null
+    if (anyIndex) {
+      parsedIndex = rawIndex.map(v => parseInt(v, 10))
+      const unique = new Set(parsedIndex)
+      const valid = parsedIndex.length === numHoles &&
+        parsedIndex.every(n => Number.isInteger(n) && n >= 1 && n <= numHoles) &&
+        unique.size === numHoles
+      if (!valid) {
+        showToast(`Stroke index must use each rank 1–${numHoles} exactly once (or leave every hole blank).`, 'error')
+        return
+      }
+    }
     setSaving(true)
 
     const payload = {
@@ -99,6 +129,7 @@ export default function AdminCourses() {
       start_hole: startHole,
       hole_pars:  parsedPars,
       total_par:  parsedPars.reduce((s, p) => s + p, 0),
+      stroke_index: parsedIndex,
     }
 
     let error
@@ -250,6 +281,39 @@ export default function AdminCourses() {
               </div>
               <p style={styles.holeHint}>
                 Tap each hole to set the par (3, 4, or 5). Default is 4 if left blank.
+              </p>
+            </div>
+
+            {/* Stroke Index (optional) */}
+            <div style={styles.fieldGroup}>
+              <label style={styles.label}>Stroke Index (optional)</label>
+              <div style={styles.holeGrid}>
+                {strokeIndex.map((si, idx) => {
+                  const holeNum = startHole + idx
+                  return (
+                    <div key={idx} style={styles.holeCell}>
+                      <div style={styles.holeCellNum}>H{holeNum}</div>
+                      <input
+                        type="number"
+                        min="1"
+                        max={numHoles}
+                        value={si}
+                        onChange={e => updateStrokeIndex(idx, e.target.value)}
+                        placeholder="—"
+                        style={{
+                          ...styles.holeInput,
+                          borderColor: si ? 'var(--green)' : 'var(--gray-200)',
+                          fontWeight: si ? 700 : 400,
+                        }}
+                      />
+                    </div>
+                  )
+                })}
+              </div>
+              <p style={styles.holeHint}>
+                Rank each hole by difficulty: 1 = hardest, {numHoles} = easiest. Match and
+                Stableford formats allocate handicap strokes by this ranking. Leave all blank
+                to spread strokes evenly across holes.
               </p>
             </div>
 

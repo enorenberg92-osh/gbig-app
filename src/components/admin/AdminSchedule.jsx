@@ -18,8 +18,53 @@ const EMPTY_FORM = {
   hole_event_hole: '',
   hole_event_name: '',
   is_bye: false,
+  format: '',            // '' = league default (server resolves on create)
+  points_win: '2',
+  points_tie: '1',
+  points_loss: '0',
+  allowance_pct: '100',
+  balls_counted: '1',
+  team_handicap_pct: '35',
+  quota_basis: 'none',
+  no_show: 'forfeit',
 }
 const STATUS_OPTIONS = ['draft', 'open', 'cancelled']
+
+const FORMAT_OPTIONS = [
+  ['stroke',           'Stroke play'],
+  ['match_team',       'Team match play'],
+  ['match_individual', 'Individual match play'],
+  ['stableford',       'Stableford'],
+  ['scramble',         'Scramble'],
+  ['best_ball',        'Best ball'],
+]
+export const FORMAT_LABELS = Object.fromEntries(FORMAT_OPTIONS)
+
+function numOr(v, fallback) {
+  const n = parseFloat(v)
+  return Number.isFinite(n) ? n : fallback
+}
+
+// Builds the versioned config the server validates. Only keys the chosen
+// format accepts are included — the validator rejects everything else.
+function buildFormatConfig(f) {
+  const fmt = f.format || 'stroke'
+  const cfg = { version: 1 }
+  if (fmt !== 'stroke') cfg.no_show = f.no_show
+  if (fmt === 'match_team' || fmt === 'match_individual') {
+    cfg.points_win = numOr(f.points_win, 2)
+    cfg.points_tie = numOr(f.points_tie, 1)
+    cfg.points_loss = numOr(f.points_loss, 0)
+    cfg.allowance_pct = numOr(f.allowance_pct, 100)
+  }
+  if (fmt === 'best_ball') {
+    cfg.balls_counted = numOr(f.balls_counted, 1)
+    cfg.allowance_pct = numOr(f.allowance_pct, 100)
+  }
+  if (fmt === 'scramble') cfg.team_handicap_pct = numOr(f.team_handicap_pct, 35)
+  if (fmt === 'stableford') cfg.quota_basis = f.quota_basis
+  return cfg
+}
 
 export default function AdminSchedule() {
   const { locationId, timezone } = useLocation()
@@ -90,6 +135,11 @@ export default function AdminSchedule() {
       hole_event_name: form.is_bye ? null : (form.hole_event_name.trim() || null),
       is_bye: form.is_bye,
     }
+    // '' on a new event = inherit league default (omit both keys).
+    if (form.format) {
+      payload.format = form.format
+      payload.format_config = buildFormatConfig(form)
+    }
 
     const { error } = await supabase.rpc('admin_upsert_event', {
       p_event_id: editing?.id || null,
@@ -151,6 +201,7 @@ export default function AdminSchedule() {
   }
 
   function startEdit(event) {
+    const cfg = event.format_config || {}
     setForm({
       name: event.name || '',
       start_date: event.start_date ? event.start_date.split('T')[0] : '',
@@ -161,6 +212,15 @@ export default function AdminSchedule() {
       hole_event_hole: event.hole_event_hole != null ? String(event.hole_event_hole) : '',
       hole_event_name: event.hole_event_name || '',
       is_bye: event.is_bye || false,
+      format: event.format || 'stroke',
+      points_win: String(cfg.points_win ?? 2),
+      points_tie: String(cfg.points_tie ?? 1),
+      points_loss: String(cfg.points_loss ?? 0),
+      allowance_pct: String(cfg.allowance_pct ?? 100),
+      balls_counted: String(cfg.balls_counted ?? 1),
+      team_handicap_pct: String(cfg.team_handicap_pct ?? 35),
+      quota_basis: cfg.quota_basis || 'none',
+      no_show: cfg.no_show || 'forfeit',
     })
     setEditing(event)
     setShowForm(true)
@@ -317,6 +377,102 @@ export default function AdminSchedule() {
               </div>
             </div>}
 
+            {/* Format (hidden for bye weeks) */}
+            {!form.is_bye && (
+              <div style={styles.holeEventBox}>
+                <div style={styles.holeEventTitle}>Scoring Format</div>
+                <div style={styles.row}>
+                  <div style={{ ...styles.fieldGroup, flex: 1 }}>
+                    <label style={styles.label}>Format</label>
+                    <select
+                      style={styles.select}
+                      value={form.format}
+                      onChange={e => setForm(f => ({ ...f, format: e.target.value }))}
+                    >
+                      {!editing && <option value="">League default</option>}
+                      {FORMAT_OPTIONS.map(([v, label]) => (
+                        <option key={v} value={v}>{label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  {form.format && form.format !== 'stroke' && (
+                    <div style={{ ...styles.fieldGroup, flex: 1 }}>
+                      <label style={styles.label}>No-show policy</label>
+                      <select
+                        style={styles.select}
+                        value={form.no_show}
+                        onChange={e => setForm(f => ({ ...f, no_show: e.target.value }))}
+                      >
+                        <option value="forfeit">Forfeit (opponent wins)</option>
+                        <option value="zero_points">Zero points</option>
+                        <option value="half_points">Half points</option>
+                      </select>
+                    </div>
+                  )}
+                </div>
+                {(form.format === 'match_team' || form.format === 'match_individual') && (
+                  <div style={styles.row}>
+                    {[['points_win', 'Win pts'], ['points_tie', 'Tie pts'], ['points_loss', 'Loss pts'], ['allowance_pct', 'Hcp %']].map(([key, label]) => (
+                      <div key={key} style={{ ...styles.fieldGroup, flex: 1 }}>
+                        <label style={styles.label}>{label}</label>
+                        <input
+                          type="number" min="0" style={styles.input}
+                          value={form[key]}
+                          onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {form.format === 'best_ball' && (
+                  <div style={styles.row}>
+                    <div style={{ ...styles.fieldGroup, flex: 1 }}>
+                      <label style={styles.label}>Balls counted</label>
+                      <select
+                        style={styles.select}
+                        value={form.balls_counted}
+                        onChange={e => setForm(f => ({ ...f, balls_counted: e.target.value }))}
+                      >
+                        <option value="1">Best 1 of 2</option>
+                        <option value="2">Both (aggregate)</option>
+                      </select>
+                    </div>
+                    <div style={{ ...styles.fieldGroup, flex: 1 }}>
+                      <label style={styles.label}>Hcp %</label>
+                      <input
+                        type="number" min="0" max="100" style={styles.input}
+                        value={form.allowance_pct}
+                        onChange={e => setForm(f => ({ ...f, allowance_pct: e.target.value }))}
+                      />
+                    </div>
+                  </div>
+                )}
+                {form.format === 'scramble' && (
+                  <div style={{ ...styles.fieldGroup, maxWidth: 160 }}>
+                    <label style={styles.label}>Team hcp %</label>
+                    <input
+                      type="number" min="0" max="100" style={styles.input}
+                      value={form.team_handicap_pct}
+                      onChange={e => setForm(f => ({ ...f, team_handicap_pct: e.target.value }))}
+                    />
+                  </div>
+                )}
+                {form.format === 'stableford' && (
+                  <div style={{ ...styles.fieldGroup, maxWidth: 220 }}>
+                    <label style={styles.label}>Quota basis</label>
+                    <select
+                      style={styles.select}
+                      value={form.quota_basis}
+                      onChange={e => setForm(f => ({ ...f, quota_basis: e.target.value }))}
+                    >
+                      <option value="none">No quota (raw points)</option>
+                      <option value="handicap">Handicap quota (36 − hcp)</option>
+                    </select>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Notes */}
             <div style={styles.fieldGroup}>
               <label style={styles.label}>Notes (optional)</label>
@@ -449,6 +605,9 @@ export default function AdminSchedule() {
                   )}
                   {isBye && (
                     <div style={styles.eventMeta}>{formatDateRange(evt.start_date, evt.end_date)}</div>
+                  )}
+                  {!isBye && evt.format && evt.format !== 'stroke' && (
+                    <div style={styles.holeEventTag}>{FORMAT_LABELS[evt.format] || evt.format}</div>
                   )}
                   {!isBye && evt.notes && (
                     <div style={styles.notesLine}>{evt.notes}</div>
