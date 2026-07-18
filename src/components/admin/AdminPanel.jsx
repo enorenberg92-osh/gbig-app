@@ -18,6 +18,7 @@ import AdminSkins     from './AdminSkins'
 import AdminHandicap  from './AdminHandicap'
 import AdminLeague    from './AdminLeague'
 import AdminStandings from './AdminStandings'
+import AdminCup       from './AdminCup'
 import { isFutureDate } from '../../lib/dateUtils'
 import { loadWorkingLeague } from '../../lib/leagueUtils'
 import { useFeature } from '../../context/FeatureContext'
@@ -34,6 +35,7 @@ const SECTIONS = [
   { id: 'events',     label: 'Events',       Icon: CalendarPlus },
   { id: 'courses',    label: 'Courses',      Icon: Map },
   { id: 'skins',      label: 'Skins',        Icon: Target },
+  { id: 'cup',        label: 'Cup',          Icon: Trophy },
   { id: 'alerts',     label: 'Alerts',       Icon: Bell },
 ]
 
@@ -53,8 +55,11 @@ export default function AdminPanel({ session, onBack }) {
   const activeSection = sectionFromPath(routerLocation.pathname)
   const subsEnabled = useFeature('subs')
   const skinsEnabled = useFeature('skins')
+  const cupsEnabled = useFeature('cups')
   const visibleSections = SECTIONS.filter(section =>
-    (section.id !== 'subs' || subsEnabled) && (section.id !== 'skins' || skinsEnabled)
+    (section.id !== 'subs' || subsEnabled)
+    && (section.id !== 'skins' || skinsEnabled)
+    && (section.id !== 'cup' || cupsEnabled)
   )
 
   const [isDesktop, setIsDesktop] = useState(() => window.innerWidth >= 768)
@@ -144,6 +149,7 @@ export default function AdminPanel({ session, onBack }) {
       <Route path="events"     element={<AdminEvents />} />
       <Route path="courses"    element={<AdminCourses />} />
       <Route path="skins"      element={skinsEnabled ? <AdminSkins activeEventId={activeEventId} onEventChange={handleEventChange} /> : <Navigate to="/league/admin/dashboard" replace />} />
+      <Route path="cup"        element={cupsEnabled ? <AdminCup /> : <Navigate to="/league/admin/dashboard" replace />} />
       <Route path="alerts"     element={<AdminAlerts />} />
       <Route path="*"          element={<Navigate to="/league/admin/dashboard" replace />} />
     </Routes>

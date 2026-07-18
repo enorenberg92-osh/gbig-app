@@ -8,7 +8,7 @@ import { formatLocalDate } from '../../lib/dateUtils'
 import { mutationErrorMessage } from '../../lib/rpcErrors'
 
 const EMPTY_FORM = { name: '', num_weeks: '', start_date: '', is_active: false, default_format: 'stroke' }
-const FEATURE_KEYS = ['friends', 'events', 'skins', 'subs', 'news']
+const FEATURE_KEYS = ['friends', 'events', 'skins', 'subs', 'news', 'cups']
 const FORMAT_OPTIONS = [
   ['stroke',           'Stroke play'],
   ['match_team',       'Team match play'],
