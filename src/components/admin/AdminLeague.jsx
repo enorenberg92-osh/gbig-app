@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { Calendar, Globe, Check, X, Plus, Inbox } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useLocation } from '../../context/LocationContext'
@@ -30,6 +30,16 @@ export default function AdminLeague() {
   const [toast, setToast]           = useState(null)
   const [weekPreview, setWeekPreview] = useState([])
   const [dialog, setDialog]           = useState(null)
+  const formRef = useRef(null)
+
+  // The create/edit form renders below the league list + settings cards, which
+  // grew long enough that opening it looked like a dead button. Scroll it into
+  // view whenever it opens (same pattern as AdminSchedule).
+  useEffect(() => {
+    if (showForm && formRef.current) {
+      formRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+  }, [showForm, editing])
 
   useEffect(() => { if (locationId) loadLeagues() }, [locationId])
 
@@ -525,7 +535,7 @@ export default function AdminLeague() {
 
       {/* ── Create / Edit form ────────────────────────────────────────────── */}
       {showForm && (
-        <div style={s.card}>
+        <div ref={formRef} style={s.card}>
           <h3 style={s.formTitle}>{editing ? `Edit — ${editing.name}` : 'New League'}</h3>
           <form onSubmit={handleSave} style={s.form}>
 
