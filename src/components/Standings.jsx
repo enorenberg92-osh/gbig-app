@@ -19,6 +19,7 @@ export default function Standings({ session, onBack, adminMode = false }) {
   const [segments, setSegments]           = useState([])
   const [segmentIdx, setSegmentIdx]       = useState(-1)   // -1 = full season
   const [hasPoints, setHasPoints]         = useState(false)
+  const [weekMatchups, setWeekMatchups]   = useState([])
 
   // ── 1. On mount, fetch the event list ────────────────────────────
   useEffect(() => { if (locationId) loadEvents() }, [locationId])
@@ -54,7 +55,7 @@ export default function Standings({ session, onBack, adminMode = false }) {
     setSegments(Array.isArray(league.segments) ? league.segments : [])
     const { data, error } = await supabase
       .from('events')
-      .select('id, name, week_number, start_date, status')
+      .select('id, name, week_number, start_date, status, format')
       .eq('location_id', locationId)
       .eq('league_id', league.id)
       .neq('is_bye', true)
@@ -80,18 +81,30 @@ export default function Standings({ session, onBack, adminMode = false }) {
     setLoading(true)
     setError(null)
 
-    const [scoresRes, playersRes, teamsRes, rosterRes] = await Promise.all([
+    const [scoresRes, playersRes, teamsRes, rosterRes, matchupsRes] = await Promise.all([
       supabase.from('scores')
-        .select('id, player_id, team_id, event_id, gross_total, net_total, handicap_used, entry_type, status, created_at')
+        .select('id, player_id, team_id, event_id, gross_total, net_total, handicap_used, entry_type, status, created_at, format_points')
         .eq('event_id', eventId)
         .eq('location_id', locationId)
         .eq('status', 'verified'),
       supabase.from('players').select('id, name, first_name, last_name, handicap').eq('location_id', locationId),
       supabase.from('teams').select('id, name').eq('location_id', locationId).eq('league_id', leagueId),
       supabase.from('roster_at').select('team_id, team_name, player_id').eq('event_id', eventId),
+      supabase.from('matchups').select('*').eq('event_id', eventId),
     ])
 
     if (scoresRes.error) { setError(scoresRes.error.message); setLoading(false); return }
+
+    // Resolve matchup side names for the week's matchup card.
+    const teamNameById = {}
+    ;(teamsRes.data || []).forEach(t => { teamNameById[t.id] = t.name })
+    const playerNameById = {}
+    ;(playersRes.data || []).forEach(p => { playerNameById[p.id] = `${p.first_name || ''} ${p.last_name || ''}`.trim() || p.name })
+    setWeekMatchups((matchupsRes.data || []).map(m => ({
+      ...m,
+      homeName: teamNameById[m.home_team_id] || playerNameById[m.home_player_id] || '?',
+      awayName: teamNameById[m.away_team_id] || playerNameById[m.away_player_id] || '?',
+    })))
 
     const teamRows = buildTeamRows(
       scoresRes.data || [], playersRes.data || [], hydrateRosterTeams(teamsRes.data || [], rosterRes.data || []), false
@@ -250,6 +263,7 @@ export default function Standings({ session, onBack, adminMode = false }) {
           teamNet:   (p1Net   ?? 0) + (p2Net   ?? 0),
           p1Hcp: p1?.handicap ?? null,
           p2Hcp: p2?.handicap ?? null,
+          nightResult: s1?.format_points ?? s2?.format_points ?? null,
           // A submitted-or-penalty entry both count as "has a result" — the team
           // should rank above teams with no scores at all.
           hasScore: s1 != null || s2 != null,
@@ -283,6 +297,11 @@ export default function Standings({ session, onBack, adminMode = false }) {
   function medalColor(rank) {
     return ['#FFD700', '#C0C0C0', '#CD7F32'][rank] ?? null
   }
+
+  // Team-of-the-night column (scramble / best ball, once results are computed)
+  const isNightEvent = view === 'week'
+    && ['scramble', 'best_ball'].includes(selectedEvent?.format)
+    && rows.some(r => r.nightResult != null)
 
   const eventLabel = (evt) => {
     const wk  = evt.week_number ? `Wk ${evt.week_number} — ` : ''
@@ -384,6 +403,30 @@ export default function Standings({ session, onBack, adminMode = false }) {
         )}
       </div>
 
+      {/* Weekly matchups (match-play weeks) */}
+      {!loading && view === 'week' && weekMatchups.length > 0 && (
+        <div style={{ ...styles.tableWrap, marginBottom: 0 }}>
+          <div style={styles.tableHeader}>
+            <div style={{ ...styles.thCell, flex: 1 }}>Matchups</div>
+          </div>
+          {weekMatchups.map(m => (
+            <div key={m.id} style={{ ...styles.teamRow, justifyContent: 'space-between' }}>
+              <span style={{ fontSize: 13, color: 'var(--black)' }}>
+                {m.homeName} <span style={{ color: 'var(--gray-400)' }}>vs</span> {m.awayName}
+              </span>
+              {m.status === 'scored' ? (
+                <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--green-dark)' }}>
+                  {Number(m.points_home)}–{Number(m.points_away)}
+                  {m.result?.no_show && <span style={{ fontWeight: 400, color: 'var(--gray-400)' }}> (no-show)</span>}
+                </span>
+              ) : (
+                <span style={{ fontSize: 11, color: 'var(--gray-400)', fontStyle: 'italic' }}>not scored</span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Content */}
       {loading ? (
         <div style={styles.loading}>Loading standings…</div>
@@ -405,6 +448,9 @@ export default function Standings({ session, onBack, adminMode = false }) {
             <div style={{ ...styles.thCell, flex: 1 }}>Team</div>
             {view === 'season' && hasPoints && (
               <div style={{ ...styles.thCell, width: 56, textAlign: 'right' }}>Pts</div>
+            )}
+            {isNightEvent && (
+              <div style={{ ...styles.thCell, width: 56, textAlign: 'right' }}>Team</div>
             )}
             <div style={{ ...styles.thCell, width: 56, textAlign: 'right' }}>Gross</div>
             <div style={{ ...styles.thCell, width: 56, textAlign: 'right' }}>Net</div>
@@ -452,6 +498,11 @@ export default function Standings({ session, onBack, adminMode = false }) {
               {view === 'season' && hasPoints && (
                 <div style={{ ...styles.scoreCell, fontWeight: sortBy === 'points' ? 700 : 400, color: 'var(--green-dark)' }}>
                   {row.points ?? 0}
+                </div>
+              )}
+              {isNightEvent && (
+                <div style={{ ...styles.scoreCell, fontWeight: 700, color: 'var(--green-dark)' }}>
+                  {row.nightResult != null ? Number(row.nightResult) : '—'}
                 </div>
               )}
               <div style={{ ...styles.scoreCell, fontWeight: sortBy === 'gross' ? 700 : 400 }}>

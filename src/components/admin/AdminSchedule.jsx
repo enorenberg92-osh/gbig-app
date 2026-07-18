@@ -97,6 +97,7 @@ export default function AdminSchedule() {
   const [events, setEvents] = useState([])
   const [courses, setCourses] = useState([])
   const [teams, setTeams] = useState([])
+  const [players, setPlayers] = useState([])
   const [matchupsByEvent, setMatchupsByEvent] = useState({})
   const [editingMatchups, setEditingMatchups] = useState(null) // event id
   const [matchupDraft, setMatchupDraft] = useState([])         // [[homeId, awayId], ...]
@@ -126,7 +127,7 @@ export default function AdminSchedule() {
     } catch (leagueError) {
       showToast(leagueError.message, 'error'); setLoading(false); return
     }
-    const [{ data: evtData }, { data: crsData }, { data: teamData }, { data: muData }] = await Promise.all([
+    const [{ data: evtData }, { data: crsData }, { data: teamData }, { data: muData }, { data: playerData }] = await Promise.all([
       supabase
         .from('events')
         .select('*, courses(id, name)')
@@ -149,6 +150,12 @@ export default function AdminSchedule() {
         .select('*')
         .eq('location_id', locationId)
         .eq('league_id', leagueData.id),
+      supabase
+        .from('players')
+        .select('id, name')
+        .eq('location_id', locationId)
+        .neq('is_sub', true)
+        .order('name'),
     ])
     const byEvent = {}
     ;(muData || []).forEach(m => {
@@ -158,6 +165,7 @@ export default function AdminSchedule() {
     setEvents(evtData || [])
     setCourses(crsData || [])
     setTeams(teamData || [])
+    setPlayers(playerData || [])
     setMatchupsByEvent(byEvent)
     setLeague(leagueData)
     setLoading(false)
@@ -272,7 +280,9 @@ export default function AdminSchedule() {
   }
 
   function startEditMatchups(evt) {
-    const existing = (matchupsByEvent[evt.id] || []).map(m => [m.home_team_id, m.away_team_id])
+    const byPlayer = evt.format === 'match_individual'
+    const existing = (matchupsByEvent[evt.id] || []).map(m =>
+      byPlayer ? [m.home_player_id, m.away_player_id] : [m.home_team_id, m.away_team_id])
     setMatchupDraft(existing.length ? existing : [[ '', '' ]])
     setEditingMatchups(evt.id)
   }
@@ -303,9 +313,12 @@ export default function AdminSchedule() {
   }
 
   async function saveMatchups(evt) {
+    const byPlayer = evt.format === 'match_individual'
     const pairs = matchupDraft
       .filter(([h, a]) => h && a)
-      .map(([h, a]) => ({ home_team_id: h, away_team_id: a }))
+      .map(([h, a]) => byPlayer
+        ? { home_player_id: h, away_player_id: a }
+        : { home_team_id: h, away_team_id: a })
     const { error } = await supabase.rpc('admin_set_matchups', { p_event_id: evt.id, p_pairs: pairs })
     if (error) { showToast(mutationErrorMessage(error, 'save matchups'), 'error'); return }
     showToast('Matchups saved.')
@@ -761,18 +774,19 @@ export default function AdminSchedule() {
                       Hole {evt.hole_event_hole}: {evt.hole_event_name}
                     </div>
                   )}
-                  {!isBye && evt.format === 'match_team' && (
+                  {!isBye && (evt.format === 'match_team' || evt.format === 'match_individual') && (
                     <MatchupBlock
                       evt={evt}
                       matchups={matchupsByEvent[evt.id] || []}
-                      teams={teams}
+                      entities={evt.format === 'match_individual' ? players : teams}
+                      byPlayer={evt.format === 'match_individual'}
                       isEditing={editingMatchups === evt.id}
                       draft={matchupDraft}
                       setDraft={setMatchupDraft}
                       onEdit={() => startEditMatchups(evt)}
                       onSave={() => saveMatchups(evt)}
                       onCancel={() => setEditingMatchups(null)}
-                      onAutoSeed={evt.is_playoff ? autoSeedPlayoff : null}
+                      onAutoSeed={evt.is_playoff && evt.format === 'match_team' ? autoSeedPlayoff : null}
                     />
                   )}
                 </div>
@@ -804,8 +818,8 @@ export default function AdminSchedule() {
   )
 }
 
-function MatchupBlock({ evt, matchups, teams, isEditing, draft, setDraft, onEdit, onSave, onCancel, onAutoSeed }) {
-  const teamName = id => teams.find(t => t.id === id)?.name || '?'
+function MatchupBlock({ evt, matchups, entities, byPlayer = false, isEditing, draft, setDraft, onEdit, onSave, onCancel, onAutoSeed }) {
+  const entityName = id => entities.find(t => t.id === id)?.name || '?'
   const closed = evt.status === 'closed'
 
   if (isEditing) {
@@ -822,8 +836,8 @@ function MatchupBlock({ evt, matchups, teams, isEditing, draft, setDraft, onEdit
                   j === i ? (side === 0 ? [e.target.value, pair[1]] : [pair[0], e.target.value]) : pair
                 ))}
               >
-                <option value="">— team —</option>
-                {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                <option value="">{byPlayer ? '— player —' : '— team —'}</option>
+                {entities.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
               </select>
             ))}
             <button type="button" style={muStyles.removeBtn}
@@ -853,7 +867,7 @@ function MatchupBlock({ evt, matchups, teams, isEditing, draft, setDraft, onEdit
       ) : (
         matchups.map(m => (
           <div key={m.id} style={muStyles.row}>
-            <span>{teamName(m.home_team_id)} vs {teamName(m.away_team_id)}</span>
+            <span>{entityName(m.home_team_id || m.home_player_id)} vs {entityName(m.away_team_id || m.away_player_id)}</span>
             {m.status === 'scored' && (
               <span style={muStyles.score}>
                 {Number(m.points_home)}–{Number(m.points_away)}
