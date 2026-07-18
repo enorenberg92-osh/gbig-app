@@ -45,6 +45,31 @@ function numOr(v, fallback) {
   return Number.isFinite(n) ? n : fallback
 }
 
+// Circle-method round robin. Returns array of rounds; each round is an array
+// of [homeId, awayId]. Odd team count → one team sits out each round.
+export function roundRobinRounds(teamIds) {
+  const ids = [...teamIds]
+  if (ids.length < 2) return []
+  if (ids.length % 2 === 1) ids.push(null) // bye slot
+  const n = ids.length
+  const rounds = []
+  const rotation = ids.slice(1)
+  for (let r = 0; r < n - 1; r++) {
+    const left = [ids[0], ...rotation.slice(0, n / 2 - 1)]
+    const right = rotation.slice(n / 2 - 1).reverse()
+    const pairs = []
+    for (let i = 0; i < n / 2; i++) {
+      if (left[i] != null && right[i] != null) {
+        // alternate home/away by round so nobody is always home
+        pairs.push(r % 2 === 0 ? [left[i], right[i]] : [right[i], left[i]])
+      }
+    }
+    rounds.push(pairs)
+    rotation.push(rotation.shift())
+  }
+  return rounds
+}
+
 // Builds the versioned config the server validates. Only keys the chosen
 // format accepts are included — the validator rejects everything else.
 function buildFormatConfig(f) {
@@ -70,6 +95,10 @@ export default function AdminSchedule() {
   const { locationId, timezone } = useLocation()
   const [events, setEvents] = useState([])
   const [courses, setCourses] = useState([])
+  const [teams, setTeams] = useState([])
+  const [matchupsByEvent, setMatchupsByEvent] = useState({})
+  const [editingMatchups, setEditingMatchups] = useState(null) // event id
+  const [matchupDraft, setMatchupDraft] = useState([])         // [[homeId, awayId], ...]
   const [league, setLeague] = useState(null)
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
@@ -96,7 +125,7 @@ export default function AdminSchedule() {
     } catch (leagueError) {
       showToast(leagueError.message, 'error'); setLoading(false); return
     }
-    const [{ data: evtData }, { data: crsData }] = await Promise.all([
+    const [{ data: evtData }, { data: crsData }, { data: teamData }, { data: muData }] = await Promise.all([
       supabase
         .from('events')
         .select('*, courses(id, name)')
@@ -108,9 +137,27 @@ export default function AdminSchedule() {
         .select('id, name')
         .eq('location_id', locationId)
         .order('name'),
+      supabase
+        .from('teams')
+        .select('id, name')
+        .eq('location_id', locationId)
+        .eq('league_id', leagueData.id)
+        .order('created_at'),
+      supabase
+        .from('matchups')
+        .select('*')
+        .eq('location_id', locationId)
+        .eq('league_id', leagueData.id),
     ])
+    const byEvent = {}
+    ;(muData || []).forEach(m => {
+      if (!byEvent[m.event_id]) byEvent[m.event_id] = []
+      byEvent[m.event_id].push(m)
+    })
     setEvents(evtData || [])
     setCourses(crsData || [])
+    setTeams(teamData || [])
+    setMatchupsByEvent(byEvent)
     setLeague(leagueData)
     setLoading(false)
   }
@@ -198,6 +245,45 @@ export default function AdminSchedule() {
         }
       },
     })
+  }
+
+  // ── Matchups ───────────────────────────────────────────────────────────────
+  // ponytail: generator covers team round robin only; individual match pairing
+  // ships with the bracket work in 3.5.
+  async function handleGenerateRoundRobin() {
+    const matchWeeks = events.filter(e => !e.is_bye && e.status !== 'closed' && e.format === 'match_team')
+    if (teams.length < 2) { showToast('Need at least 2 teams to generate matchups.', 'error'); return }
+    if (matchWeeks.length === 0) { showToast('No open/draft weeks with Team match play format.', 'error'); return }
+    const rounds = roundRobinRounds(teams.map(t => t.id))
+    let saved = 0
+    for (let i = 0; i < matchWeeks.length; i++) {
+      const pairs = rounds[i % rounds.length].map(([home, away]) => ({ home_team_id: home, away_team_id: away }))
+      const { error } = await supabase.rpc('admin_set_matchups', {
+        p_event_id: matchWeeks[i].id,
+        p_pairs: pairs,
+      })
+      if (error) { showToast(`Week ${matchWeeks[i].week_number ?? i + 1}: ` + mutationErrorMessage(error, 'set matchups'), 'error'); return }
+      saved++
+    }
+    showToast(`Round robin generated for ${saved} week${saved === 1 ? '' : 's'}.`)
+    loadAll()
+  }
+
+  function startEditMatchups(evt) {
+    const existing = (matchupsByEvent[evt.id] || []).map(m => [m.home_team_id, m.away_team_id])
+    setMatchupDraft(existing.length ? existing : [[ '', '' ]])
+    setEditingMatchups(evt.id)
+  }
+
+  async function saveMatchups(evt) {
+    const pairs = matchupDraft
+      .filter(([h, a]) => h && a)
+      .map(([h, a]) => ({ home_team_id: h, away_team_id: a }))
+    const { error } = await supabase.rpc('admin_set_matchups', { p_event_id: evt.id, p_pairs: pairs })
+    if (error) { showToast(mutationErrorMessage(error, 'save matchups'), 'error'); return }
+    showToast('Matchups saved.')
+    setEditingMatchups(null)
+    loadAll()
   }
 
   function startEdit(event) {
@@ -529,6 +615,18 @@ export default function AdminSchedule() {
         </div>
       )}
 
+      {/* Round-robin generator — shows once any week uses team match play */}
+      {teams.length >= 2 && events.some(e => e.format === 'match_team' && !e.is_bye && e.status !== 'closed') && (
+        <Button
+          variant="secondary"
+          fullWidth
+          onClick={handleGenerateRoundRobin}
+          style={{ background: 'var(--green-xlight)', color: 'var(--green-dark)', borderColor: 'var(--green)', fontWeight: 700 }}
+        >
+          Generate round-robin matchups for match-play weeks
+        </Button>
+      )}
+
       {/* Events List */}
       <div style={styles.card}>
         <div style={styles.cardTitleRow}>
@@ -618,6 +716,19 @@ export default function AdminSchedule() {
                       Hole {evt.hole_event_hole}: {evt.hole_event_name}
                     </div>
                   )}
+                  {!isBye && evt.format === 'match_team' && (
+                    <MatchupBlock
+                      evt={evt}
+                      matchups={matchupsByEvent[evt.id] || []}
+                      teams={teams}
+                      isEditing={editingMatchups === evt.id}
+                      draft={matchupDraft}
+                      setDraft={setMatchupDraft}
+                      onEdit={() => startEditMatchups(evt)}
+                      onSave={() => saveMatchups(evt)}
+                      onCancel={() => setEditingMatchups(null)}
+                    />
+                  )}
                 </div>
                 <div style={styles.eventRight}>
                   <span style={{ ...styles.badge, background: statusInfo.bg, color: statusInfo.color }}>
@@ -645,6 +756,83 @@ export default function AdminSchedule() {
       </div>
     </div>
   )
+}
+
+function MatchupBlock({ evt, matchups, teams, isEditing, draft, setDraft, onEdit, onSave, onCancel }) {
+  const teamName = id => teams.find(t => t.id === id)?.name || '?'
+  const closed = evt.status === 'closed'
+
+  if (isEditing) {
+    return (
+      <div style={muStyles.box}>
+        {draft.map(([home, away], i) => (
+          <div key={i} style={muStyles.editRow}>
+            {[0, 1].map(side => (
+              <select
+                key={side}
+                style={muStyles.select}
+                value={side === 0 ? home : away}
+                onChange={e => setDraft(d => d.map((pair, j) =>
+                  j === i ? (side === 0 ? [e.target.value, pair[1]] : [pair[0], e.target.value]) : pair
+                ))}
+              >
+                <option value="">— team —</option>
+                {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            ))}
+            <button type="button" style={muStyles.removeBtn}
+              onClick={() => setDraft(d => d.filter((_, j) => j !== i))}>✕</button>
+          </div>
+        ))}
+        <div style={muStyles.editActions}>
+          <button type="button" style={muStyles.addBtn} onClick={() => setDraft(d => [...d, ['', '']])}>
+            + Add matchup
+          </button>
+          <button type="button" style={muStyles.saveBtn} onClick={onSave}>Save</button>
+          <button type="button" style={muStyles.cancelBtn} onClick={onCancel}>Cancel</button>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div style={muStyles.box}>
+      {matchups.length === 0 ? (
+        <span style={muStyles.none}>No matchups set</span>
+      ) : (
+        matchups.map(m => (
+          <div key={m.id} style={muStyles.row}>
+            <span>{teamName(m.home_team_id)} vs {teamName(m.away_team_id)}</span>
+            {m.status === 'scored' && (
+              <span style={muStyles.score}>
+                {Number(m.points_home)}–{Number(m.points_away)}
+                {m.result?.no_show && ' (no-show)'}
+              </span>
+            )}
+          </div>
+        ))
+      )}
+      {!closed && (
+        <button type="button" style={muStyles.addBtn} onClick={onEdit}>
+          {matchups.length ? 'Edit matchups' : 'Set matchups'}
+        </button>
+      )}
+    </div>
+  )
+}
+
+const muStyles = {
+  box: { marginTop: 6, padding: '8px 10px', background: 'var(--gray-100)', borderRadius: 8, display: 'flex', flexDirection: 'column', gap: 4 },
+  row: { display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--gray-800)' },
+  score: { fontWeight: 700, color: 'var(--green-dark)' },
+  none: { fontSize: 11, color: 'var(--gray-400)', fontStyle: 'italic' },
+  editRow: { display: 'flex', gap: 6, alignItems: 'center' },
+  select: { flex: 1, padding: '6px 8px', borderRadius: 6, border: '1px solid var(--gray-200)', fontSize: 12, background: 'var(--white)' },
+  removeBtn: { background: 'transparent', border: 'none', color: '#c53030', cursor: 'pointer', fontSize: 12, padding: '0 4px' },
+  editActions: { display: 'flex', gap: 8, marginTop: 4 },
+  addBtn: { background: 'transparent', border: 'none', color: 'var(--green-dark)', cursor: 'pointer', fontSize: 11, fontWeight: 700, padding: '2px 0', textAlign: 'left' },
+  saveBtn: { background: 'var(--green)', border: 'none', color: '#fff', cursor: 'pointer', fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 6 },
+  cancelBtn: { background: 'var(--gray-200)', border: 'none', color: 'var(--gray-800)', cursor: 'pointer', fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 6 },
 }
 
 const styles = {
