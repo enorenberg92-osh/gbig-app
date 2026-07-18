@@ -103,13 +103,13 @@ export default function AlertsPage({ session }) {
         applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
       })
       const json = sub.toJSON()
-      await supabase.from('push_subscriptions').upsert({
-        endpoint:    json.endpoint,
-        p256dh:      json.keys.p256dh,
-        auth_key:    json.keys.auth,
-        user_id:     session?.user?.id || null,
-        location_id: locationId,
-      }, { onConflict: 'endpoint' })
+      const { error } = await supabase.rpc('subscribe_push', {
+        p_endpoint:    json.endpoint,
+        p_p256dh:      json.keys.p256dh,
+        p_auth_key:    json.keys.auth,
+        p_location_id: locationId,
+      })
+      if (error) throw error
       setNotifStatus('subscribed')
     } catch (err) {
       console.error('Push subscribe error:', err)
@@ -124,7 +124,7 @@ export default function AlertsPage({ session }) {
     const reg = await navigator.serviceWorker.ready
     const sub = await reg.pushManager.getSubscription()
     if (sub) {
-      await supabase.from('push_subscriptions').delete().eq('endpoint', sub.endpoint)
+      await supabase.rpc('unsubscribe_push', { p_endpoint: sub.endpoint })
       await sub.unsubscribe()
     }
     setNotifStatus('prompt')
