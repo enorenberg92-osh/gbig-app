@@ -18,6 +18,7 @@ const EMPTY_FORM = {
   hole_event_hole: '',
   hole_event_name: '',
   is_bye: false,
+  is_playoff: false,
   format: '',            // '' = league default (server resolves on create)
   points_win: '2',
   points_tie: '1',
@@ -181,6 +182,7 @@ export default function AdminSchedule() {
       hole_event_hole: form.is_bye ? null : (form.hole_event_hole ? parseInt(form.hole_event_hole, 10) : null),
       hole_event_name: form.is_bye ? null : (form.hole_event_name.trim() || null),
       is_bye: form.is_bye,
+      is_playoff: form.is_bye ? false : form.is_playoff,
     }
     // '' on a new event = inherit league default (omit both keys).
     if (form.format) {
@@ -275,6 +277,31 @@ export default function AdminSchedule() {
     setEditingMatchups(evt.id)
   }
 
+  // Playoff seeding suggestion: rank teams by season match-play points, then
+  // pair 1 v N, 2 v N-1, … Admin can still edit before saving.
+  async function autoSeedPlayoff() {
+    const { data: scored } = await supabase
+      .from('matchups')
+      .select('home_team_id, away_team_id, points_home, points_away')
+      .eq('location_id', locationId)
+      .eq('league_id', league.id)
+      .eq('status', 'scored')
+    const pts = {}
+    teams.forEach(t => { pts[t.id] = 0 })
+    ;(scored || []).forEach(m => {
+      if (!m.home_team_id) return
+      pts[m.home_team_id] = (pts[m.home_team_id] || 0) + Number(m.points_home || 0)
+      pts[m.away_team_id] = (pts[m.away_team_id] || 0) + Number(m.points_away || 0)
+    })
+    const seeded = [...teams].sort((a, b) => (pts[b.id] || 0) - (pts[a.id] || 0))
+    const pairs = []
+    for (let i = 0; i < Math.floor(seeded.length / 2); i++) {
+      pairs.push([seeded[i].id, seeded[seeded.length - 1 - i].id])
+    }
+    setMatchupDraft(pairs.length ? pairs : [['', '']])
+    showToast('Seeded by season points — review and save.')
+  }
+
   async function saveMatchups(evt) {
     const pairs = matchupDraft
       .filter(([h, a]) => h && a)
@@ -298,6 +325,7 @@ export default function AdminSchedule() {
       hole_event_hole: event.hole_event_hole != null ? String(event.hole_event_hole) : '',
       hole_event_name: event.hole_event_name || '',
       is_bye: event.is_bye || false,
+      is_playoff: event.is_playoff || false,
       format: event.format || 'stroke',
       points_win: String(cfg.points_win ?? 2),
       points_tie: String(cfg.points_tie ?? 1),
@@ -411,6 +439,18 @@ export default function AdminSchedule() {
                 }} />
               </div>
             </div>
+
+            {/* Playoff toggle (hidden for bye weeks) */}
+            {!form.is_bye && (
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600, color: 'var(--black)', cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={form.is_playoff}
+                  onChange={e => setForm(f => ({ ...f, is_playoff: e.target.checked }))}
+                />
+                Playoff event (bracket week — seed matchups from standings)
+              </label>
+            )}
 
             {/* Date Range */}
             <div style={styles.row}>
@@ -707,6 +747,11 @@ export default function AdminSchedule() {
                   {!isBye && evt.format && evt.format !== 'stroke' && (
                     <div style={styles.holeEventTag}>{FORMAT_LABELS[evt.format] || evt.format}</div>
                   )}
+                  {!isBye && evt.is_playoff && (
+                    <div style={{ ...styles.holeEventTag, background: 'var(--gold-light, #fff3cd)', color: '#7a5c00', marginLeft: 4 }}>
+                      🏆 Playoff
+                    </div>
+                  )}
                   {!isBye && evt.notes && (
                     <div style={styles.notesLine}>{evt.notes}</div>
                   )}
@@ -727,6 +772,7 @@ export default function AdminSchedule() {
                       onEdit={() => startEditMatchups(evt)}
                       onSave={() => saveMatchups(evt)}
                       onCancel={() => setEditingMatchups(null)}
+                      onAutoSeed={evt.is_playoff ? autoSeedPlayoff : null}
                     />
                   )}
                 </div>
@@ -758,7 +804,7 @@ export default function AdminSchedule() {
   )
 }
 
-function MatchupBlock({ evt, matchups, teams, isEditing, draft, setDraft, onEdit, onSave, onCancel }) {
+function MatchupBlock({ evt, matchups, teams, isEditing, draft, setDraft, onEdit, onSave, onCancel, onAutoSeed }) {
   const teamName = id => teams.find(t => t.id === id)?.name || '?'
   const closed = evt.status === 'closed'
 
@@ -788,6 +834,11 @@ function MatchupBlock({ evt, matchups, teams, isEditing, draft, setDraft, onEdit
           <button type="button" style={muStyles.addBtn} onClick={() => setDraft(d => [...d, ['', '']])}>
             + Add matchup
           </button>
+          {onAutoSeed && (
+            <button type="button" style={muStyles.addBtn} onClick={onAutoSeed}>
+              ⚡ Auto-seed from standings
+            </button>
+          )}
           <button type="button" style={muStyles.saveBtn} onClick={onSave}>Save</button>
           <button type="button" style={muStyles.cancelBtn} onClick={onCancel}>Cancel</button>
         </div>

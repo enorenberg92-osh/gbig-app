@@ -194,6 +194,25 @@ export default function AdminLeague() {
     else { showToast(`${key} ${features[key] ? 'enabled' : 'disabled'}`); loadLeagues() }
   }
 
+  // ── Season segments (working league) ──────────────────────────────────────
+  const [segmentDraft, setSegmentDraft] = useState(null) // null = not editing
+  async function saveSegments() {
+    const cleaned = segmentDraft
+      .filter(seg => seg.name.trim() && parseInt(seg.start_week) >= 1 && parseInt(seg.end_week) >= parseInt(seg.start_week))
+      .map(seg => ({ name: seg.name.trim(), start_week: parseInt(seg.start_week), end_week: parseInt(seg.end_week) }))
+    if (cleaned.length !== segmentDraft.length) {
+      showToast('Each segment needs a name and a valid week range (start ≤ end).', 'error')
+      return
+    }
+    const { error } = await supabase.from('league_config')
+      .update({ segments: cleaned })
+      .eq('id', workingLeague.id).eq('location_id', locationId)
+    if (error) { showToast('Error: ' + error.message, 'error'); return }
+    showToast('Segments saved.')
+    setSegmentDraft(null)
+    loadLeagues()
+  }
+
   if (loading) return <div style={s.loading}>Loading…</div>
 
   return (
@@ -323,6 +342,61 @@ export default function AdminLeague() {
               </button>
             )
           })}
+        </div>
+      </div>
+
+      {/* ── Season segments ───────────────────────────────────────────────── */}
+      <div style={s.card}>
+        <h3 style={s.formTitle}>Season Segments</h3>
+        <div style={s.form}>
+          <div style={s.hint}>
+            Optional week ranges (e.g. First Half / Second Half) with their own standings winner.
+          </div>
+          {!workingLeague ? (
+            <div style={s.hint}>Select a working league to edit segments.</div>
+          ) : segmentDraft === null ? (
+            <>
+              {(workingLeague.segments || []).length === 0
+                ? <div style={s.hint}>No segments defined — standings show the full season.</div>
+                : (workingLeague.segments || []).map((seg, i) => (
+                    <div key={i} style={{ fontSize: 13, color: 'var(--black)' }}>
+                      <strong>{seg.name}</strong> — Weeks {seg.start_week}–{seg.end_week}
+                    </div>
+                  ))}
+              <Button variant="secondary" size="sm" onClick={() =>
+                setSegmentDraft((workingLeague.segments || []).map(seg => ({
+                  name: seg.name, start_week: String(seg.start_week), end_week: String(seg.end_week),
+                })))
+              }>
+                Edit Segments
+              </Button>
+            </>
+          ) : (
+            <>
+              {segmentDraft.map((seg, i) => (
+                <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <input style={{ ...s.input, flex: 2 }} placeholder="Segment name"
+                    value={seg.name}
+                    onChange={e => setSegmentDraft(d => d.map((x, j) => j === i ? { ...x, name: e.target.value } : x))} />
+                  <input style={{ ...s.input, width: 70 }} type="number" min="1" placeholder="From"
+                    value={seg.start_week}
+                    onChange={e => setSegmentDraft(d => d.map((x, j) => j === i ? { ...x, start_week: e.target.value } : x))} />
+                  <input style={{ ...s.input, width: 70 }} type="number" min="1" placeholder="To"
+                    value={seg.end_week}
+                    onChange={e => setSegmentDraft(d => d.map((x, j) => j === i ? { ...x, end_week: e.target.value } : x))} />
+                  <button type="button" style={{ background: 'none', border: 'none', color: '#c53030', cursor: 'pointer' }}
+                    onClick={() => setSegmentDraft(d => d.filter((_, j) => j !== i))}>✕</button>
+                </div>
+              ))}
+              <div style={{ display: 'flex', gap: 8 }}>
+                <Button variant="secondary" size="sm" onClick={() => setSegmentDraft(d => [...d, { name: '', start_week: '', end_week: '' }])}>
+                  + Add Segment
+                </Button>
+                <Button variant="primary" size="sm" onClick={saveSegments}>Save</Button>
+                <Button variant="secondary" size="sm" onClick={() => setSegmentDraft(null)}>Cancel</Button>
+              </div>
+            </>
+          )}
         </div>
       </div>
 

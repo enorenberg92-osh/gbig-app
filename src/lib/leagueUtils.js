@@ -1,7 +1,7 @@
 export async function loadWorkingLeague(supabase, locationId) {
   const { data, error } = await supabase
     .from('league_config')
-    .select('id, name, num_weeks, start_date, is_active, is_working')
+    .select('id, name, num_weeks, start_date, is_active, is_working, segments, default_format')
     .eq('location_id', locationId)
     .eq('is_working', true)
     .maybeSingle()

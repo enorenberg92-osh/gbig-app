@@ -16,6 +16,9 @@ export default function Standings({ session, onBack, adminMode = false }) {
   const [rows, setRows]                   = useState([])
   const [error, setError]                 = useState(null)
   const [leagueId, setLeagueId]           = useState(null)
+  const [segments, setSegments]           = useState([])
+  const [segmentIdx, setSegmentIdx]       = useState(-1)   // -1 = full season
+  const [hasPoints, setHasPoints]         = useState(false)
 
   // ── 1. On mount, fetch the event list ────────────────────────────
   useEffect(() => { if (locationId) loadEvents() }, [locationId])
@@ -27,7 +30,7 @@ export default function Standings({ session, onBack, adminMode = false }) {
     } else {
       loadSeason()
     }
-  }, [view, selectedEvent])   // eslint-disable-line react-hooks/exhaustive-deps
+  }, [view, selectedEvent, segmentIdx])   // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── 3. Re-sort in place when sort toggle changes ─────────────────
   useEffect(() => {
@@ -48,6 +51,7 @@ export default function Standings({ session, onBack, adminMode = false }) {
       setError(leagueError.message); setLoading(false); return
     }
     setLeagueId(league.id)
+    setSegments(Array.isArray(league.segments) ? league.segments : [])
     const { data, error } = await supabase
       .from('events')
       .select('id, name, week_number, start_date, status')
@@ -104,13 +108,16 @@ export default function Standings({ session, onBack, adminMode = false }) {
     // Admins see all events; players only see closed weeks
     if (!leagueId) { setLoading(false); return }
     const { data: eligibleEvents } = adminMode
-      ? await supabase.from('events').select('id').eq('location_id', locationId).eq('league_id', leagueId).in('status', ['open', 'closed'])
-      : await supabase.from('events').select('id').eq('location_id', locationId).eq('league_id', leagueId).eq('status', 'closed')
+      ? await supabase.from('events').select('id, week_number').eq('location_id', locationId).eq('league_id', leagueId).in('status', ['open', 'closed'])
+      : await supabase.from('events').select('id, week_number').eq('location_id', locationId).eq('league_id', leagueId).eq('status', 'closed')
 
-    const ids = (eligibleEvents || []).map(e => e.id)
+    // Segment filter: restrict to the chosen week range.
+    const seg = segmentIdx >= 0 ? segments[segmentIdx] : null
+    const inSegment = e => !seg || (e.week_number != null && e.week_number >= seg.start_week && e.week_number <= seg.end_week)
+    const ids = (eligibleEvents || []).filter(inSegment).map(e => e.id)
     if (ids.length === 0) { setRows([]); setLoading(false); return }
 
-    const [scoresRes, playersRes, teamsRes, rosterRes] = await Promise.all([
+    const [scoresRes, playersRes, teamsRes, rosterRes, matchupsRes] = await Promise.all([
       supabase.from('scores')
         .select('id, player_id, team_id, event_id, gross_total, net_total, entry_type, status, created_at')
         .in('event_id', ids)
@@ -119,13 +126,45 @@ export default function Standings({ session, onBack, adminMode = false }) {
       supabase.from('players').select('id, name, first_name, last_name, handicap').eq('location_id', locationId),
       supabase.from('teams').select('id, name').eq('location_id', locationId).eq('league_id', leagueId),
       supabase.from('roster_at').select('event_id, team_id, team_name, player_id').in('event_id', ids),
+      supabase.from('matchups')
+        .select('event_id, home_team_id, away_team_id, points_home, points_away, status')
+        .in('event_id', ids)
+        .eq('status', 'scored'),
     ])
 
     if (scoresRes.error) { setError(scoresRes.error.message); setLoading(false); return }
 
+    // Match-play points per team: total points + W-T-L record.
+    const pointsByTeam = {}
+    ;(matchupsRes.data || []).forEach(m => {
+      if (!m.home_team_id) return // player-vs-player matchups feed brackets, not team standings
+      const add = (teamId, pts, oppPts) => {
+        if (!pointsByTeam[teamId]) pointsByTeam[teamId] = { points: 0, w: 0, t: 0, l: 0 }
+        const rec = pointsByTeam[teamId]
+        const a = Number(pts) || 0
+        const b = Number(oppPts) || 0
+        rec.points += a
+        if (a > b) rec.w++
+        else if (a < b) rec.l++
+        else rec.t++
+      }
+      add(m.home_team_id, m.points_home, m.points_away)
+      add(m.away_team_id, m.points_away, m.points_home)
+    })
+    setHasPoints(Object.keys(pointsByTeam).length > 0)
+
     const teamRows = buildTeamRows(
       scoresRes.data || [], playersRes.data || [], hydrateRosterTeams(teamsRes.data || [], rosterRes.data || []), true
     )
+    // Merge points; include point-earning teams that have no score rows (all-forfeit edge).
+    const seen = new Set(teamRows.map(r => r.teamId))
+    teamRows.forEach(r => { Object.assign(r, pointsByTeam[r.teamId] || { points: 0, w: 0, t: 0, l: 0 }) })
+    Object.entries(pointsByTeam).forEach(([teamId, rec]) => {
+      if (!seen.has(teamId)) {
+        const team = (teamsRes.data || []).find(t => t.id === teamId)
+        if (team) teamRows.push({ teamId, teamName: team.name, p1Name: '', p2Name: '', teamGross: 0, teamNet: 0, rounds: 0, hasScore: true, ...rec })
+      }
+    })
     setRows(sortRows(teamRows, sortBy))
     setLoading(false)
   }
@@ -221,11 +260,16 @@ export default function Standings({ session, onBack, adminMode = false }) {
     return teamRows
   }
 
-  // Lower = better in golf; teams with no score sink to the bottom
+  // Lower = better in golf (points: higher = better); scoreless teams sink
   function sortRows(rows, by) {
     return [...rows].sort((a, b) => {
       if (!a.hasScore && b.hasScore)  return 1
       if (a.hasScore  && !b.hasScore) return -1
+      if (by === 'points') {
+        return ((b.points || 0) - (a.points || 0))
+          || (a.teamNet - b.teamNet)
+          || a.teamName.localeCompare(b.teamName)
+      }
       return by === 'gross'
         ? (a.teamGross - b.teamGross) || a.teamName.localeCompare(b.teamName)
         : (a.teamNet   - b.teamNet) || a.teamName.localeCompare(b.teamName)
@@ -303,7 +347,25 @@ export default function Standings({ session, onBack, adminMode = false }) {
         <p style={styles.seasonNote}>All weeks included. Players only see completed weeks.</p>
       )}
 
-      {/* Net / Gross sort */}
+      {/* Segment picker */}
+      {view === 'season' && segments.length > 0 && (
+        <div style={styles.eventPicker}>
+          <select
+            style={styles.eventSelect}
+            value={segmentIdx}
+            onChange={e => setSegmentIdx(parseInt(e.target.value, 10))}
+          >
+            <option value={-1}>Full season</option>
+            {segments.map((seg, i) => (
+              <option key={i} value={i}>
+                {seg.name} (Wk {seg.start_week}–{seg.end_week})
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      {/* Net / Gross / Points sort */}
       <div style={styles.sortRow}>
         <span style={styles.sortLabel}>Sort by:</span>
         <button
@@ -314,6 +376,12 @@ export default function Standings({ session, onBack, adminMode = false }) {
           style={{ ...styles.sortBtn, ...(sortBy === 'gross' ? styles.sortActive : {}) }}
           onClick={() => setSortBy('gross')}
         >Gross Score</button>
+        {view === 'season' && hasPoints && (
+          <button
+            style={{ ...styles.sortBtn, ...(sortBy === 'points' ? styles.sortActive : {}) }}
+            onClick={() => setSortBy('points')}
+          >Points</button>
+        )}
       </div>
 
       {/* Content */}
@@ -335,6 +403,9 @@ export default function Standings({ session, onBack, adminMode = false }) {
           <div style={styles.tableHeader}>
             <div style={{ ...styles.thCell, width: 32 }}>#</div>
             <div style={{ ...styles.thCell, flex: 1 }}>Team</div>
+            {view === 'season' && hasPoints && (
+              <div style={{ ...styles.thCell, width: 56, textAlign: 'right' }}>Pts</div>
+            )}
             <div style={{ ...styles.thCell, width: 56, textAlign: 'right' }}>Gross</div>
             <div style={{ ...styles.thCell, width: 56, textAlign: 'right' }}>Net</div>
           </div>
@@ -372,9 +443,17 @@ export default function Standings({ session, onBack, adminMode = false }) {
                       {row.rounds} rnd{row.rounds !== 1 ? 's' : ''}
                     </span>
                   )}
+                  {view === 'season' && hasPoints && (row.w + row.t + row.l) > 0 && (
+                    <span style={styles.roundsBadge}>{row.w}–{row.t}–{row.l}</span>
+                  )}
                 </div>
               </div>
 
+              {view === 'season' && hasPoints && (
+                <div style={{ ...styles.scoreCell, fontWeight: sortBy === 'points' ? 700 : 400, color: 'var(--green-dark)' }}>
+                  {row.points ?? 0}
+                </div>
+              )}
               <div style={{ ...styles.scoreCell, fontWeight: sortBy === 'gross' ? 700 : 400 }}>
                 {row.teamGross || '—'}
               </div>
