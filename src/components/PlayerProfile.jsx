@@ -384,7 +384,9 @@ export default function PlayerProfile({ session, onBack, playerId: adminPlayerId
       const d = byPar[par]
       if (d.total === 0) return null
       const avg = (d.sum / d.total).toFixed(1)
-      const vsAvg = ((d.sum / d.total) - par).toFixed(1)
+      // Round first so -0.04 → 0.0 renders as "0.0", not "+-0.0".
+      const vsNum = Math.round(((d.sum / d.total) - par) * 10) / 10
+      const vsAvg = (vsNum === 0 ? 0 : vsNum).toFixed(1)   // 0 comparison also catches -0
       return {
         par,
         avg,

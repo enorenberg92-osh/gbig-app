@@ -52,7 +52,9 @@ export default function Standings({ session, onBack, adminMode = false }) {
     try {
       league = await loadWorkingLeague(supabase, locationId)
     } catch (leagueError) {
-      setError(leagueError.message); setLoading(false); return
+      // Players can't act on "choose a working league" — show a friendlier line.
+      setError(adminMode ? leagueError.message : 'No active league season yet — check back soon!')
+      setLoading(false); return
     }
     setLeagueId(league.id)
     setSegments(Array.isArray(league.segments) ? league.segments : [])

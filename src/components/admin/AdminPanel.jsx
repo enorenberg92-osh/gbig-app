@@ -77,6 +77,7 @@ export default function AdminPanel({ session, onBack }) {
   // ── Shared active event across all tabs ──────────────────────────────────
   const [activeEventId, setActiveEventId]       = useState(null)
   const [activeEventLabel, setActiveEventLabel] = useState(null)
+  const [activeEventOpen, setActiveEventOpen]   = useState(false)
   const [allEvents, setAllEvents]               = useState([])
 
   useEffect(() => {
@@ -103,13 +104,16 @@ export default function AdminPanel({ session, onBack }) {
     const playable = (evts || []).filter(e => !e.is_bye)
     setAllEvents(playable)
 
-    // Default: the open event, then the first upcoming, then week 1
+    // Default: the open event, then the first upcoming, then the most recent
+    // closed week (completed season), then week 1.
     const open = playable.find(e => e.status === 'open')
     const upcoming = !open && playable.find(e => isFutureDate(e.start_date, timezone))
-    const chosen = open || upcoming || playable[0]
+    const lastClosed = [...playable].reverse().find(e => e.status === 'closed')
+    const chosen = open || upcoming || lastClosed || playable[0]
     if (chosen) {
       setActiveEventId(chosen.id)
       setActiveEventLabel(chosen.week_number != null ? `Wk ${chosen.week_number}` : chosen.name || 'Event')
+      setActiveEventOpen(chosen.status === 'open')
     }
   }
 
@@ -117,7 +121,10 @@ export default function AdminPanel({ session, onBack }) {
   function handleEventChange(eventId) {
     setActiveEventId(eventId)
     const evt = allEvents.find(e => e.id === eventId)
-    if (evt) setActiveEventLabel(evt.week_number != null ? `Wk ${evt.week_number}` : evt.name || 'Event')
+    if (evt) {
+      setActiveEventLabel(evt.week_number != null ? `Wk ${evt.week_number}` : evt.name || 'Event')
+      setActiveEventOpen(evt.status === 'open')
+    }
   }
 
   // Called by AdminDashboard after closing a week (new open event id passed in)
@@ -232,7 +239,7 @@ export default function AdminPanel({ session, onBack }) {
             {activeEventLabel && (
               <div style={ds.activeWeekPill}>
                 <span style={ds.statusDot} />
-                {activeEventLabel} active
+                {activeEventLabel}{activeEventOpen ? ' active' : ''}
               </div>
             )}
           </div>
