@@ -78,7 +78,7 @@ export default function ScoreEntry({ session, onBack }) {
       if (rosterErr || !myRoster) { setError('No team found for your account in this league. Ask your admin.'); setLoading(false); return }
 
       const [{ data: teamRow }, { data: rosterRows }] = await Promise.all([
-        supabase.from('teams').select('id, name').eq('id', myRoster.team_id).eq('league_id', league.id).single(),
+        supabase.from('teams').select('id, name').eq('id', myRoster.team_id).eq('league_id', league.id).eq('location_id', locationId).single(),
         supabase.from('roster_at').select('player_id').eq('event_id', evtRow.id).eq('team_id', myRoster.team_id),
       ])
       const rosterPlayerIds = (rosterRows || []).map(row => row.player_id)

@@ -100,9 +100,9 @@ export default function AdminReports() {
       supabase.from('scores').select('player_id, team_id, gross_total, net_total, entry_type, status, hole_scores, created_at')
         .eq('event_id', evt.id).eq('location_id', locationId).eq('status', 'verified'),
       evt.course_id
-        ? supabase.from('courses').select('name, num_holes, total_par').eq('id', evt.course_id).single()
+        ? supabase.from('courses').select('name, num_holes, total_par').eq('id', evt.course_id).eq('location_id', locationId).single()
         : Promise.resolve({ data: null }),
-      supabase.from('matchups').select('*').eq('event_id', evt.id).eq('status', 'scored'),
+      supabase.from('matchups').select('*').eq('event_id', evt.id).eq('location_id', locationId).eq('status', 'scored'),
     ])
 
     // Team results for the night

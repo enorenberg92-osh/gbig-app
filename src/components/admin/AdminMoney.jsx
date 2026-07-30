@@ -108,7 +108,7 @@ export default function AdminMoney() {
           .eq('event_id', suggestEvent).eq('location_id', locationId)
           .eq('entry_type', 'played').eq('status', 'verified'),
         evt.course_id
-          ? supabase.from('courses').select('num_holes').eq('id', evt.course_id).single()
+          ? supabase.from('courses').select('num_holes').eq('id', evt.course_id).eq('location_id', locationId).single()
           : Promise.resolve({ data: null }),
       ])
       const inSkins = new Set(players.filter(p => p.in_skins).map(p => p.id))
@@ -132,7 +132,7 @@ export default function AdminMoney() {
     if (perPoint > 0) {
       const { data: mus } = await supabase.from('matchups')
         .select('home_team_id, away_team_id, points_home, points_away, status')
-        .eq('event_id', suggestEvent).eq('status', 'scored')
+        .eq('event_id', suggestEvent).eq('location_id', locationId).eq('status', 'scored')
       ;(mus || []).forEach(m => {
         if (!m.home_team_id) return
         if (Number(m.points_home) > 0) out.push({

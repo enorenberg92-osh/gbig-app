@@ -388,7 +388,7 @@ Per league, exactly **one** event can be open at a time — the database itself 
 
 ### 8.3 The Missed-Week Penalty
 
-When a week is published, any rostered player with no approved score gets a penalty entry: **net = their handicap + 7**. It counts in standings (missing a week costs you) but never affects handicaps or skins. If a real score is entered later, the penalty is deleted automatically. On match-play weeks, a side with no verified scores is handled by the week's **no-show policy** (forfeit / zero points / half points).
+When a week is published, any rostered player with no approved score gets a penalty entry: **net = course par + 7** (seven strokes worse than an even net round). It counts in standings (missing a week costs you) but never affects handicaps or skins. If a real score is entered later, the penalty is deleted automatically. On match-play weeks, a side with no verified scores is handled by the week's **no-show policy** (forfeit / zero points / half points).
 
 ### 8.4 Teams and Rosters Are Dated
 

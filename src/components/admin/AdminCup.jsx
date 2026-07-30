@@ -60,7 +60,7 @@ export default function AdminCup() {
 
   async function loadCupDetail(cupId) {
     const [{ data: matchRows }, { data: qualRows, error: qualErr }] = await Promise.all([
-      supabase.from('cup_matches').select('*').eq('cup_id', cupId).order('session').order('match_order'),
+      supabase.from('cup_matches').select('*').eq('cup_id', cupId).eq('location_id', locationId).order('session').order('match_order'),
       supabase.rpc('cup_qualification', { p_cup_id: cupId }),
     ])
     setMatches(matchRows || [])

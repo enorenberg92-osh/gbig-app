@@ -250,13 +250,7 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
     loadEventData(selectedEvent)
 
     // Server-authoritative recalculation is audited by the database.
-    const playerIds = [...new Set(entries.filter(entry => !entry.sub_played).map(entry => entry.player_id))]
-    Promise.all(playerIds.map(id => supabase.rpc('recalculate_player_handicap', { p_player_id: id }).then(({ data }) => data || {})))
-      .then(results => {
-        results.forEach((r, i) => {
-          if (r.updated) console.log(`Handicap updated: player ${playerIds[i]} → ${r.newHcp} (was ${r.oldHcp})`)
-        })
-      })
+    recalcHandicaps(entries.filter(entry => !entry.sub_played).map(entry => entry.player_id))
   }
 
   // Remove a single player's score for the currently-selected event.
@@ -293,30 +287,35 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
         .eq('player_id', subPlayerId)
         .eq('location_id', locationId)
         .neq('status', 'rejected')
-      await Promise.all((mirrorRows || []).map(row =>
+      const mirrorResults = await Promise.all((mirrorRows || []).map(row =>
         supabase.rpc('admin_delete_score', { p_score_id: row.id })
       ))
+      const mirrorErr = mirrorResults.find(r => r.error)?.error
+      if (mirrorErr) {
+        showToast("Score removed, but the sub's mirrored score could not be removed: " + mutationErrorMessage(mirrorErr, 'remove a score'), 'error')
+      }
     }
 
     showToast(`Removed ${player.name}'s score`)
     setEditingTeam(null)
     loadEventData(selectedEvent)
 
-    // Silently recalc handicaps for the player (and the sub if they played).
-    const ids = [player.id, subPlayerId].filter(Boolean)
-    Promise.all(ids.map(id => supabase.rpc('recalculate_player_handicap', { p_player_id: id }).then(({ data }) => data || {})))
-      .then(results => {
-        results.forEach((r, i) => {
-          if (r.updated) console.log(`Handicap updated: player ${ids[i]} → ${r.newHcp} (was ${r.oldHcp})`)
-        })
-      })
+    recalcHandicaps([player.id, subPlayerId])
   }
 
-  // Fire-and-forget handicap recalc for players whose scores just became verified.
+  // Background handicap recalc for players whose scores just changed.
+  // Failures surface as a toast — a silently stale handicap corrupts every
+  // future net score, so the admin must know to hit Recalculate manually.
   function recalcHandicaps(playerIds) {
-    ;[...new Set(playerIds)].filter(Boolean).forEach(id =>
-      supabase.rpc('recalculate_player_handicap', { p_player_id: id })
-    )
+    const ids = [...new Set(playerIds)].filter(Boolean)
+    Promise.all(ids.map(id => supabase.rpc('recalculate_player_handicap', { p_player_id: id })))
+      .then(results => {
+        const failed = results.filter(r => r.error)
+        if (failed.length) {
+          showToast(`Handicap recalculation failed for ${failed.length} player(s) — use Handicaps → Recalculate`, 'error')
+        }
+      })
+      .catch(() => showToast('Handicap recalculation failed — use Handicaps → Recalculate', 'error'))
   }
 
   async function handleReviewScore(score, status) {
