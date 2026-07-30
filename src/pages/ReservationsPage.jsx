@@ -39,12 +39,14 @@ export default function ReservationsPage() {
   const [loaded, setLoaded]   = useState(false)
   const [errored, setErrored] = useState(false)
 
-  // Fallback timeout — if the iframe doesn't fire 'load' within 12s we
-  // surface a gentle error with a tap-to-retry option. Better than
-  // staring at a skeleton forever on a flaky connection.
+  // Fallback timeout — heavy booking pages (Appleton's full /reservations/
+  // page takes ~25s to fire 'load' while painting fine along the way) made a
+  // hard 12s error a false negative. Reveal the iframe instead: the form is
+  // almost always visible and usable well before 'load' completes. The error
+  // state remains for genuine load failures (onError below).
   useEffect(() => {
     const t = setTimeout(() => {
-      if (!loaded) setErrored(true)
+      if (!loaded) setLoaded(true)
     }, 12000)
     return () => clearTimeout(t)
   }, [loaded])
@@ -110,6 +112,7 @@ export default function ReservationsPage() {
         frameBorder="0"
         allow="payment"
         onLoad={() => setLoaded(true)}
+        onError={() => setErrored(true)}
       />
 
       {/*
