@@ -1,10 +1,15 @@
 import React, { useState, useEffect } from 'react'
-import { Megaphone, Inbox, Trash2, Clock } from 'lucide-react'
+import { Megaphone, Inbox, Trash2, Clock, BellRing } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useLocation } from '../../context/LocationContext'
 import { Button, Toast, EmptyState } from '../ui'
+import {
+  DAY_NAMES, DEFAULT_REMINDER_SETTINGS, HOUR_OPTIONS, audienceSummaryText,
+  lastSentLabel, scheduleLabel, sendNowResultText, summarizeAudience,
+} from '../../lib/reminderUtils'
 
 const EDGE_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-alert`
+const REMINDER_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-score-reminders`
 
 function timeAgo(dateStr) {
   const diff  = Date.now() - new Date(dateStr).getTime()
@@ -41,7 +46,7 @@ function computeExpiresAt(choice) {
 }
 
 export default function AdminAlerts() {
-  const { locationId, appName } = useLocation()
+  const { locationId, appName, timezone } = useLocation()
   const [alerts, setAlerts]       = useState([])
   const [subCount, setSubCount]   = useState(null)
   const [loading, setLoading]     = useState(true)
@@ -53,6 +58,12 @@ export default function AdminAlerts() {
   const [expiryChoice, setExpiryChoice] = useState('7d')
   const [deletingId, setDeletingId]     = useState(null)
   const [toast, setToast]         = useState(null)
+  // Weekly "Scores due" reminder: settings + audience preview come from one
+  // admin-only RPC; the form mirrors the saved settings and auto-saves.
+  const [reminder, setReminder]         = useState(null)
+  const [reminderForm, setReminderForm] = useState(DEFAULT_REMINDER_SETTINGS)
+  const [reminderSaving, setReminderSaving]   = useState(false)
+  const [reminderSending, setReminderSending] = useState(false)
 
   const showToast = (msg, type = 'success') => {
     setToast({ msg, type })
@@ -78,7 +89,59 @@ export default function AdminAlerts() {
     setLoading(false)
   }
 
-  useEffect(() => { if (locationId) load() }, [locationId])
+  const loadReminder = async () => {
+    const { data, error } = await supabase.rpc('admin_score_reminder_preview', { p_location_id: locationId })
+    if (error) { setReminder({ error: error.message }); return }
+    setReminder(data)
+    const { enabled, day_of_week, send_hour, audience } = data.settings
+    setReminderForm({ enabled, day_of_week, send_hour, audience })
+  }
+
+  useEffect(() => { if (locationId) { load(); loadReminder() } }, [locationId])
+
+  // Save on every change; revert the form if the server refuses.
+  const saveReminder = async (patch) => {
+    const prev = reminderForm
+    const next = { ...reminderForm, ...patch }
+    setReminderForm(next)
+    setReminderSaving(true)
+    const { error } = await supabase.rpc('admin_set_score_reminder_settings', {
+      p_location_id: locationId,
+      p_enabled:     next.enabled,
+      p_day_of_week: Number(next.day_of_week),
+      p_send_hour:   Number(next.send_hour),
+      p_audience:    next.audience,
+    })
+    setReminderSaving(false)
+    if (error) { setReminderForm(prev); showToast('Could not save: ' + error.message, 'error'); return }
+    showToast(next.enabled ? `Reminder: ${scheduleLabel(next, reminder?.settings?.timezone || timezone)}` : 'Weekly reminder turned off')
+  }
+
+  const handleReminderNow = async () => {
+    const summary = summarizeAudience(reminder?.events, reminderForm.audience)
+    if (!confirm(`Send "Scores due" now to ${summary.players} player${summary.players !== 1 ? 's' : ''} (${summary.devices} device${summary.devices !== 1 ? 's' : ''})?`)) return
+    setReminderSending(true)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const accessToken = session?.access_token
+      if (!accessToken) throw new Error('You are not signed in.')
+      // The function re-checks that this caller administers locationId and
+      // uses the saved audience setting (the form above auto-saves).
+      const res = await fetch(REMINDER_URL, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${accessToken}` },
+        body:    JSON.stringify({ locationId }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error || 'Send failed')
+      showToast(sendNowResultText(json), json.reminders ? 'success' : 'error')
+      loadReminder()
+    } catch (e) {
+      showToast(e.message, 'error')
+    } finally {
+      setReminderSending(false)
+    }
+  }
 
   const handleSend = async () => {
     if (!title.trim() || !body.trim()) { showToast('Title and message are both required.', 'error'); return }
@@ -243,6 +306,105 @@ export default function AdminAlerts() {
         >
           Send to {subCount ?? '…'} Subscriber{subCount !== 1 ? 's' : ''}
         </Button>
+      </div>
+
+      {/* ── Weekly scores reminder ─────────────────────────── */}
+      <div style={styles.section}>
+        <div style={styles.sectionHeader}>
+          <h2 style={styles.sectionTitle}>Weekly Scores Reminder</h2>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={reminderForm.enabled}
+            aria-label="Weekly scores reminder"
+            disabled={!reminder || !!reminder.error || reminderSaving}
+            onClick={() => saveReminder({ enabled: !reminderForm.enabled })}
+            style={{ ...styles.switchTrack, background: reminderForm.enabled ? 'var(--green)' : 'var(--gray-400)' }}
+          >
+            <span style={{ ...styles.switchThumb, transform: reminderForm.enabled ? 'translateX(18px)' : 'translateX(0)' }} />
+          </button>
+        </div>
+
+        <p style={styles.hint}>
+          An automatic "Scores due" push once a week, after league nights. It only
+          goes out while a week is open, and never twice on the same day.
+        </p>
+
+        {!reminder && <p style={styles.loadingText}>Loading…</p>}
+        {reminder?.error && <p style={{ ...styles.pickerHint, color: '#c53030' }}>Could not load reminder settings: {reminder.error}</p>}
+
+        {reminder && !reminder.error && (() => {
+          const tz = reminder.settings?.timezone || timezone
+          const summary = summarizeAudience(reminder.events, reminderForm.audience)
+          const controlsOff = !reminderForm.enabled || reminderSaving
+          return (
+            <>
+              <div style={styles.reminderRow}>
+                <div style={{ flex: 1 }}>
+                  <label style={styles.label}>Day</label>
+                  <select
+                    style={{ ...styles.input, opacity: reminderForm.enabled ? 1 : 0.5 }}
+                    value={reminderForm.day_of_week}
+                    disabled={controlsOff}
+                    onChange={e => saveReminder({ day_of_week: Number(e.target.value) })}
+                  >
+                    {DAY_NAMES.map((d, i) => <option key={d} value={i}>{d}</option>)}
+                  </select>
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={styles.label}>Time</label>
+                  <select
+                    style={{ ...styles.input, opacity: reminderForm.enabled ? 1 : 0.5 }}
+                    value={reminderForm.send_hour}
+                    disabled={controlsOff}
+                    onChange={e => saveReminder({ send_hour: Number(e.target.value) })}
+                  >
+                    {HOUR_OPTIONS.map(h => <option key={h.value} value={h.value}>{h.label}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              <label style={styles.label}>Who gets it</label>
+              <select
+                style={styles.input}
+                value={reminderForm.audience}
+                disabled={reminderSaving}
+                onChange={e => saveReminder({ audience: e.target.value })}
+              >
+                <option value="missing">Players whose team hasn't submitted yet</option>
+                <option value="all">Everyone on the roster this week</option>
+              </select>
+              <p style={styles.pickerHint}>
+                {reminderForm.enabled
+                  ? `Sends ${scheduleLabel(reminderForm, tz)}.`
+                  : 'Automatic reminder is off. You can still send one now.'}
+              </p>
+
+              <div style={styles.reminderPreview}>
+                <BellRing size={14} strokeWidth={2.25} style={{ flexShrink: 0, color: 'var(--green)' }} />
+                <span>{audienceSummaryText(summary, reminderForm.audience)}</span>
+              </div>
+
+              <Button
+                variant="secondary"
+                size="md"
+                fullWidth
+                icon={<BellRing size={15} strokeWidth={2.25} />}
+                loading={reminderSending}
+                loadingText="Sending…"
+                disabled={reminderSaving || summary.players === 0}
+                onClick={handleReminderNow}
+                style={{ marginTop: '12px' }}
+              >
+                Send Reminder Now
+              </Button>
+
+              <p style={{ ...styles.pickerHint, marginTop: '10px' }}>
+                Last sent: {lastSentLabel(reminder.last_sent, tz)}
+              </p>
+            </>
+          )
+        })()}
       </div>
 
       {/* ── History ────────────────────────────────────────── */}
@@ -449,4 +611,39 @@ const styles = {
     lineHeight: 1.4,
   },
   loadingText: { fontSize: '13px', color: 'var(--gray-400)', textAlign: 'center', padding: '20px 0' },
+  // ── Weekly scores reminder ────────────────────────────────────
+  switchTrack: {
+    position: 'relative',
+    width: '42px',
+    height: '24px',
+    borderRadius: '12px',
+    border: 'none',
+    padding: '3px',
+    cursor: 'pointer',
+    flexShrink: 0,
+    transition: 'background 0.15s',
+  },
+  switchThumb: {
+    display: 'block',
+    width: '18px',
+    height: '18px',
+    borderRadius: '50%',
+    background: 'var(--white)',
+    boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+    transition: 'transform 0.15s',
+  },
+  reminderRow: { display: 'flex', gap: '10px' },
+  reminderPreview: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    marginTop: '12px',
+    padding: '10px 12px',
+    borderRadius: 'var(--radius-sm)',
+    background: 'var(--green-xlight)',
+    color: 'var(--green-dark)',
+    fontSize: '13px',
+    fontWeight: 600,
+    lineHeight: 1.4,
+  },
 }
