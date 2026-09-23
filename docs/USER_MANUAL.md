@@ -61,7 +61,10 @@ The installed icon and app name match **your location's** branding.
 Open the **Alerts** tab and tap **Enable Notifications** when prompted. You'll get push notifications for league announcements even when the app is closed.
 
 ### Changing your password
-League tab → **My Profile** → scroll to the password section → enter and confirm a new password (6+ characters) → **Update Password**. Forgot it? Your admin can set a new one for you (Players → edit → Set login password).
+League tab → **My Profile** → scroll to the password section → enter and confirm a new password (6+ characters) → **Update Password**.
+
+### Forgot your password?
+On the League sign-in screen, tap **Forgot password?**, enter the email you sign in with, and tap **Send reset link**. If that email has a league account, an email arrives within a few minutes (check spam). Tap **Choose a new password**, enter it twice (6+ characters), and you're signed in. Links work **once** and expire; if you see "Reset link didn't work", tap **Send me a new link** and use the newest email. Your admin can also set a new password for you (Players → edit → Set login password).
 
 ---
 
@@ -350,7 +353,7 @@ Open a location card →
 In the location editor, enter the email of an **existing account holder** → **Add Admin**. If they've never signed in, have them create an account first, then retry. The person immediately gets the Admin Panel at that location.
 
 ### 7.5 How Hostname Boot Works
-The first label of the hostname (with any `-app` suffix stripped) is the location slug: `gbig-app.vercel.app` → `gbig`, `appleton-app.vercel.app` → `appleton`. The app looks up the slug and boots with that location's branding, timezone, booking page, and data — one deployment serves every location. The resolved location is cached on the device so later launches brand instantly; a transient lookup failure retries rather than ever showing another location's brand. Unknown hostnames fall back to the build's default location.
+The first label of the hostname (with any `-app` suffix stripped) is the location slug: `gbig-app.vercel.app` → `gbig`, `appleton-app.vercel.app` → `appleton`. The server sends each hostname its own page title, home-screen name, app icon, and theme color on the very first request, so installing from `appleton-app…` always captures Appleton's icon and name. The app then looks up the slug and boots with that location's branding, timezone, booking page, and data — one deployment serves every location. A location's hostname never boots as another location: it waits for its own lookup (retrying, with a Retry screen if offline), and caches the result so later launches brand instantly. Only unknown hostnames (e.g. preview links) fall back to the build's default location.
 
 ### 7.6 Onboarding a New Location (full checklist)
 
@@ -448,7 +451,7 @@ The matchup list was added after publishing. Re-save any score for that week (or
 The feature is toggled off. League admins: Leagues → Features. Location defaults: super-admin console.
 
 **Wrong location's branding appeared.**
-Should never happen since July 2026 — the app retries lookups and caches your location. If a device still shows it: hard-refresh once; if the installed home-screen icon is wrong, delete and re-add it (the icon is snapshotted at install time).
+Fixed in September 2026 (the server now brands each location's page and the app never boots with the default location on a location's hostname). A phone that installed the app **before** that fix keeps its old icon and name, because they're snapshotted at install time: delete the home-screen app and add it again from the location's link. On iPhone, open the link in **Safari**, wait for the page to load, then Share → Add to Home Screen.
 
 **Tournament sign-up button greyed out.**
 The tournament is full, sign-ups closed, or your account has no player profile at this location.
