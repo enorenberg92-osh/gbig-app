@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeEmail, parseHandicap, parseSignupCSV, splitName } from './signupImport'
+import {
+  flattenPayload, mapSignupPayload, normalizeEmail, normalizeKey, parseHandicap, parseSignupCSV, splitName,
+} from './signupImport'
 
 const HEADER = 'Name,Phone,Email,HCP,Day,Time,,,,Name,Phone,Email,HCP,Message,x,Entry ID,Date'
 
@@ -37,5 +39,44 @@ describe('signupImport', () => {
 
   it('reports an empty file', () => {
     expect(parseSignupCSV(HEADER).error).toBe('CSV appears empty.')
+  })
+
+  it('maps a WPForms Webhooks JSON body with the documented keys', () => {
+    const { row, error } = mapSignupPayload({
+      p1_name: ' John  Smith ', p1_email: 'John@X.com', p1_phone: '555', p1_handicap: '10.6',
+      p2_name: 'Bob Jones', p2_email: 'bob@x.com', p2_handicap: 8,
+      day: 'Tue', time: '6pm', message: 'See you', entry_id: 42,
+    })
+    expect(error).toBeNull()
+    expect(row.teamName).toBe('Smith/Jones')
+    expect(row.p1).toMatchObject({ fullName: 'John Smith', firstName: 'John', email: 'John@X.com', handicap: 11 })
+    expect(row.p2).toMatchObject({ lastName: 'Jones', handicap: 8 })
+    expect(row).toMatchObject({ slot: 'Tue 6pm', message: 'See you', submissionId: '42' })
+  })
+
+  it('accepts aliases, split names, nested objects and an explicit team name', () => {
+    const { row } = mapSignupPayload({
+      'First Name': 'Pat', 'Last Name': 'One', Email: 'p1@a.test', HCP: '4.5',
+      partner: { name: 'Sam Two', email: 'p2@a.test', handicap: '12' },
+      'Team Name': 'Birdie Hunters',
+    })
+    expect(row.p1).toMatchObject({ fullName: 'Pat One', handicap: 5 })
+    expect(row.p2).toMatchObject({ fullName: 'Sam Two', email: 'p2@a.test', handicap: 12 })
+    expect(row.teamName).toBe('Birdie Hunters')
+  })
+
+  it('flags a body with no player name and truncates long values', () => {
+    expect(mapSignupPayload({ foo: 'bar' }).error).toMatch(/field mapping/)
+    const { row } = mapSignupPayload({ p1_name: 'x'.repeat(500), message: 'm'.repeat(5000) })
+    expect(row.p1.fullName).toHaveLength(200)
+    expect(row.message).toHaveLength(2000)
+  })
+
+  it('normalizes keys and caps flattening depth', () => {
+    expect(normalizeKey(' Player 1 — E-mail ')).toBe('player_1_e_mail')
+    const deep = { a: { b: { c: { d: { e: { f: 'too deep' } } } } }, list: ['x', 'y', { z: 1 }] }
+    const flat = flattenPayload(deep)
+    expect(flat.a_b_c_d_e_f).toBeUndefined()
+    expect(flat.list).toBe('x, y')
   })
 })

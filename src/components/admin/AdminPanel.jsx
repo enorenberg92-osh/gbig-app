@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { Routes, Route, Navigate, useLocation as useRouterLocation, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard, Flag, Medal, Users, Trophy, Activity,
-  Calendar, Repeat2, Map, Target, Bell, CalendarPlus,
+  Calendar, Repeat2, Map, Target, Bell, CalendarPlus, UserPlus,
 } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useLocation } from '../../context/LocationContext'
@@ -22,6 +22,7 @@ import AdminCup       from './AdminCup'
 import AdminMoney     from './AdminMoney'
 import AdminReports   from './AdminReports'
 import AdminTournaments from './AdminTournaments'
+import AdminSignups   from './AdminSignups'
 import { isFutureDate } from '../../lib/dateUtils'
 import { loadWorkingLeague } from '../../lib/leagueUtils'
 import { useFeature } from '../../context/FeatureContext'
@@ -31,6 +32,7 @@ const SECTIONS = [
   { id: 'scores',     label: 'Scores',       Icon: Flag },
   { id: 'standings',  label: 'Standings',    Icon: Medal },
   { id: 'players',    label: 'Players',      Icon: Users },
+  { id: 'signups',    label: 'Sign-ups',     Icon: UserPlus },
   { id: 'league',     label: 'Leagues',      Icon: Trophy },
   { id: 'handicap',   label: 'Handicap',     Icon: Activity },
   { id: 'schedule',   label: 'Schedule',     Icon: Calendar },
@@ -73,6 +75,22 @@ export default function AdminPanel({ session, onBack }) {
   )
 
   const [isDesktop, setIsDesktop] = useState(() => window.innerWidth >= 768)
+
+  // Website sign-ups waiting for review — shown as a badge on the nav item.
+  // Re-checked on every section change so it clears after working the inbox.
+  const [signupsPending, setSignupsPending] = useState(0)
+  async function loadSignupsPending() {
+    const { count, error } = await supabase
+      .from('signup_submissions')
+      .select('id', { count: 'exact', head: true })
+      .eq('location_id', locationId)
+      .eq('status', 'needs_review')
+    setSignupsPending(error ? 0 : (count || 0))  // table missing before migration → no badge
+  }
+  useEffect(() => {
+    loadSignupsPending()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [locationId, activeSection])
 
   // ── Shared active event across all tabs ──────────────────────────────────
   const [activeEventId, setActiveEventId]       = useState(null)
@@ -179,6 +197,7 @@ export default function AdminPanel({ session, onBack }) {
       <Route path="reports"    element={<AdminReports />} />
       <Route path="tournaments" element={tournamentsEnabled ? <AdminTournaments /> : <Navigate to="/league/admin/dashboard" replace />} />
       <Route path="alerts"     element={<AdminAlerts />} />
+      <Route path="signups"    element={<AdminSignups onPendingChange={loadSignupsPending} />} />
       <Route path="*"          element={<Navigate to="/league/admin/dashboard" replace />} />
     </Routes>
   )
@@ -223,6 +242,9 @@ export default function AdminPanel({ session, onBack }) {
                     <Icon size={17} strokeWidth={active ? 2.25 : 1.75} />
                   </span>
                   <span>{label}</span>
+                  {id === 'signups' && signupsPending > 0 && (
+                    <span style={ds.navBadge}>{signupsPending}</span>
+                  )}
                 </button>
               )
             })}
@@ -305,6 +327,9 @@ export default function AdminPanel({ session, onBack }) {
               >
                 <Icon size={14} strokeWidth={2} style={{ verticalAlign: '-2px', marginRight: 5 }} />
                 {label}
+                {id === 'signups' && signupsPending > 0 && (
+                  <span style={ms.navBadge}>{signupsPending}</span>
+                )}
               </button>
             )
           })}
@@ -386,6 +411,17 @@ const ds = {
     borderRadius: '0',
     width: '100%',
     letterSpacing: '0.1px',
+  },
+  navBadge: {
+    marginLeft: 'auto',
+    minWidth: '20px',
+    padding: '1px 6px',
+    borderRadius: '10px',
+    background: 'var(--gold)',
+    color: 'var(--green-dark)',
+    fontSize: '11px',
+    fontWeight: 800,
+    textAlign: 'center',
   },
   navIcon: {
     display: 'flex',
@@ -536,6 +572,19 @@ const ms = {
     gap: '8px',
     padding: '10px 14px',
     width: 'max-content',
+  },
+  navBadge: {
+    display: 'inline-block',
+    marginLeft: '6px',
+    minWidth: '18px',
+    padding: '0 5px',
+    borderRadius: '9px',
+    background: '#c53030',
+    color: '#fff',
+    fontSize: '11px',
+    fontWeight: 700,
+    lineHeight: '18px',
+    textAlign: 'center',
   },
   navChip: {
     padding: '6px 14px',
