@@ -1,5 +1,7 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
+import { useLocation as useRouterLocation } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import { isRateLimitError } from '../lib/passwordReset'
 import { useLocation } from '../context/LocationContext'
 import { useBrand } from '../context/ThemeProvider'
 
@@ -10,6 +12,57 @@ export default function LoginScreen() {
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError]     = useState(null)
+  // 'signin' | 'forgot' (email-only reset form) | 'sent' (neutral confirmation)
+  const [mode, setMode]       = useState('signin')
+  const routerLoc             = useRouterLocation()
+
+  // App.jsx sends players here with { forgotPassword: true } from the
+  // "reset link expired" screen.
+  useEffect(() => {
+    if (routerLoc.state?.forgotPassword) { setMode('forgot'); setError(null) }
+  }, [routerLoc.key, routerLoc.state])
+
+  function switchMode(next) {
+    setMode(next)
+    setError(null)
+    setLoading(false)
+  }
+
+  async function handleForgot(e) {
+    e.preventDefault()
+    setLoading(true)
+    setError(null)
+
+    const { error } = await supabase.auth.resetPasswordForEmail(email.trim().toLowerCase(), {
+      // Same origin = this location's domain; App.jsx picks up the recovery
+      // session and shows SetNewPassword.
+      redirectTo: `${window.location.origin}/league`,
+    })
+    setLoading(false)
+
+    if (error) {
+      // Per-address throttle ("For security purposes, you can only request
+      // this after N seconds"): a link was sent moments ago, so the neutral
+      // confirmation is both true and non-revealing.
+      if (/for security purposes/i.test(error.message || '')) { setMode('sent'); return }
+      // Project-wide email cap — nothing was sent, so ask them to wait.
+      if (isRateLimitError(error)) {
+        setError('Too many reset emails have been sent recently. Please wait a few minutes and try again.')
+        return
+      }
+      // Network failure — nothing was sent, so say so. (Unknown emails do
+      // NOT error, so this never reveals whether an account exists.)
+      if (!error.status || error.name === 'AuthRetryableFetchError') {
+        setError('Couldn’t reach the server. Check your connection and try again.')
+        return
+      }
+      // Anything else (incl. a 500 from a failed send) falls through: an
+      // error only happens for real accounts, so surfacing it would leak.
+      console.error('resetPasswordForEmail failed', error)
+    }
+    // Same message whether or not the email has an account.
+    setMode('sent')
+  }
 
   async function handleSignIn(e) {
     e.preventDefault()
@@ -45,6 +98,61 @@ export default function LoginScreen() {
 
       {/* Card */}
       <div style={styles.card}>
+        {mode === 'sent' ? (
+          <>
+            <h2 style={styles.title}>Check your email</h2>
+            <p style={styles.subtitle}>
+              If that email has an account, a reset link is on its way. It can take a
+              few minutes — check your spam folder too. The link works once and expires
+              after a short time.
+            </p>
+            <button type="button" style={styles.primaryBtn} onClick={() => switchMode('signin')}>
+              Back to sign in
+            </button>
+            <button type="button" style={styles.linkBtn} onClick={() => switchMode('forgot')}>
+              Didn’t get it? Send again
+            </button>
+          </>
+        ) : mode === 'forgot' ? (
+          <>
+            <h2 style={styles.title}>Reset your password</h2>
+            <p style={styles.subtitle}>Enter the email you sign in with and we’ll send you a link to choose a new password.</p>
+
+            <form onSubmit={handleForgot} style={styles.form}>
+              <div style={styles.fieldGroup}>
+                <label style={styles.label}>Email address</label>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={e => setEmail(e.target.value)}
+                  placeholder="you@example.com"
+                  required
+                  autoFocus
+                  autoComplete="email"
+                  style={styles.input}
+                />
+              </div>
+
+              {error && (
+                <div style={styles.errorBox}>
+                  <span>⚠️</span><span>{error}</span>
+                </div>
+              )}
+
+              <button
+                type="submit"
+                style={{ ...styles.primaryBtn, opacity: loading ? 0.7 : 1 }}
+                disabled={loading}
+              >
+                {loading ? 'Sending…' : 'Send reset link'}
+              </button>
+            </form>
+            <button type="button" style={styles.linkBtn} onClick={() => switchMode('signin')}>
+              ← Back to sign in
+            </button>
+          </>
+        ) : (
+        <>
         <h2 style={styles.title}>Welcome back</h2>
         <p style={styles.subtitle}>Sign in with the email and password your league admin set up for you.</p>
 
@@ -89,6 +197,11 @@ export default function LoginScreen() {
             {loading ? 'Signing in…' : 'Sign In'}
           </button>
         </form>
+        <button type="button" style={styles.linkBtn} onClick={() => switchMode('forgot')}>
+          Forgot password?
+        </button>
+        </>
+        )}
 
         <div style={styles.helpBox}>
           <p style={styles.helpText}>
@@ -162,6 +275,16 @@ const styles = {
     fontWeight: 700,
     letterSpacing: '0.3px',
     boxShadow: '0 2px 8px rgba(45,106,79,0.35)',
+    cursor: 'pointer',
+  },
+  linkBtn: {
+    display: 'block',
+    margin: '14px auto 0',
+    padding: '6px 10px',
+    fontSize: '13px',
+    fontWeight: 600,
+    color: 'var(--green)',
+    background: 'none',
     cursor: 'pointer',
   },
   helpBox:  { marginTop: '20px', background: 'var(--green-xlight)', borderRadius: 'var(--radius-sm)', padding: '12px 14px' },

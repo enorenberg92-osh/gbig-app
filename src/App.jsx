@@ -19,6 +19,14 @@ const SuperAdminPage = lazyWithReload(() => import('./pages/SuperAdminPage'))
 // Header-mounted "Install App" button (Android beforeinstallprompt + iOS guide)
 import InstallPrompt from './components/InstallPrompt'
 import ErrorBoundary from './components/ErrorBoundary'
+import SetNewPassword from './components/SetNewPassword'
+import { Toast } from './components/ui'
+import { parseAuthRedirect } from './lib/passwordReset'
+
+// Password-reset links land here as #…type=recovery or #error=…&error_code=otp_expired.
+// Read once at load, before supabase-js strips the hash, so the recovery
+// screen shows even if PASSWORD_RECOVERY fires before we subscribe.
+const INITIAL_AUTH_LINK = typeof window !== 'undefined' ? parseAuthRedirect(window.location.href) : null
 
 // Icons (inline SVGs for zero-dependency)
 const Icons = {
@@ -152,6 +160,8 @@ export default function App() {
   const [loading, setLoading]       = useState(true)
   const [splashDone, setSplashDone] = useState(false)
   const [leagueName, setLeagueName] = useState('')
+  const [authLink, setAuthLink]     = useState(INITIAL_AUTH_LINK) // { type: 'recovery' | 'error', code? } | null
+  const [toast, setToast]           = useState(null)
   const { isSuperAdmin }            = useIsSuperAdmin(session)
   const eventsEnabled               = useFeature('events')
 
@@ -196,11 +206,35 @@ export default function App() {
       setSession(session)
       setLoading(false)
     })
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       setSession(session)
+      if (event === 'PASSWORD_RECOVERY') setAuthLink({ type: 'recovery' })
     })
+    // A bad link's error params would otherwise linger (and re-show on reload).
+    if (INITIAL_AUTH_LINK?.type === 'error') {
+      window.history.replaceState(window.history.state, '', window.location.pathname)
+    }
     return () => subscription.unsubscribe()
   }, [])
+
+  useEffect(() => {
+    if (!toast) return undefined
+    const t = setTimeout(() => setToast(null), 3500)
+    return () => clearTimeout(t)
+  }, [toast])
+
+  // Reset-link overlay. A recovery link whose tokens didn't produce a
+  // session (already used / expired) is shown as a bad link too.
+  const resetMode = authLink?.type === 'error' ? 'error'
+    : authLink?.type === 'recovery' && !loading ? (session ? 'recovery' : 'error')
+    : null
+
+  function closeResetScreen({ signOut = false, forgot = false } = {}) {
+    setAuthLink(null)
+    if (signOut) supabase.auth.signOut({ scope: 'local' })
+    if (forgot) navigate('/league', { state: { forgotPassword: true } })
+    else if (!routerLoc.pathname.startsWith('/league')) navigate('/league')
+  }
 
   // Header content per tab. Title = what section you're in; subtitle
   // = where you are. League is the only tab that shows the league name,
@@ -227,6 +261,23 @@ export default function App() {
     <>
       {/* Splash — renders on top of the app shell while loading */}
       {showSplash && <SplashScreen onDone={handleSplashDone} appFullName={appFullName} />}
+
+      {/* Password-reset link landing (sits just under the splash) */}
+      {resetMode && (
+        <SetNewPassword
+          mode={resetMode}
+          errorCode={authLink?.code}
+          hasSession={!!session}
+          onDone={() => {
+            closeResetScreen()
+            setToast({ msg: 'Password updated — you’re signed in', type: 'success' })
+          }}
+          // Recovery: cancelling signs out so a shared device isn't left signed in.
+          onCancel={() => closeResetScreen({ signOut: resetMode === 'recovery' })}
+          onRequestNewLink={() => closeResetScreen({ signOut: !!session, forgot: true })}
+        />
+      )}
+      {toast && <Toast toast={toast} />}
 
       {/* App Shell (rendered in background while splash plays) */}
       <div style={styles.appShell}>
