@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, Suspense } from 'react'
 import { Routes, Route, Navigate, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import { lazyWithReload } from '../lib/lazyWithReload'
 import { useLocation } from '../context/LocationContext'
 import { useIsAdmin } from '../hooks/useIsAdmin'
 import LoginScreen from '../components/LoginScreen'
@@ -10,13 +11,19 @@ import Standings from '../components/Standings'
 import PlayerProfile from '../components/PlayerProfile'
 import SubRequest from '../components/SubRequest'
 import FriendsTab from '../components/FriendsTab'
-import AdminPanel from '../components/admin/AdminPanel'
 import { useFeature } from '../context/FeatureContext'
 
-export default function LeaguePage({ session }) {
-  // Auth gate — unauthenticated users get the login screen
-  if (!session) return <LoginScreen />
+// Admin panel is ~half the bundle and only admins ever open it — load on demand.
+const AdminPanel = lazyWithReload(() => import('../components/admin/AdminPanel'))
 
+export default function LeaguePage({ session }) {
+  // Auth gate — unauthenticated users get the login screen. The signed-in
+  // hub is its own component so its hooks run unconditionally.
+  if (!session) return <LoginScreen />
+  return <LeagueHub session={session} />
+}
+
+function LeagueHub({ session }) {
   const { locationId } = useLocation()
   const { isAdmin, checking } = useIsAdmin(session)
   const navigate = useNavigate()
@@ -93,7 +100,7 @@ export default function LeaguePage({ session }) {
           checking
             ? null
             : isAdmin
-              ? <AdminPanel session={session} onBack={backToHub} />
+              ? <Suspense fallback={null}><AdminPanel session={session} onBack={backToHub} /></Suspense>
               : <Navigate to="/league" replace />
         }
       />

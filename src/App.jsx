@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, Suspense } from 'react'
 import { Routes, Route, Navigate, useLocation as useRouterLocation, useNavigate } from 'react-router-dom'
 import { supabase } from './lib/supabase'
+import { lazyWithReload } from './lib/lazyWithReload'
 import { useLocation } from './context/LocationContext'
 import { useBrand } from './context/ThemeProvider'
 import { useIsSuperAdmin } from './hooks/useIsSuperAdmin'
@@ -11,10 +12,13 @@ import ReservationsPage from './pages/ReservationsPage'
 import LeaguePage from './pages/LeaguePage'
 import EventsPage from './pages/EventsPage'
 import AlertsPage from './pages/AlertsPage'
-import SuperAdminPage from './pages/SuperAdminPage'
+
+// Staff-only console — load on demand so players never download it.
+const SuperAdminPage = lazyWithReload(() => import('./pages/SuperAdminPage'))
 
 // Header-mounted "Install App" button (Android beforeinstallprompt + iOS guide)
 import InstallPrompt from './components/InstallPrompt'
+import ErrorBoundary from './components/ErrorBoundary'
 
 // Icons (inline SVGs for zero-dependency)
 const Icons = {
@@ -261,16 +265,18 @@ export default function App() {
 
         {/* Page Content */}
         <main style={styles.main}>
+          <ErrorBoundary key={routerLoc.pathname.split('/')[1] || 'root'}>
           <Routes>
             <Route path="/"              element={<Navigate to="/reservations" replace />} />
             <Route path="/reservations"  element={<ReservationsPage />} />
             <Route path="/league/*"      element={<LeaguePage session={session} />} />
             <Route path="/events"        element={eventsEnabled ? <EventsPage session={session} /> : <Navigate to="/league" replace />} />
             <Route path="/alerts"        element={<AlertsPage session={session} />} />
-            <Route path="/super-admin/*" element={<SuperAdminPage session={session} />} />
+            <Route path="/super-admin/*" element={<Suspense fallback={null}><SuperAdminPage session={session} /></Suspense>} />
             {/* Fallback for unknown URLs */}
             <Route path="*"              element={<Navigate to="/reservations" replace />} />
           </Routes>
+          </ErrorBoundary>
         </main>
 
         {/* Bottom Tab Bar — hidden on /super-admin; that surface is its own world */}
