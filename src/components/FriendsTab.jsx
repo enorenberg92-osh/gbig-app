@@ -8,9 +8,11 @@ import { Button, Toast, EmptyState, TabGroup, Input } from './ui'
 // ── Social push helper ────────────────────────────────────────────────────────
 // Fire-and-forget: sends a targeted push notification to one player's devices.
 // Never throws — social pings are best-effort and should never break UI flows.
+// type is 'follow' | 'message'; the Edge Function builds the title/body itself
+// (only a short message preview is passed through).
 const SOCIAL_PUSH_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-social-push`
 
-async function sendSocialPush(targetPlayerId, title, body) {
+async function sendSocialPush(targetPlayerId, type, preview) {
   try {
     // Forward the caller's access token so the Edge Function can verify
     // both caller and target belong to the same location.
@@ -24,7 +26,7 @@ async function sendSocialPush(targetPlayerId, title, body) {
         'Content-Type':  'application/json',
         'Authorization': `Bearer ${accessToken}`,
       },
-      body: JSON.stringify({ target_player_id: targetPlayerId, title, body }),
+      body: JSON.stringify({ target_player_id: targetPlayerId, type, preview }),
     })
   } catch (e) {
     console.warn('sendSocialPush failed (non-fatal):', e)
@@ -69,6 +71,8 @@ export default function FriendsTab({ session }) {
   const [viewingPlayer, setViewingPlayer] = useState(null)
   const [loading, setLoading]             = useState(true)
   const [toast, setToast]                 = useState(null)
+  // Monotonic counter so a slow search response can't overwrite a newer one.
+  const searchSeq                         = useRef(0)
 
   useEffect(() => { if (locationId) loadMyPlayer() }, [session, locationId])
 
@@ -124,9 +128,6 @@ export default function FriendsTab({ session }) {
   async function handleFollow(player) {
     if (!myPlayer) return
 
-    // Check BEFORE inserting whether this follow creates a mutual (friendship)
-    const willBeMutual = followers.some(f => f.id === player.id)
-
     const { error } = await supabase.from('follows').insert({
       follower_id: myPlayer.id,
       following_id: player.id,
@@ -138,15 +139,9 @@ export default function FriendsTab({ session }) {
     setSearchResults([])
     await loadFollows(myPlayer.id)
 
-    // Send push notification to the followed player (best-effort, never blocks UI)
-    const myName = playerName(myPlayer)
-    if (willBeMutual) {
-      // Both now follow each other — notify them that a friendship formed
-      sendSocialPush(player.id, '🤝 New Friend!', `You and ${myName} are now mutual followers!`)
-    } else {
-      // Simple follow
-      sendSocialPush(player.id, '👥 New Follower', `${myName} started following you.`)
-    }
+    // Send push notification to the followed player (best-effort, never blocks
+    // UI). The server words it as "new friend" when the follow is now mutual.
+    sendSocialPush(player.id, 'follow')
   }
 
   async function handleUnfollow(player) {
@@ -161,28 +156,43 @@ export default function FriendsTab({ session }) {
 
   async function handleRemoveFollower(player) {
     if (!myPlayer) return
-    await supabase.from('follows')
+    // .select() returns the deleted rows — RLS silently filters a DELETE it
+    // doesn't allow, so zero rows back means nothing was actually removed.
+    const { data, error } = await supabase.from('follows')
       .delete()
       .eq('follower_id', player.id)
       .eq('following_id', myPlayer.id)
-    showToast(`Removed ${playerName(player)} from your followers`)
+      .select('follower_id')
+    if (error || !data?.length) {
+      showToast('Could not remove follower — try again.', 'error')
+    } else {
+      showToast(`Removed ${playerName(player)} from your followers`)
+    }
     await loadFollows(myPlayer.id)
   }
 
   // Debounced search
   useEffect(() => {
-    if (!searchQuery.trim() || searchQuery.length < 2) { setSearchResults([]); return }
+    // Strip PostgREST filter syntax (commas/parens/quotes/backslashes) so user
+    // input can't break or extend the .or() expression.
+    const term = searchQuery.replace(/[,()"\\]/g, ' ').trim()
+    // Bump on every keystroke so any in-flight response is ignored at once.
+    const seq = ++searchSeq.current
+    if (term.length < 2) { setSearchResults([]); setSearching(false); return }
     const timer = setTimeout(async () => {
       setSearching(true)
       // Ecosystem-wide search -- no .eq('location_id', ...) on purpose. Social
       // is cross-tenant: a GBIG member can find and follow a friend who plays
       // at Appleton, or a star player at any other location in the ecosystem.
+      // Values are double-quoted so spaces/dots in names stay literal.
+      const pattern = `"%${term}%"`
       const { data } = await supabase
         .from('player_public')
         .select('*')
-        .or(`name.ilike.%${searchQuery}%,first_name.ilike.%${searchQuery}%,last_name.ilike.%${searchQuery}%`)
+        .or(`name.ilike.${pattern},first_name.ilike.${pattern},last_name.ilike.${pattern}`)
         .neq('id', myPlayer?.id || '00000000-0000-0000-0000-000000000000')
         .limit(8)
+      if (seq !== searchSeq.current) return // a newer search superseded this one
       setSearchResults(data || [])
       setSearching(false)
     }, 300)
@@ -244,7 +254,7 @@ export default function FriendsTab({ session }) {
                 <PlayerAvatar player={p} />
                 <div style={st.searchInfo}>
                   <div style={st.playerName}>{playerName(p)}</div>
-                  {p.handicap != null && <div style={st.meta}>HCP {p.handicap}</div>}
+                  {p.location_id !== locationId && p.location_name && <div style={st.meta}>{p.location_name}</div>}
                 </div>
                 {isFollowing(p)
                   ? (
@@ -290,20 +300,27 @@ export default function FriendsTab({ session }) {
             ? <div style={st.emptyList}>You're not following anyone yet — search above!</div>
             : following.map(p => {
                 const mutual = isMutual(p)
+                // Full profiles read location-scoped tables, so they only
+                // load for players at my location; others show their home
+                // location inline instead.
+                const sameLocation = p.location_id === locationId
                 return (
                   <div key={p.id} style={st.playerRow}>
                     <PlayerAvatar player={p} />
-                    <div style={{ ...st.playerInfo, cursor: 'pointer' }} onClick={() => { setViewingPlayer(p); setView('profile') }}>
+                    <div
+                      style={{ ...st.playerInfo, cursor: sameLocation ? 'pointer' : 'default' }}
+                      onClick={sameLocation ? () => { setViewingPlayer(p); setView('profile') } : undefined}
+                    >
                       <div style={st.playerName}>{playerName(p)}</div>
                       <div style={st.metaRow}>
-                        {p.handicap != null && <span style={st.meta}>HCP {p.handicap}</span>}
+                        {!sameLocation && p.location_name && <span style={st.meta}>{p.location_name}</span>}
                         {mutual && (
                           <span style={st.mutualPill}>
                             <Handshake size={11} strokeWidth={2.25} style={{ marginRight: 3, verticalAlign: '-2px' }} />
                             Mutual
                           </span>
                         )}
-                        <span style={st.tapHint}>Tap to view profile →</span>
+                        {sameLocation && <span style={st.tapHint}>Tap to view profile →</span>}
                       </div>
                     </div>
                     <div style={st.actions}>
@@ -346,7 +363,7 @@ export default function FriendsTab({ session }) {
                     <div style={st.playerInfo}>
                       <div style={st.playerName}>{playerName(p)}</div>
                       <div style={st.metaRow}>
-                        {p.handicap != null && <span style={st.meta}>HCP {p.handicap}</span>}
+                        {p.location_id !== locationId && p.location_name && <span style={st.meta}>{p.location_name}</span>}
                         {mutual && (
                           <span style={st.mutualPill}>
                             <Handshake size={11} strokeWidth={2.25} style={{ marginRight: 3, verticalAlign: '-2px' }} />
@@ -488,7 +505,7 @@ function ConversationView({ myPlayer, otherPlayer, onBack }) {
 
     // Notify the recipient (best-effort — never blocks UI)
     const preview = text.length > 80 ? text.slice(0, 80) + '…' : text
-    sendSocialPush(otherPlayer.id, `💬 ${playerName(myPlayer)}`, preview)
+    sendSocialPush(otherPlayer.id, 'message', preview)
 
     setSending(false)
   }

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, Suspense } from 'react'
+import React, { useState, useEffect, useCallback, Suspense } from 'react'
 import { Routes, Route, Navigate, useLocation as useRouterLocation, useNavigate } from 'react-router-dom'
 import { supabase } from './lib/supabase'
 import { lazyWithReload } from './lib/lazyWithReload'
@@ -11,7 +11,7 @@ import { useFeature } from './context/FeatureContext'
 import ReservationsPage from './pages/ReservationsPage'
 import LeaguePage from './pages/LeaguePage'
 import EventsPage from './pages/EventsPage'
-import AlertsPage from './pages/AlertsPage'
+import AlertsPage, { syncPushSubscription } from './pages/AlertsPage'
 
 // Staff-only console — load on demand so players never download it.
 const SuperAdminPage = lazyWithReload(() => import('./pages/SuperAdminPage'))
@@ -71,6 +71,8 @@ function SplashScreen({ onDone, appFullName }) {
     <div style={{
       ...splash.screen,
       animation: phase === 'out' ? 'splashFadeOut 0.5s ease forwards' : undefined,
+      // Once fading out, never swallow taps meant for the app underneath.
+      pointerEvents: phase === 'out' ? 'none' : undefined,
     }}>
       {/* Full wordmark logo — white on the deep-green splash gradient.
           No logo resolved yet (very first visit) = no logo: never flash
@@ -155,13 +157,39 @@ export default function App() {
 
   const activeTab         = activeTabFromPath(routerLoc.pathname)
   const onSuperAdminRoute = routerLoc.pathname.startsWith('/super-admin')
+  const userId            = session?.user?.id
 
+  // Stable so the splash's timers aren't restarted on every App render.
+  const handleSplashDone = useCallback(() => setSplashDone(true), [])
+
+  // league_config is only readable once signed in, so (re)load on auth
+  // changes and clear on sign-out.
   useEffect(() => {
-    if (!locationId) return
+    if (!locationId || !userId) { setLeagueName(''); return undefined }
+    let cancelled = false
     supabase.from('league_config').select('name')
       .eq('location_id', locationId).eq('is_working', true).maybeSingle()
-      .then(({ data }) => { if (data?.name) setLeagueName(data.name) })
-  }, [locationId])
+      .then(({ data }) => { if (!cancelled) setLeagueName(data?.name || '') })
+    return () => { cancelled = true }
+  }, [locationId, userId])
+
+  // Keep this browser's push subscription row owned by whoever is signed in
+  // (and on the current VAPID key). Waits for the initial session so it
+  // doesn't briefly re-stamp the row as anonymous on boot.
+  useEffect(() => {
+    if (loading) return
+    syncPushSubscription(locationId)
+  }, [loading, userId, locationId])
+
+  // A failed global sign-out (e.g. offline, expired refresh token) must still
+  // sign this device out — fall back to clearing the local session only.
+  async function handleSignOut() {
+    try {
+      const { error } = await supabase.auth.signOut()
+      if (!error) return
+    } catch { /* fall through to local sign-out */ }
+    await supabase.auth.signOut({ scope: 'local' })
+  }
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -198,7 +226,7 @@ export default function App() {
   return (
     <>
       {/* Splash — renders on top of the app shell while loading */}
-      {showSplash && <SplashScreen onDone={() => setSplashDone(true)} appFullName={appFullName} />}
+      {showSplash && <SplashScreen onDone={handleSplashDone} appFullName={appFullName} />}
 
       {/* App Shell (rendered in background while splash plays) */}
       <div style={styles.appShell}>
@@ -252,7 +280,7 @@ export default function App() {
             {session && (
               <button
                 style={styles.signOutBtn}
-                onClick={() => supabase.auth.signOut()}
+                onClick={handleSignOut}
                 title="Sign out"
               >
                 <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
@@ -339,7 +367,10 @@ const styles = {
   },
   // ── Standard green header (non-Reservations tabs) ──────────────
   header: {
-    height: 'var(--header-height)',
+    // Installed iOS apps use a black-translucent status bar, so the page
+    // extends under the notch — pad the header down past it.
+    height: 'calc(var(--header-height) + env(safe-area-inset-top, 0px))',
+    paddingTop: 'env(safe-area-inset-top, 0px)',
     background: 'var(--green-dark)',
     color: 'var(--white)',
     flexShrink: 0,
@@ -397,14 +428,15 @@ const styles = {
   },
   // ── Bottom tab bar ──────────────────────────────────────────────
   tabBar: {
-    height: 'var(--tab-height)',
+    // Grow by the home-indicator inset instead of squeezing the tabs into it.
+    height: 'calc(var(--tab-height) + env(safe-area-inset-bottom, 0px))',
     display: 'flex',
     background: 'var(--white)',
     borderTop: '1.5px solid var(--gray-200)',
     boxShadow: '0 -2px 12px rgba(0,0,0,0.06)',
     flexShrink: 0,
     zIndex: 10,
-    paddingBottom: 'env(safe-area-inset-bottom)',
+    paddingBottom: 'env(safe-area-inset-bottom, 0px)',
   },
   tabItem: {
     flex: 1,

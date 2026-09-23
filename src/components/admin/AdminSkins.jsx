@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { AlertTriangle, Target, Inbox } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useLocation } from '../../context/LocationContext'
 import { Button, Toast, EmptyState } from '../ui'
 import { hasCompleteCoursePars } from '../../lib/holeUtils'
 import { loadWorkingLeague } from '../../lib/leagueUtils'
+import { NOT_SUB_PLAYED } from '../../lib/skinsUtils'
 
 const SCORE_LABELS = [
   { diff: -3, label: 'Albatross', color: '#b8860b', bg: '#fef9c3' },
@@ -32,6 +33,7 @@ export default function AdminSkins({ activeEventId = null, onEventChange = () =>
   const [loading, setLoading]         = useState(true)
   const [toast, setToast]             = useState(null)
   const [skinsPlayers, setSkinsPlayers] = useState([])
+  const currentEventRef = useRef(selectedEvent)   // guards async results against event switches
 
   useEffect(() => {
     if (!locationId) return
@@ -44,7 +46,8 @@ export default function AdminSkins({ activeEventId = null, onEventChange = () =>
           .select('id, name, week_number, start_date, course_id, status')
           .eq('location_id', locationId)
           .eq('league_id', league.id)
-          .neq('is_bye', true)
+          // NULL is_bye means a normal week; `.neq(true)` would drop it.
+          .or('is_bye.is.null,is_bye.eq.false')
           .order('week_number', { ascending: true }),
         supabase.from('players')
           .select('id, name, first_name, last_name, in_skins')
@@ -74,12 +77,18 @@ export default function AdminSkins({ activeEventId = null, onEventChange = () =>
 
   // Reset report when event changes
   useEffect(() => {
+    currentEventRef.current = selectedEvent
     setSkinResults(null)
+    setEventDetails(null)
     if (!selectedEvent) return
+    // Ignore a slow response for an event the admin has already switched away
+    // from — otherwise its course pars would land on the new event.
+    let stale = false
     // Load event details (for course par info)
     supabase.from('events').select('*, courses(id, name, num_holes, hole_pars, total_par)')
       .eq('id', selectedEvent).eq('location_id', locationId).single()
-      .then(({ data }) => setEventDetails(data || null))
+      .then(({ data }) => { if (!stale) setEventDetails(data || null) })
+    return () => { stale = true }
   }, [selectedEvent])
 
   function showToast(msg, type = 'success') {
@@ -89,11 +98,17 @@ export default function AdminSkins({ activeEventId = null, onEventChange = () =>
 
   async function runSkinReport() {
     if (!selectedEvent) return
+    if (eventDetails?.id !== selectedEvent) {
+      showToast('Event details are still loading — try again in a moment.', 'error')
+      return
+    }
+    const eventId = selectedEvent
     setCalculating(true)
     setSkinResults(null)
 
     // 1. Load all scores for this event — played entries only.
-    // Missed-week penalty rows carry no hole_scores and are excluded from skins.
+    // Missed-week penalty rows carry no hole_scores and are excluded from skins;
+    // sub-played marker rows (the sub's holes on the absent player's row) too.
     const { data: allScores, error } = await supabase
       .from('scores')
       .select('player_id, hole_scores, gross_total, net_total')
@@ -101,6 +116,7 @@ export default function AdminSkins({ activeEventId = null, onEventChange = () =>
       .eq('location_id', locationId)
       .eq('entry_type', 'played')
       .eq('status', 'verified')
+      .or(NOT_SUB_PLAYED)
 
     if (error) {
       showToast('Error loading scores: ' + error.message, 'error')
@@ -121,6 +137,9 @@ export default function AdminSkins({ activeEventId = null, onEventChange = () =>
 
     // Filter scores to skins-eligible players only
     const skinsScores = (allScores || []).filter(s => skinsIds.has(s.player_id))
+
+    // Admin switched events while we were loading — drop this stale report.
+    if (currentEventRef.current !== eventId) { setCalculating(false); return }
 
     if (skinsScores.length === 0) {
       setSkinResults([])

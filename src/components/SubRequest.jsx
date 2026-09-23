@@ -99,7 +99,9 @@ export default function SubRequest({ session, onBack }) {
       showToast("The sub's handicap must be a whole number.", 'error')
       return
     }
-    const subHandicap = Math.max(-2, Math.min(27, parsedHandicap))
+    // Subs can carry a higher handicap than the league cap (27); the server
+    // clamps sub handicaps to [-2, 40], so match that here.
+    const subHandicap = Math.max(-2, Math.min(40, parsedHandicap))
     const { error: insertErr } = await supabase.rpc('request_sub', {
       p_event_id: form.event_id,
       p_sub: {
@@ -316,14 +318,15 @@ export default function SubRequest({ session, onBack }) {
                 <input
                   type="number"
                   min="-2"
-                  max="27"
+                  max="40"
                   step="1"
                   style={styles.input}
                   value={form.sub_handicap}
                   onChange={e => setForm(f => ({ ...f, sub_handicap: e.target.value }))}
-                  placeholder="0–27"
+                  placeholder="-2 to 40"
                   required
                 />
+                <span style={{ fontSize: 11, color: 'var(--gray-400)' }}>Whole numbers only, -2 to 40.</span>
               </div>
 
               <div style={styles.formActions}>

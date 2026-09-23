@@ -3,6 +3,8 @@ import { supabase } from '../lib/supabase'
 import { useLocation } from '../context/LocationContext'
 import { loadWorkingLeague } from '../lib/leagueUtils'
 import { compareEffectiveScores } from '../lib/roundUtils'
+import { aggregateSeasonByTeam, sortStandingRows } from '../lib/standingsUtils'
+import { fetchAllRows } from '../lib/supabasePaging'
 
 // adminMode: Season shows ALL events (open + closed) so admins have full
 // visibility. Players only see closed weeks so rankings stay clean.
@@ -30,7 +32,7 @@ export default function Standings({ session, onBack, adminMode = false }) {
   // ── 2. Whenever the selected event or view changes, reload data ──
   useEffect(() => {
     if (view === 'week') {
-      if (selectedEvent) loadWeekly(selectedEvent.id)
+      if (selectedEvent) loadWeekly(selectedEvent.id, selectedEvent.format)
     } else {
       loadSeason()
     }
@@ -72,7 +74,7 @@ export default function Standings({ session, onBack, adminMode = false }) {
       .select('id, name, week_number, start_date, status, format')
       .eq('location_id', locationId)
       .eq('league_id', league.id)
-      .neq('is_bye', true)
+      .or('is_bye.is.null,is_bye.eq.false')
       .in('status', ['open', 'closed'])
       .order('week_number', { ascending: false })
 
@@ -90,7 +92,7 @@ export default function Standings({ session, onBack, adminMode = false }) {
   }
 
   // ─────────────────────────────────────────────────────────────────
-  async function loadWeekly(eventId) {
+  async function loadWeekly(eventId, format) {
     if (!eventId) return
     setLoading(true)
     setError(null)
@@ -121,9 +123,14 @@ export default function Standings({ session, onBack, adminMode = false }) {
     })))
 
     const teamRows = buildTeamRows(
-      scoresRes.data || [], playersRes.data || [], hydrateRosterTeams(teamsRes.data || [], rosterRes.data || []), false
+      scoresRes.data || [], playersRes.data || [], hydrateRosterTeams(teamsRes.data || [], rosterRes.data || []), format
     )
-    setRows(sortRows(teamRows, sortBy))
+    // Format nights (scramble / best ball / Stableford) rank by the night's
+    // format result once it's computed; otherwise fall back to net.
+    const hasFormat = teamRows.some(r => r.formatResult != null)
+    const by = hasFormat ? 'format' : (sortBy === 'format' ? 'net' : sortBy)
+    if (by !== sortBy) setSortBy(by)
+    setRows(sortRows(teamRows, by))
     setLoading(false)
   }
 
@@ -135,8 +142,8 @@ export default function Standings({ session, onBack, adminMode = false }) {
     // Admins see all events; players only see closed weeks
     if (!leagueId) { setLoading(false); return }
     const { data: eligibleEvents } = adminMode
-      ? await supabase.from('events').select('id, week_number').eq('location_id', locationId).eq('league_id', leagueId).in('status', ['open', 'closed'])
-      : await supabase.from('events').select('id, week_number').eq('location_id', locationId).eq('league_id', leagueId).eq('status', 'closed')
+      ? await supabase.from('events').select('id, week_number, start_date').eq('location_id', locationId).eq('league_id', leagueId).in('status', ['open', 'closed'])
+      : await supabase.from('events').select('id, week_number, start_date').eq('location_id', locationId).eq('league_id', leagueId).eq('status', 'closed')
 
     // Segment filter: restrict to the chosen week range.
     const seg = segmentIdx >= 0 ? segments[segmentIdx] : null
@@ -145,14 +152,17 @@ export default function Standings({ session, onBack, adminMode = false }) {
     if (ids.length === 0) { setRows([]); setLoading(false); return }
 
     const [scoresRes, playersRes, teamsRes, rosterRes, matchupsRes] = await Promise.all([
-      supabase.from('scores')
+      // Paged: a full season can exceed PostgREST's 1000-row cap.
+      fetchAllRows(() => supabase.from('scores')
         .select('id, player_id, team_id, event_id, gross_total, net_total, entry_type, status, created_at')
         .in('event_id', ids)
         .eq('location_id', locationId)
-        .eq('status', 'verified'),
+        .eq('status', 'verified')
+        .order('id')),
       supabase.from('players').select('id, name, first_name, last_name, handicap').eq('location_id', locationId),
       supabase.from('teams').select('id, name').eq('location_id', locationId).eq('league_id', leagueId),
-      supabase.from('roster_at').select('event_id, team_id, team_name, player_id').in('event_id', ids),
+      fetchAllRows(() => supabase.from('roster_at').select('event_id, team_id, team_name, player_id').in('event_id', ids)
+        .order('event_id').order('team_id').order('player_id')),
       supabase.from('matchups')
         .select('event_id, home_team_id, away_team_id, points_home, points_away, status')
         .in('event_id', ids)
@@ -180,8 +190,13 @@ export default function Standings({ session, onBack, adminMode = false }) {
     })
     setHasPoints(Object.keys(pointsByTeam).length > 0)
 
-    const teamRows = buildTeamRows(
-      scoresRes.data || [], playersRes.data || [], hydrateRosterTeams(teamsRes.data || [], rosterRes.data || []), true
+    // Attribute every round to the team the player was rostered on that
+    // week (roster swaps mid-season), then total per team.
+    const eventOrder = {}
+    ;(eligibleEvents || []).forEach(e => { eventOrder[e.id] = e.week_number ?? 0 })
+    const teamRows = buildSeasonRows(
+      aggregateSeasonByTeam(scoresRes.data || [], rosterRes.data || [], eventOrder),
+      playersRes.data || [], teamsRes.data || []
     )
     // Merge points; include point-earning teams that have no score rows (all-forfeit edge).
     const seen = new Set(teamRows.map(r => r.teamId))
@@ -189,11 +204,39 @@ export default function Standings({ session, onBack, adminMode = false }) {
     Object.entries(pointsByTeam).forEach(([teamId, rec]) => {
       if (!seen.has(teamId)) {
         const team = (teamsRes.data || []).find(t => t.id === teamId)
-        if (team) teamRows.push({ teamId, teamName: team.name, p1Name: '', p2Name: '', teamGross: 0, teamNet: 0, rounds: 0, hasScore: true, ...rec })
+        if (team) teamRows.push({ teamId, teamName: team.name, p1Name: '', p2Name: '', teamGross: 0, teamNet: 0, rounds: 0, grossMissing: 0, hasScore: true, ...rec })
       }
     })
-    setRows(sortRows(teamRows, sortBy))
+    const by = sortBy === 'format' ? 'net' : sortBy
+    if (by !== sortBy) setSortBy(by)
+    setRows(sortRows(teamRows, by))
     setLoading(false)
+  }
+
+  function playerDisplayName(p, fallback) {
+    return p ? (`${p.first_name || ''} ${p.last_name || ''}`.trim() || p.name || fallback) : fallback
+  }
+
+  // Season rows from per-team totals (see aggregateSeasonByTeam).
+  function buildSeasonRows(totals, players, teams) {
+    const playerMap = {}
+    players.forEach(p => { playerMap[p.id] = p })
+    return teams.filter(team => totals[team.id]).map(team => {
+      const t = totals[team.id]
+      const p1Name = playerDisplayName(playerMap[t.playerIds[0]], 'Player 1')
+      const p2Name = playerDisplayName(playerMap[t.playerIds[1]], 'Player 2')
+      return {
+        teamId: team.id,
+        teamName: team.name || `${p1Name.split(' ')[0]}/${p2Name.split(' ')[0]}`,
+        p1Name, p2Name,
+        teamGross: t.gross,
+        teamNet:   t.net,
+        rounds:    t.rounds,
+        // Player-rounds with no gross (missed-week penalties) — see sortStandingRows.
+        grossMissing: t.grossMissing,
+        hasScore: true,
+      }
+    })
   }
 
   function hydrateRosterTeams(teams, rosterRows) {
@@ -210,7 +253,10 @@ export default function Standings({ session, onBack, adminMode = false }) {
   }
 
   // ─────────────────────────────────────────────────────────────────
-  function buildTeamRows(scores, players, teams, aggregate) {
+  // One week's rows. `format` is the event format: scramble / best_ball carry
+  // the team-night result on every member's format_points (lower wins);
+  // Stableford stores each player's own points (higher wins, team = sum).
+  function buildTeamRows(scores, players, teams, format) {
     if (!teams.length) return []
 
     const playerMap = {}
@@ -222,6 +268,8 @@ export default function Standings({ session, onBack, adminMode = false }) {
       byPlayer[s.player_id].push(s)
     })
 
+    const isStableford = format === 'stableford'
+    const isTeamNight  = format === 'scramble' || format === 'best_ball'
     const teamRows = []
 
     for (const team of teams) {
@@ -231,77 +279,54 @@ export default function Standings({ session, onBack, adminMode = false }) {
 
       const p1 = playerMap[team.player1_id]
       const p2 = playerMap[team.player2_id]
-      const p1Name = p1
-        ? (`${p1.first_name || ''} ${p1.last_name || ''}`.trim() || p1.name || 'Player 1')
-        : 'Player 1'
-      const p2Name = p2
-        ? (`${p2.first_name || ''} ${p2.last_name || ''}`.trim() || p2.name || 'Player 2')
-        : 'Player 2'
+      const p1Name = playerDisplayName(p1, 'Player 1')
+      const p2Name = playerDisplayName(p2, 'Player 2')
 
-      if (aggregate) {
-        const p1Gross = p1scores.reduce((a, s) => a + (s.gross_total || 0), 0)
-        const p2Gross = p2scores.reduce((a, s) => a + (s.gross_total || 0), 0)
-        const p1Net   = p1scores.reduce((a, s) => a + (s.net_total   || 0), 0)
-        const p2Net   = p2scores.reduce((a, s) => a + (s.net_total   || 0), 0)
-        const rounds  = Math.max(p1scores.length, p2scores.length)
+      const s1 = p1scores[0]
+      const s2 = p2scores[0]
+      const p1Gross = s1?.gross_total ?? null
+      const p2Gross = s2?.gross_total ?? null
+      const p1Net   = s1?.net_total   ?? null
+      const p2Net   = s2?.net_total   ?? null
+      // Penalty rows carry net_total but no gross_total. Surface the flag so the UI
+      // can tag the round without dropping its contribution to the team score.
+      const p1IsPenalty = s1?.entry_type === 'missed_penalty'
+      const p2IsPenalty = s2?.entry_type === 'missed_penalty'
 
-        teamRows.push({
-          teamId: team.id,
-          teamName: team.name || `${p1Name.split(' ')[0]}/${p2Name.split(' ')[0]}`,
-          p1Name, p2Name, p1Gross, p2Gross,
-          teamGross: p1Gross + p2Gross,
-          teamNet:   p1Net   + p2Net,
-          rounds,
-          avgGross: rounds > 0 ? ((p1Gross + p2Gross) / rounds).toFixed(1) : '—',
-          avgNet:   rounds > 0 ? ((p1Net   + p2Net)   / rounds).toFixed(1) : '—',
-          hasScore: true,
-        })
-      } else {
-        const s1 = p1scores[0]
-        const s2 = p2scores[0]
-        const p1Gross = s1?.gross_total ?? null
-        const p2Gross = s2?.gross_total ?? null
-        const p1Net   = s1?.net_total   ?? null
-        const p2Net   = s2?.net_total   ?? null
-        // Penalty rows carry net_total but no gross_total. Surface the flag so the UI
-        // can tag the round without dropping its contribution to the team score.
-        const p1IsPenalty = s1?.entry_type === 'missed_penalty'
-        const p2IsPenalty = s2?.entry_type === 'missed_penalty'
+      const p1Pts = isStableford && s1?.format_points != null ? Number(s1.format_points) : null
+      const p2Pts = isStableford && s2?.format_points != null ? Number(s2.format_points) : null
+      const nightResult = isTeamNight ? (s1?.format_points ?? s2?.format_points ?? null) : null
+      const formatResult = isStableford
+        ? (p1Pts == null && p2Pts == null ? null : (p1Pts ?? 0) + (p2Pts ?? 0))
+        : (nightResult != null ? Number(nightResult) : null)
 
-        teamRows.push({
-          teamId: team.id,
-          teamName: team.name || `${p1Name.split(' ')[0]}/${p2Name.split(' ')[0]}`,
-          p1Name, p1Gross, p1Net, p1IsPenalty,
-          p2Name, p2Gross, p2Net, p2IsPenalty,
-          teamGross: (p1Gross ?? 0) + (p2Gross ?? 0),
-          teamNet:   (p1Net   ?? 0) + (p2Net   ?? 0),
-          p1Hcp: p1?.handicap ?? null,
-          p2Hcp: p2?.handicap ?? null,
-          nightResult: s1?.format_points ?? s2?.format_points ?? null,
-          // A submitted-or-penalty entry both count as "has a result" — the team
-          // should rank above teams with no scores at all.
-          hasScore: s1 != null || s2 != null,
-        })
-      }
+      teamRows.push({
+        teamId: team.id,
+        teamName: team.name || `${p1Name.split(' ')[0]}/${p2Name.split(' ')[0]}`,
+        p1Name, p1Gross, p1Net, p1IsPenalty, p1Pts,
+        p2Name, p2Gross, p2Net, p2IsPenalty, p2Pts,
+        teamGross: (p1Gross ?? 0) + (p2Gross ?? 0),
+        teamNet:   (p1Net   ?? 0) + (p2Net   ?? 0),
+        // Rostered players without a gross this week (missed / not yet in).
+        grossMissing: [team.player1_id && p1Gross == null, team.player2_id && p2Gross == null].filter(Boolean).length,
+        p1Hcp: p1?.handicap ?? null,
+        p2Hcp: p2?.handicap ?? null,
+        nightResult,
+        formatResult,
+        formatDir: isStableford ? 'desc' : 'asc',
+        // A submitted-or-penalty entry both count as "has a result" — the team
+        // should rank above teams with no scores at all.
+        hasScore: s1 != null || s2 != null,
+      })
     }
 
     return teamRows
   }
 
-  // Lower = better in golf (points: higher = better); scoreless teams sink
+  // Lower = better in golf (points: higher = better); scoreless teams sink.
+  // Gross / format rules live in sortStandingRows.
   function sortRows(rows, by) {
-    return [...rows].sort((a, b) => {
-      if (!a.hasScore && b.hasScore)  return 1
-      if (a.hasScore  && !b.hasScore) return -1
-      if (by === 'points') {
-        return ((b.points || 0) - (a.points || 0))
-          || (a.teamNet - b.teamNet)
-          || a.teamName.localeCompare(b.teamName)
-      }
-      return by === 'gross'
-        ? (a.teamGross - b.teamGross) || a.teamName.localeCompare(b.teamName)
-        : (a.teamNet   - b.teamNet) || a.teamName.localeCompare(b.teamName)
-    })
+    return sortStandingRows(rows, by)
   }
 
   function medalEmoji(rank) {
@@ -320,6 +345,12 @@ export default function Standings({ session, onBack, adminMode = false }) {
   const isNightEvent = view === 'week'
     && ['scramble', 'best_ball'].includes(selectedEvent?.format)
     && rows.some(r => r.nightResult != null)
+  // Stableford points column (per-player points summed per team)
+  const isStablefordEvent = view === 'week'
+    && selectedEvent?.format === 'stableford'
+    && rows.some(r => r.formatResult != null)
+  const hasFormatSort = isNightEvent || isStablefordEvent
+  const anyGrossMissing = displayRows.some(r => r.grossMissing > 0)
 
   const eventLabel = (evt) => {
     const wk  = evt.week_number ? `Wk ${evt.week_number} — ` : ''
@@ -429,6 +460,12 @@ export default function Standings({ session, onBack, adminMode = false }) {
             onClick={() => setSortBy('points')}
           >Points</button>
         )}
+        {hasFormatSort && (
+          <button
+            style={{ ...styles.sortBtn, ...(sortBy === 'format' ? styles.sortActive : {}) }}
+            onClick={() => setSortBy('format')}
+          >{isStablefordEvent ? 'Stableford' : 'Team Result'}</button>
+        )}
       </div>
 
       {/* Weekly matchups (match-play weeks) */}
@@ -480,6 +517,9 @@ export default function Standings({ session, onBack, adminMode = false }) {
             {isNightEvent && (
               <div style={{ ...styles.thCell, width: 56, textAlign: 'right' }}>Team</div>
             )}
+            {isStablefordEvent && (
+              <div style={{ ...styles.thCell, width: 56, textAlign: 'right' }}>Pts</div>
+            )}
             <div style={{ ...styles.thCell, width: 56, textAlign: 'right' }}>Gross</div>
             <div style={{ ...styles.thCell, width: 56, textAlign: 'right' }}>Net</div>
           </div>
@@ -498,6 +538,9 @@ export default function Standings({ session, onBack, adminMode = false }) {
                     {view === 'week' && row.p1Gross != null && (
                       <span style={styles.chipScore}> {row.p1Gross}</span>
                     )}
+                    {view === 'week' && row.p1Pts != null && (
+                      <span style={styles.chipPts}> · {row.p1Pts} pts</span>
+                    )}
                     {view === 'week' && row.p1IsPenalty && (
                       <span style={styles.penaltyPill}>Missed</span>
                     )}
@@ -507,6 +550,9 @@ export default function Standings({ session, onBack, adminMode = false }) {
                     {row.p2Name.split(' ')[0]}
                     {view === 'week' && row.p2Gross != null && (
                       <span style={styles.chipScore}> {row.p2Gross}</span>
+                    )}
+                    {view === 'week' && row.p2Pts != null && (
+                      <span style={styles.chipPts}> · {row.p2Pts} pts</span>
                     )}
                     {view === 'week' && row.p2IsPenalty && (
                       <span style={styles.penaltyPill}>Missed</span>
@@ -528,19 +574,27 @@ export default function Standings({ session, onBack, adminMode = false }) {
                   {row.points ?? 0}
                 </div>
               )}
-              {isNightEvent && (
+              {(isNightEvent || isStablefordEvent) && (
                 <div style={{ ...styles.scoreCell, fontWeight: 700, color: 'var(--green-dark)' }}>
-                  {row.nightResult != null ? Number(row.nightResult) : '—'}
+                  {row.formatResult != null ? row.formatResult : '—'}
                 </div>
               )}
               <div style={{ ...styles.scoreCell, fontWeight: sortBy === 'gross' ? 700 : 400 }}>
                 {row.teamGross || '—'}
+                {row.grossMissing > 0 && row.teamGross > 0 && <span style={styles.grossFlag}>*</span>}
               </div>
               <div style={{ ...styles.scoreCell, fontWeight: sortBy === 'net' ? 700 : 400, color: 'var(--green-dark)' }}>
                 {row.teamNet || '—'}
               </div>
             </div>
           ))}
+          {anyGrossMissing && (
+            <p style={styles.grossNote}>
+              * Gross is missing for a missed week (or a score not yet in), so it
+              isn't a full total — these teams rank after complete cards when
+              sorting by gross.
+            </p>
+          )}
         </div>
       )}
     </div>
@@ -578,6 +632,9 @@ const styles = {
   playerChip:   { fontSize: 11, color: 'var(--gray-600)', background: 'var(--gray-100)', padding: '2px 7px', borderRadius: 10, fontWeight: 500 },
   penaltyPill:  { display: 'inline-block', marginLeft: 6, fontSize: 9, fontWeight: 700, letterSpacing: '0.5px', textTransform: 'uppercase', color: '#8a6d1f', background: '#fef3c7', border: '1px solid #f6e27a', padding: '1px 6px', borderRadius: 10 },
   chipScore:    { fontWeight: 700, color: 'var(--green-dark)' },
+  chipPts:      { fontWeight: 600, color: 'var(--gray-500)' },
+  grossFlag:    { fontSize: 11, color: 'var(--gray-400)', marginLeft: 1 },
+  grossNote:    { margin: 0, padding: '8px 12px', fontSize: 11, color: 'var(--gray-400)', fontStyle: 'italic', lineHeight: 1.4 },
   ampersand:    { fontSize: 10, color: 'var(--gray-400)' },
   roundsBadge:  { fontSize: 10, color: 'var(--green)', background: 'var(--green-xlight)', padding: '2px 7px', borderRadius: 10, fontWeight: 600 },
   scoreCell:    { width: 56, textAlign: 'right', fontSize: 15, color: 'var(--black)', flexShrink: 0 },

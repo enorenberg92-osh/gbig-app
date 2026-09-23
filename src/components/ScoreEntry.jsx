@@ -505,9 +505,10 @@ export default function ScoreEntry({ session, onBack }) {
         <div style={styles.totalsTitle}>Running Total</div>
         {['p1', 'p2'].map(pk => {
           const gross = totalScore(pk)
-          const filled = scores[pk].filter(s => s != null).length
+          // Par over the holes actually filled — players can jump between
+          // holes, so the first N pars aren't necessarily the ones played.
           const par_so_far = course?.hole_pars
-            ? course.hole_pars.slice(0, filled).reduce((a, b) => a + b, 0)
+            ? scores[pk].reduce((a, s, i) => (s != null ? a + (course.hole_pars[i] || 0) : a), 0)
             : null
           const diff = par_so_far ? gross - par_so_far : null
           return (

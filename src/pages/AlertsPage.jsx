@@ -11,6 +11,47 @@ function urlBase64ToUint8Array(base64String) {
   return Uint8Array.from([...raw].map(c => c.charCodeAt(0)))
 }
 
+function sameKey(buf, want) {
+  const have = new Uint8Array(buf)
+  return have.length === want.length && have.every((b, i) => b === want[i])
+}
+
+/**
+ * Re-sync this browser's existing push subscription with the server.
+ * subscribe_push stamps user_id = auth.uid(), so calling it again (it's an
+ * idempotent upsert on endpoint) makes the row follow whoever is signed in
+ * now — including null after sign-out. If the subscription was made with an
+ * old VAPID key, it's replaced first. Never prompts; no-op without an
+ * existing subscription. Called by App on boot and on every auth change.
+ */
+export async function syncPushSubscription(locationId) {
+  try {
+    if (!locationId || !VAPID_PUBLIC_KEY) return
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return
+    if (Notification.permission !== 'granted') return
+    const reg = await navigator.serviceWorker.ready
+    let sub = await reg.pushManager.getSubscription()
+    if (!sub) return
+    const want = urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
+    const have = sub.options?.applicationServerKey
+    if (have && !sameKey(have, want)) {
+      await supabase.rpc('unsubscribe_push', { p_endpoint: sub.endpoint })
+      await sub.unsubscribe()
+      sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: want })
+    }
+    const json = sub.toJSON()
+    const { error } = await supabase.rpc('subscribe_push', {
+      p_endpoint:    json.endpoint,
+      p_p256dh:      json.keys.p256dh,
+      p_auth_key:    json.keys.auth,
+      p_location_id: locationId,
+    })
+    if (error) throw error
+  } catch (err) {
+    console.warn('Push subscription sync failed (non-fatal):', err)
+  }
+}
+
 function timeAgo(dateStr) {
   const diff = Date.now() - new Date(dateStr).getTime()
   const mins  = Math.floor(diff / 60000)
@@ -25,6 +66,7 @@ function timeAgo(dateStr) {
 
 export default function AlertsPage({ session }) {
   const { locationId } = useLocation()
+  const userId = session?.user?.id
   const [alerts, setAlerts]             = useState([])
   const [loading, setLoading]           = useState(true)
   const [notifStatus, setNotifStatus]   = useState('unknown') // 'unknown'|'unsupported'|'denied'|'prompt'|'subscribed'
@@ -34,8 +76,11 @@ export default function AlertsPage({ session }) {
   // Only surface "active" alerts: either no expiry set, or expiry is in the
   // future. Expired rows stay in the DB for audit but don't appear in the
   // feed. Admin side filters the same way in AdminAlerts.loadAll().
+  // alerts is readable only when signed in — skip (and clear) otherwise.
   useEffect(() => {
     if (!locationId) return
+    if (!userId) { setAlerts([]); setLoading(false); return }
+    setLoading(true)
     const nowIso = new Date().toISOString()
     supabase
       .from('alerts')
@@ -45,7 +90,7 @@ export default function AlertsPage({ session }) {
       .order('created_at', { ascending: false })
       .limit(50)
       .then(({ data }) => { setAlerts(data || []); setLoading(false) })
-  }, [locationId])
+  }, [locationId, userId])
 
   // Periodic sweep so alerts age out of the feed without a reload. Every 60s
   // drop any alerts whose expires_at has slipped into the past. Cheap — the
@@ -60,7 +105,7 @@ export default function AlertsPage({ session }) {
 
   // ── Realtime: new alerts appear instantly (scoped to this location) ─────────
   useEffect(() => {
-    if (!locationId) return
+    if (!locationId || !userId) return
     const channel = supabase
       .channel(`alerts-feed-${locationId}`)
       .on('postgres_changes', {
@@ -73,7 +118,7 @@ export default function AlertsPage({ session }) {
       })
       .subscribe()
     return () => supabase.removeChannel(channel)
-  }, [locationId])
+  }, [locationId, userId])
 
   // ── Check current notification permission state ──────────────
   const checkStatus = useCallback(async () => {
@@ -129,6 +174,18 @@ export default function AlertsPage({ session }) {
     }
     setNotifStatus('prompt')
   }
+
+  // Signed out: the alerts table isn't readable, so an empty feed would be
+  // misleading — point the player at sign-in instead (and hide push opt-in).
+  if (!session) return (
+    <div style={styles.page}>
+      <div style={styles.empty}>
+        <div style={styles.emptyIcon}>🔒</div>
+        <p style={styles.emptyText}>Sign in to see alerts</p>
+        <p style={styles.emptySubtext}>Sign in on the League tab to see league alerts and turn on notifications.</p>
+      </div>
+    </div>
+  )
 
   return (
     <div style={styles.page}>

@@ -31,32 +31,44 @@ export const DISCARD_TABLE = {
   12: { high: 1, low: 1 },
 }
 
-// Core calculation: takes an array of differentials (gross - par), returns handicap integer.
+// Server parity (recalculate_handicaps): at most 12 scores, at least 1, and
+// otherwise the league's num_weeks (NULL → 12).
+export function scoresUsedForLeague(numWeeks) {
+  const n = numWeeks == null || numWeeks === '' ? 12 : Math.trunc(Number(numWeeks))
+  if (!Number.isFinite(n)) return 12
+  return Math.min(12, Math.max(1, n))
+}
+
+// Server parity: an event feeds handicaps unless format_config says
+// exclude_from_handicap=true; when the flag is absent, scrambles are excluded
+// (a shared ball says nothing about one player's game).
+export function isHandicapEligibleEvent(evt) {
+  if (!evt) return true
+  const flag = evt.format_config?.exclude_from_handicap
+  if (flag != null) return !(flag === true || flag === 'true')
+  return evt.format !== 'scramble'
+}
+
+// Subs (players.is_sub) get a wider ceiling server-side: -2..40.
+export const SUB_MAX_HANDICAP = 40
+export function settingsForPlayer(settings, player) {
+  return player?.is_sub ? { ...settings, maxHandicap: SUB_MAX_HANDICAP } : settings
+}
+
+// floor(avg × pct) computed exactly in integers — floor(sum × 9 / (n × 10))
+// for 90% — like the server. `Math.floor(avg * 0.9)` drifts on float error
+// (e.g. sum -50 over 3 rounds: exact -15, float -16).
+function truncatedHandicap(used, pct) {
+  const sum   = used.reduce((a, d) => a + d, 0)
+  const scale = 1000
+  const pctInt = Math.round(pct * scale)
+  return Math.floor((sum * pctInt) / (used.length * scale))
+}
+
+// Core calculation: takes an array of differentials (gross - par) in
+// chronological order (oldest first), returns handicap integer.
 export function calcHandicap(differentials, settings = DEFAULT_SETTINGS) {
-  if (!differentials || differentials.length < settings.minScores) return null
-
-  const recent = differentials.slice(-settings.scoresUsed)
-  const n      = recent.length
-  const rule   = DISCARD_TABLE[Math.min(n, 12)] || { high: 1, low: 1 }
-
-  // Sort ascending: lowest diff first (best scores), highest last (worst scores)
-  const sorted = [...recent].sort((a, b) => a - b)
-
-  // Remove worst (high) and best (low) outliers per discard table
-  let used = sorted
-  if (rule.low  > 0) used = used.slice(rule.low)
-  if (rule.high > 0) used = used.slice(0, used.length - rule.high)
-
-  if (used.length === 0) return null
-
-  const avg       = used.reduce((sum, d) => sum + d, 0) / used.length
-  const raw       = avg * settings.handicapPct
-  const truncated = Math.floor(raw)          // truncate, never round up
-  // Clamp to [minHandicap, maxHandicap]. Previously floored at 0, which
-  // silently capped scratch/plus golfers to 0 and violated the -2 to 27 spec.
-  const floor = settings.minHandicap ?? -2
-  const ceil  = settings.maxHandicap ?? 27
-  return Math.min(Math.max(truncated, floor), ceil)
+  return calcBreakdown(differentials, settings)?.capped ?? null
 }
 
 // Breakdown version — same math but returns all the intermediate steps for display.
@@ -66,18 +78,44 @@ export function calcBreakdown(differentials, settings = DEFAULT_SETTINGS) {
   const recent = differentials.slice(-settings.scoresUsed)
   const n      = recent.length
   const rule   = DISCARD_TABLE[Math.min(n, 12)] || { high: 1, low: 1 }
+  // Sort ascending: lowest diff first (best scores), highest last (worst scores),
+  // then remove best (low) and worst (high) outliers per the discard table.
   const sorted = [...recent].sort((a, b) => a - b)
   const used   = sorted.slice(rule.low, rule.high > 0 ? sorted.length - rule.high : undefined)
+  if (used.length === 0) return null
 
-  const avg       = used.length ? used.reduce((s, d) => s + d, 0) / used.length : 0
-  const raw       = avg * settings.handicapPct
-  const truncated = Math.floor(raw)
-  // Same clamp rule as calcHandicap — [minHandicap, maxHandicap], default -2..27.
+  const avg       = used.reduce((s, d) => s + d, 0) / used.length
+  const raw       = avg * settings.handicapPct          // display only
+  const truncated = truncatedHandicap(used, settings.handicapPct) // never rounds up
+  // Clamp to [minHandicap, maxHandicap], default -2..27 (subs: -2..40).
   const floor     = settings.minHandicap ?? -2
   const ceil      = settings.maxHandicap ?? 27
   const capped    = Math.min(Math.max(truncated, floor), ceil)
 
-  return { n, rule, sorted, used, avg, raw, capped }
+  return { n, rule, sorted, used, avg, raw, truncated, capped }
+}
+
+// Turns raw score rows (with joined `events(..., courses(total_par, hole_pars))`)
+// into the chronological handicap history the server would use: verified,
+// played, non-sub rounds with a gross, from handicap-eligible events, oldest
+// first by event date. Each row gets `par` and `diff` (gross − course par).
+export function handicapRounds(scoreRows) {
+  return (scoreRows || [])
+    .filter(s =>
+      (s.entry_type == null || s.entry_type === 'played') &&
+      (s.status == null || s.status === 'verified') &&
+      !s.sub_played &&
+      s.gross_total != null &&
+      isHandicapEligibleEvent(s.events))
+    .map(s => {
+      const course = s.events?.courses
+      const par = course?.total_par ?? (Array.isArray(course?.hole_pars)
+        ? course.hole_pars.reduce((sum, p) => sum + p, 0)
+        : null)
+      return { ...s, par, diff: par != null ? s.gross_total - par : null }
+    })
+    .filter(s => s.diff != null)
+    .sort(compareRoundsChronologically)
 }
 
 // ── One-shot recalc for a single player ───────────────────────────────────────
@@ -88,48 +126,30 @@ export async function recalcPlayerHandicap(supabase, playerId, locationId, setti
     // Check if player exists and isn't locked
     const { data: player } = await supabase
       .from('players')
-      .select('id, handicap, handicap_locked')
+      .select('id, handicap, handicap_locked, is_sub')
       .eq('id', playerId)
       .eq('location_id', locationId)
       .maybeSingle()
 
     if (!player || player.handicap_locked) return { skipped: true }
 
-    // Load all their scores with course par info. Order chronologically so
+    // Load their scores with event date/format + course par; handicapRounds
+    // applies the server's eligibility rules and event-date ordering so
     // `calcHandicap`'s `.slice(-scoresUsed)` picks the most recent N.
-    //
-    // Previous version ordered by `scores.created_at`, which doesn't exist on
-    // this table; Supabase silently returned unordered rows, and handicap
-    // calcs could use an arbitrary subset of scores instead of the latest.
-    // We pull week_number + start_date from the joined events row and sort
-    // client-side (week_number primary, start_date fallback for nulls).
+    // sub_played NULL counts as false (legacy rows) — `.eq(false)` would drop them.
     const { data: scores } = await supabase
       .from('scores')
-      .select('gross_total, events(week_number, start_date, courses(hole_pars))')
+      .select('id, gross_total, entry_type, status, sub_played, created_at, events(week_number, start_date, event_date, format, format_config, courses(total_par, hole_pars))')
       .eq('player_id', playerId)
       .eq('location_id', locationId)
       .eq('entry_type', 'played')
       .eq('status', 'verified')
-      // Skip sit-out marker rows: when this player sat out and a sub played
-      // for them, AdminScores wrote a row with sub_played=true whose gross
-      // is the sub's. Without this filter, the sub's score contaminates the
-      // regular player's handicap. The sub is credited via a separate row
-      // where player_id = sub_player_id.
-      .eq('sub_played', false)
+      .or('sub_played.is.null,sub_played.eq.false')
       .not('gross_total', 'is', null)
 
-    // Sort by week_number ascending (nulls last), then start_date ascending.
-    const sortedScores = [...(scores || [])].sort(compareRoundsChronologically)
+    const diffs = handicapRounds(scores).map(r => r.diff)
 
-    const diffs = sortedScores
-      .map(s => {
-        const holePars  = s.events?.courses?.hole_pars
-        const coursePar = holePars ? holePars.reduce((sum, p) => sum + p, 0) : null
-        return coursePar != null ? s.gross_total - coursePar : null
-      })
-      .filter(d => d != null)
-
-    const newHcp = calcHandicap(diffs, settings)
+    const newHcp = calcHandicap(diffs, settingsForPlayer(settings, player))
     if (newHcp == null) return { skipped: true }
 
     // Only write if the value actually changed

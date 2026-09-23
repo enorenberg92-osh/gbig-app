@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react'
+import { createPortal } from 'react-dom'
+import { useLocation } from '../context/LocationContext'
 
 /**
  * InstallPrompt — lightweight "Install App" button for the header.
@@ -153,8 +155,11 @@ export default function InstallPrompt({ buttonStyle }) {
         </svg>
       </button>
 
-      {showIOSModal && (
-        <IOSInstallModal onClose={() => setShowIOSModal(false)} onDismiss={dismissIOS} />
+      {/* Portal to <body>: inside the header's stacking context the bottom
+          tab bar would paint over the sheet's buttons. */}
+      {showIOSModal && createPortal(
+        <IOSInstallModal onClose={() => setShowIOSModal(false)} onDismiss={dismissIOS} />,
+        document.body
       )}
     </>
   )
@@ -162,6 +167,8 @@ export default function InstallPrompt({ buttonStyle }) {
 
 // ── iOS install instruction modal ─────────────────────────────────────────
 function IOSInstallModal({ onClose, onDismiss }) {
+  const { appName } = useLocation()
+
   // Lock body scroll while the modal is up
   useEffect(() => {
     const prev = document.body.style.overflow
@@ -188,7 +195,7 @@ function IOSInstallModal({ onClose, onDismiss }) {
         <div style={modalStyles.handle} />
 
         <div style={modalStyles.headerWrap}>
-          <h3 id="install-modal-title" style={modalStyles.title}>Install GBIG</h3>
+          <h3 id="install-modal-title" style={modalStyles.title}>Install {appName}</h3>
           <p style={modalStyles.subtitle}>
             Add the app to your Home Screen for a full-screen experience and faster access.
           </p>
@@ -240,7 +247,7 @@ function IOSInstallModal({ onClose, onDismiss }) {
                 Tap <strong>Add</strong> in the top-right
               </div>
               <div style={modalStyles.stepHint}>
-                The GBIG icon will appear on your Home Screen.
+                The {appName} icon will appear on your Home Screen.
               </div>
             </div>
             <span style={modalStyles.stepIcon} aria-hidden="true">

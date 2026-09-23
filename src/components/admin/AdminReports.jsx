@@ -5,6 +5,9 @@ import { useLocation } from '../../context/LocationContext'
 import { loadWorkingLeague } from '../../lib/leagueUtils'
 import { calcSkins } from '../../lib/skinsUtils'
 import { compareEffectiveScores } from '../../lib/roundUtils'
+import { toCsv } from '../../lib/csvUtils'
+import { fetchAllRows } from '../../lib/supabasePaging'
+import { ledgerBalances } from '../../lib/moneyUtils'
 import { Button, Toast } from '../ui'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -13,18 +16,17 @@ import { Button, Toast } from '../ui'
 // ─────────────────────────────────────────────────────────────────────────────
 
 function downloadCsv(filename, rows) {
-  // rows: array of arrays; first row = header.
-  const esc = v => {
-    const s = v == null ? '' : String(v)
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
-  }
-  const csv = rows.map(r => r.map(esc).join(',')).join('\r\n')
+  // rows: array of arrays; first row = header. toCsv neutralises formula
+  // injection (=, +, -, @ prefixes) and quotes commas / quotes / line breaks.
+  const csv = toCsv(rows)
   const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' })
   const a = document.createElement('a')
-  a.href = URL.createObjectURL(blob)
+  const url = URL.createObjectURL(blob)
+  a.href = url
   a.download = filename
   a.click()
-  URL.revokeObjectURL(a.href)
+  // Revoking synchronously can cancel the download in some browsers.
+  setTimeout(() => URL.revokeObjectURL(url), 10000)
 }
 
 export default function AdminReports() {
@@ -48,7 +50,7 @@ export default function AdminReports() {
     setLeague(lg)
     const [ev, pl, tm] = await Promise.all([
       supabase.from('events').select('id, name, week_number, status, course_id, start_date')
-        .eq('location_id', locationId).eq('league_id', lg.id).neq('is_bye', true).order('week_number'),
+        .eq('location_id', locationId).eq('league_id', lg.id).or('is_bye.is.null,is_bye.eq.false').order('week_number'),
       supabase.from('players').select('id, name, first_name, last_name, email, handicap, in_skins, is_sub, team_id')
         .eq('location_id', locationId).order('name'),
       supabase.from('teams').select('id, name, flight_id').eq('location_id', locationId).eq('league_id', lg.id).order('created_at'),
@@ -72,9 +74,10 @@ export default function AdminReports() {
   async function standingsThrough(maxWeek) {
     const ids = closedEvents.filter(e => maxWeek == null || (e.week_number ?? 0) <= maxWeek).map(e => e.id)
     if (!ids.length) return []
-    const { data: scoreRows } = await supabase.from('scores')
-      .select('player_id, team_id, event_id, gross_total, net_total, entry_type, status, created_at')
-      .in('event_id', ids).eq('location_id', locationId).eq('status', 'verified')
+    // Paged: a season of scores blows past PostgREST's 1000-row cap.
+    const { data: scoreRows } = await fetchAllRows(() => supabase.from('scores')
+      .select('id, player_id, team_id, event_id, gross_total, net_total, entry_type, status, created_at')
+      .in('event_id', ids).eq('location_id', locationId).eq('status', 'verified').order('id'))
     const byTeam = {}
     const seen = {} // one effective score per player per event
     ;(scoreRows || []).sort(compareEffectiveScores).forEach(s => {
@@ -97,7 +100,7 @@ export default function AdminReports() {
     const evt = events.find(e => e.id === recapEvent)
     if (!evt) return
     const [{ data: scoreRows }, { data: courseRow }, { data: matchupRows }] = await Promise.all([
-      supabase.from('scores').select('player_id, team_id, gross_total, net_total, entry_type, status, hole_scores, created_at')
+      supabase.from('scores').select('player_id, team_id, gross_total, net_total, entry_type, status, sub_played, hole_scores, created_at')
         .eq('event_id', evt.id).eq('location_id', locationId).eq('status', 'verified'),
       evt.course_id
         ? supabase.from('courses').select('name, num_holes, total_par').eq('id', evt.course_id).eq('location_id', locationId).single()
@@ -129,7 +132,8 @@ export default function AdminReports() {
     const inSkins = new Set(players.filter(p => p.in_skins).map(p => p.id))
     const scoreMap = {}
     ;(scoreRows || []).forEach(s => {
-      if (s.entry_type === 'played' && inSkins.has(s.player_id) && Array.isArray(s.hole_scores)) {
+      // Sub-played marker rows hold the sub's holes on the absent player's row — never skins.
+      if (s.entry_type === 'played' && !s.sub_played && inSkins.has(s.player_id) && Array.isArray(s.hole_scores)) {
         scoreMap[s.player_id] = s.hole_scores
       }
     })
@@ -170,8 +174,8 @@ export default function AdminReports() {
     const ids = closedEvents.map(e => e.id)
     if (!ids.length) { showToast('No closed weeks yet.', 'error'); return }
     const [{ data: scoreRows }, { data: subRows }] = await Promise.all([
-      supabase.from('scores').select('player_id, event_id, entry_type, sub_played')
-        .in('event_id', ids).eq('location_id', locationId).eq('status', 'verified'),
+      fetchAllRows(() => supabase.from('scores').select('id, player_id, event_id, entry_type, sub_played')
+        .in('event_id', ids).eq('location_id', locationId).eq('status', 'verified').order('id')),
       supabase.from('subs').select('player_id, event_id').in('event_id', ids)
         .eq('location_id', locationId).eq('status', 'approved'),
     ])
@@ -194,14 +198,12 @@ export default function AdminReports() {
   }
 
   async function buildMoney() {
-    const { data: entries } = await supabase.from('ledger').select('*')
-      .eq('location_id', locationId).eq('league_id', league.id).order('created_at')
-    const balances = {}
-    ;(entries || []).forEach(e => {
-      const name = e.player_id ? playerName(e.player_id) : teamName(e.team_id)
-      balances[name] = (balances[name] || 0) + Number(e.amount)
-    })
-    const rows = Object.entries(balances).map(([name, amt]) => ({ name, amt })).sort((a, b) => b.amt - a.amt)
+    const { data: entries } = await fetchAllRows(() => supabase.from('ledger').select('*')
+      .eq('location_id', locationId).eq('league_id', league.id).order('created_at').order('id'))
+    // Keyed by player/team id — two players can share a display name.
+    const rows = ledgerBalances(entries).map(b => ({
+      ...b, name: b.playerId ? playerName(b.playerId) : teamName(b.teamId),
+    }))
     setReport({ kind: 'money', rows, entries: entries || [] })
   }
 
@@ -216,9 +218,10 @@ export default function AdminReports() {
   async function exportScores() {
     const ids = events.map(e => e.id)
     if (!ids.length) return
-    const { data: scoreRows } = await supabase.from('scores')
-      .select('player_id, team_id, event_id, gross_total, net_total, handicap_used, entry_type, status, sub_played, hole_scores')
-      .in('event_id', ids).eq('location_id', locationId)
+    const { data: scoreRows, error } = await fetchAllRows(() => supabase.from('scores')
+      .select('id, player_id, team_id, event_id, gross_total, net_total, handicap_used, entry_type, status, sub_played, hole_scores')
+      .in('event_id', ids).eq('location_id', locationId).order('id'))
+    if (error) { showToast('Could not load scores: ' + error.message, 'error'); return }
     const evtById = {}
     events.forEach(e => { evtById[e.id] = e })
     downloadCsv('scores.csv', [
@@ -241,8 +244,8 @@ export default function AdminReports() {
   }
 
   async function exportLedger() {
-    const { data: entries } = await supabase.from('ledger').select('*')
-      .eq('location_id', locationId).eq('league_id', league.id).order('created_at')
+    const { data: entries } = await fetchAllRows(() => supabase.from('ledger').select('*')
+      .eq('location_id', locationId).eq('league_id', league.id).order('created_at').order('id'))
     downloadCsv('ledger.csv', [
       ['Date', 'Who', 'Type', 'Amount', 'Note'],
       ...(entries || []).map(e => [
@@ -429,7 +432,7 @@ export default function AdminReports() {
                 <thead><tr>{['Who', 'Balance'].map(h => <th key={h} style={st.th}>{h}</th>)}</tr></thead>
                 <tbody>
                   {report.rows.map(r => (
-                    <tr key={r.name}>
+                    <tr key={r.key}>
                       <td style={st.td}>{r.name}</td>
                       <td style={{ ...st.td, fontWeight: 700 }}>{r.amt > 0 ? '+' : ''}{r.amt.toFixed(2)}</td>
                     </tr>

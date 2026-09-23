@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { CalendarCheck, CalendarX, Check, Users, Clock } from 'lucide-react'
+import { CalendarCheck, CalendarX, Check, Users, Clock, Lock } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useLocation } from '../context/LocationContext'
 import { Button, Toast, EmptyState } from '../components/ui'
@@ -34,6 +34,8 @@ export default function EventsPage({ session }) {
 
   useEffect(() => {
     if (!locationId) return
+    // Events tables are readable only when signed in — nothing to load.
+    if (!session?.user?.id) { setLoading(false); return }
     load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [locationId, session?.user?.id])
@@ -112,6 +114,23 @@ export default function EventsPage({ session }) {
     setLoading(false)
   }
 
+  // Re-read signup tallies + my RSVPs after a failed write so the capacity
+  // meter and button reflect what the server actually has.
+  async function refreshSignups() {
+    const { data } = await supabase.from('event_signups')
+      .select('event_id, player_id')
+      .eq('location_id', locationId)
+    if (!data) return
+    const cnt = {}
+    const mine = new Set()
+    data.forEach(s => {
+      cnt[s.event_id] = (cnt[s.event_id] || 0) + 1
+      if (myPlayer?.id && s.player_id === myPlayer.id) mine.add(s.event_id)
+    })
+    setCounts(cnt)
+    setMyRsvps(mine)
+  }
+
   async function toggleTournament(t) {
     if (!myPlayer?.id) { showToast('Sign in to enter tournaments.', 'error'); return }
     setBusyId(t.id)
@@ -149,14 +168,21 @@ export default function EventsPage({ session }) {
     const alreadyIn = myRsvps.has(evt.id)
 
     if (alreadyIn) {
-      const { error } = await supabase
+      // .select() returns the deleted rows — a DELETE that RLS filters out
+      // succeeds with zero rows, which must not read as "cancelled".
+      const { data, error } = await supabase
         .from('event_signups')
         .delete()
         .eq('event_id', evt.id)
         .eq('player_id', myPlayer.id)
         .eq('location_id', locationId)
+        .select('event_id')
       setBusyId(null)
-      if (error) { showToast('Error: ' + error.message, 'error'); return }
+      if (error || !data?.length) {
+        showToast(error?.message || 'Could not cancel your RSVP — try again.', 'error')
+        refreshSignups()
+        return
+      }
       showToast('RSVP cancelled.')
       setMyRsvps(prev => { const n = new Set(prev); n.delete(evt.id); return n })
       setCounts(prev => ({ ...prev, [evt.id]: Math.max(0, (prev[evt.id] || 1) - 1) }))
@@ -169,7 +195,9 @@ export default function EventsPage({ session }) {
     const current = counts[evt.id] || 0
     if (evt.capacity != null && current >= evt.capacity) {
       setBusyId(null)
-      showToast('This event is full.', 'error'); return
+      showToast('This event is full.', 'error')
+      refreshSignups()
+      return
     }
 
     const { error } = await supabase
@@ -180,16 +208,37 @@ export default function EventsPage({ session }) {
       // 23505 = unique_violation -- caller already RSVP'd in another tab.
       if (error.code === '23505') {
         showToast("You're already signed up.")
-        setMyRsvps(prev => new Set(prev).add(evt.id))
+        refreshSignups()
         return
       }
-      showToast('Error: ' + error.message, 'error')
+      // Server messages are player-readable (e.g. the capacity trigger's
+      // "This event is full").
+      showToast(error.message || 'Could not RSVP — try again.', 'error')
+      refreshSignups()
       return
     }
     showToast("You're signed up for " + evt.title + "!")
     setMyRsvps(prev => new Set(prev).add(evt.id))
     setCounts(prev => ({ ...prev, [evt.id]: (prev[evt.id] || 0) + 1 }))
   }
+
+  // Signed out: events/signups aren't readable, so an empty feed would be
+  // misleading — point the player at sign-in instead.
+  if (!session) return (
+    <div style={styles.container}>
+      <div style={styles.pageHeader}>
+        <h1 style={styles.pageTitle}>Events</h1>
+        <p style={styles.pageSubtitle}>Tournaments & special events</p>
+      </div>
+      <div style={styles.emptyWrap}>
+        <EmptyState
+          icon={<Lock size={38} strokeWidth={1.5} />}
+          title="Sign in to see events"
+          description="Sign in on the League tab to see upcoming tournaments and events and RSVP."
+        />
+      </div>
+    </div>
+  )
 
   return (
     <div style={styles.container}>

@@ -11,7 +11,8 @@ import { compareEffectiveScores } from '../../lib/roundUtils'
 import { Button, Toast } from '../ui'
 import { useFeature } from '../../context/FeatureContext'
 
-import { calcSkins } from '../../lib/skinsUtils'
+import { calcSkins, NOT_SUB_PLAYED } from '../../lib/skinsUtils'
+import { classifyHoleGrid, resolveHandicapUsed } from '../../lib/adminScoreUtils'
 
 export default function AdminScores({ activeEventId = null, onEventChange = () => {} }) {
   const { locationId, timezone } = useLocation()
@@ -54,7 +55,7 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
     setLeagueId(league.id)
     const { data, error } = await supabase
       .from('events')
-      .select('id, name, event_date, start_date, status, course_id, week_number, is_bye')
+      .select('id, name, event_date, start_date, end_date, status, course_id, week_number, is_bye')
       .eq('location_id', locationId)
       .eq('league_id', league.id)
       .order('week_number', { ascending: true, nullsFirst: false })
@@ -201,25 +202,38 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
     if (eventData?.courseError) { showToast(eventData.courseError, 'error'); return }
     setSaving(true)
     const players = [
-      { player: team.p1 },
-      { player: team.p2 },
+      { player: team.p1, existing: team.score1 },
+      { player: team.p2, existing: team.score2 },
     ]
     const entries = []
+    const holeCount = eventData.holePars.length
 
-    for (const { player } of players) {
-      const holes = (holeScores[player.id] || []).map(v => parseInt(v, 10) || null)
-      if (holes.length !== eventData.holePars.length || holes.some(value => value == null || value < 1 || value > 20)) {
-        showToast(`Enter all ${eventData.holePars.length} hole scores from 1 to 20.`, 'error')
-        setSaving(false)
-        return
-      }
-      // Use sub's handicap if an approved sub exists for this player/event
+    // A fully blank grid means "no score for this player yet" and is skipped,
+    // so one teammate can be saved while the other is still out. A partially
+    // filled grid is a mistake and blocks the save.
+    const grids = players.map(({ player }) => classifyHoleGrid(holeScores[player.id], holeCount))
+    if (grids.some(g => g.status === 'invalid')) {
+      showToast(`Enter all ${holeCount} hole scores from 1 to 20 (or leave a player's card completely blank).`, 'error')
+      setSaving(false)
+      return
+    }
+    if (grids.every(g => g.status === 'blank')) {
+      showToast('Enter hole scores for at least one player.', 'error')
+      setSaving(false)
+      return
+    }
+
+    players.forEach(({ player, existing }, idx) => {
+      const { status, holes } = grids[idx]
+      if (status !== 'complete') return
+      // Existing rows keep the handicap they were played off; only new rows
+      // use the current (or approved sub's) handicap.
       const sub = subMap[player.id]
-      const effectiveHandicap = sub != null ? (sub.sub_handicap || 0) : (player.handicap || 0)
+      const handicapUsed = resolveHandicapUsed(existing, player, sub)
       entries.push({
         player_id: player.id,
         hole_scores: holes,
-        handicap_used: Math.round(effectiveHandicap),
+        handicap_used: handicapUsed,
         sub_played: sub != null,
       })
 
@@ -228,11 +242,11 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
         entries.push({
           player_id: sub.sub_player_id,
           hole_scores: holes,
-          handicap_used: Math.round(effectiveHandicap),
+          handicap_used: handicapUsed,
           sub_played: false,
         })
       }
-    }
+    })
 
     const { error } = await supabase.rpc('admin_upsert_score', {
       p_event_id: selectedEvent,
@@ -344,7 +358,8 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
   async function handleCalculateSkins() {
     // Load scores + all players independently (avoids FK join issues)
     const [{ data: allScores }, { data: skinPlayers }] = await Promise.all([
-      supabase.from('scores').select('player_id, hole_scores').eq('event_id', selectedEvent).eq('location_id', locationId).eq('entry_type', 'played').eq('status', 'verified'),
+      // Sub-played marker rows hold the sub's holes on the absent player's row — exclude them.
+      supabase.from('scores').select('player_id, hole_scores').eq('event_id', selectedEvent).eq('location_id', locationId).eq('entry_type', 'played').eq('status', 'verified').or(NOT_SUB_PLAYED),
       supabase.from('players').select('id, name, in_skins').eq('location_id', locationId),
     ])
 
@@ -542,7 +557,8 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
               {Array.from({ length: holePars.length }, (_, i) => i + 1).map(hole => {
                 const winnerId = skinsResult.skins[hole]
                 const allHoleScores = skinsResult.allScores.map(s => ({
-                  name: s.players?.name,
+                  playerId: s.player_id,
+                  name: skinsResult.playerNames[s.player_id] || '?',
                   score: s.hole_scores?.[hole - 1],
                 })).filter(x => x.score)
                 const min = Math.min(...allHoleScores.map(x => x.score))
@@ -552,7 +568,7 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
                     <span style={styles.skinPar}>Par {holePars[hole - 1]}</span>
                     <div style={styles.skinScores}>
                       {allHoleScores.map(x => (
-                        <span key={x.name} style={{ ...styles.skinScore, color: scoreColor(x.score, holePars[hole - 1]), fontWeight: x.score === min ? 700 : 400 }}>
+                        <span key={x.playerId} style={{ ...styles.skinScore, color: scoreColor(x.score, holePars[hole - 1]), fontWeight: x.score === min ? 700 : 400 }}>
                           {x.name}: {x.score}
                         </span>
                       ))}
@@ -584,10 +600,11 @@ function TeamRow({ team, holePars, isEditing, holeScores, saving, subMap = {}, o
   const totalPar = holePars.reduce((s, p) => s + p, 0)
   const submitted = !!(team.score1 || team.score2)
 
-  // Helper: get effective handicap (sub's if one exists, else player's own)
+  // Helper: the handicap this row is (or will be) saved with — an existing
+  // round keeps its handicap_used; new rows use the sub's or player's current.
   function effectiveHcp(player) {
-    const sub = subMap[player.id]
-    return sub != null ? (sub.sub_handicap || 0) : (player.handicap || 0)
+    const existing = player.id === team.p1?.id ? team.score1 : team.score2
+    return resolveHandicapUsed(existing, player, subMap[player.id])
   }
 
   // Helper: sub display name

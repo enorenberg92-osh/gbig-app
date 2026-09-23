@@ -1,8 +1,10 @@
 // Supabase Edge Function — send-alert
 //
 // Sends a broadcast push notification + writes an `alerts` row.
-// Scoped to the caller's location: the function resolves location from the
-// caller's `location_admins` row rather than trusting client input.
+// Scoped to one location: the client sends `locationId`, and the function only
+// accepts it if the caller administers that location (or is a super-admin).
+// If no locationId is sent, it falls back to the caller's admin location only
+// when they administer exactly one.
 //
 // Auth:  caller must pass their user's JWT in the `Authorization` header.
 //        Non-admins get 403.
@@ -29,7 +31,7 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
 
   try {
-    const { title, body, sentBy, expiresAt } = await req.json()
+    const { title, body, sentBy, expiresAt, locationId: requestedLocationId } = await req.json()
     if (!title || !body) return json({ error: 'title and body required' }, 400)
 
     // expiresAt is optional. Must be ISO-8601 or null. Reject obvious garbage
@@ -66,24 +68,35 @@ Deno.serve(async (req) => {
     if (userErr || !userData?.user) return json({ error: 'Invalid session' }, 401)
     const userId = userData.user.id
 
-    // ── 2. Verify caller is an admin for some location ──────────────────────
+    // ── 2. Verify caller is an admin for the requested location ────────────
     // (Service-role client bypasses RLS to look up the admin row.)
     const admin = createClient(supabaseUrl, serviceKey, {
       auth: { autoRefreshToken: false, persistSession: false },
     })
 
-    // An admin can run multiple locations; a maybeSingle() here would throw
-    // the moment someone administers two. Take all rows and pick the first
-    // (single-location admins — the normal case — are unaffected).
-    const { data: adminRows, error: adminErr } = await admin
-      .from('location_admins')
-      .select('location_id, role')
-      .eq('user_id', userId)
+    // An admin can run multiple locations, so never guess: the requested
+    // location must be one of theirs. Super-admins may target any location.
+    const [adminRes, superRes] = await Promise.all([
+      admin.from('location_admins').select('location_id, role').eq('user_id', userId),
+      admin.from('super_admins').select('user_id').eq('user_id', userId).maybeSingle(),
+    ])
+    if (adminRes.error) throw adminRes.error
+    const adminRows = adminRes.data || []
+    const isSuperAdmin = !!superRes.data
 
-    if (adminErr) throw adminErr
-    if (!adminRows?.length) return json({ error: 'Not an admin for any location' }, 403)
-
-    const locationId = adminRows[0].location_id
+    let locationId: string
+    if (requestedLocationId) {
+      if (typeof requestedLocationId !== 'string') return json({ error: 'locationId must be a string' }, 400)
+      const allowed = isSuperAdmin || adminRows.some(r => r.location_id === requestedLocationId)
+      if (!allowed) return json({ error: 'Not an admin for this location' }, 403)
+      locationId = requestedLocationId
+    } else if (adminRows.length === 1) {
+      locationId = adminRows[0].location_id
+    } else if (!adminRows.length) {
+      return json({ error: 'Not an admin for any location' }, 403)
+    } else {
+      return json({ error: 'locationId is required when you administer more than one location' }, 400)
+    }
 
     // Per-location push branding: icon convention /branding/<slug>-icon-192.png.
     const { data: locRow } = await admin
@@ -130,7 +143,7 @@ Deno.serve(async (req) => {
       title,
       body,
       tag:  'league-alert',
-      url:  '/#/alerts',
+      url:  '/alerts',  // BrowserRouter path (not a hash route)
       icon: iconPath,
     })
 

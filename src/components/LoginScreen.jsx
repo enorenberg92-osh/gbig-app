@@ -27,14 +27,18 @@ export default function LoginScreen() {
       return
     }
 
-    // Link player record to this auth account if not already linked
+    // Best-effort self-link of an unlinked player row. Under RLS an unlinked
+    // row isn't visible to this user, so this normally matches nothing — the
+    // create-player-account edge function does the real linking. Kept as a
+    // harmless fallback; its result is intentionally ignored.
     if (data?.user) {
-      await supabase
-        .from('players')
-        .update({ user_id: data.user.id })
-        .eq('email', email.trim().toLowerCase())
-        .is('user_id', null)
-        .select()
+      try {
+        await supabase
+          .from('players')
+          .update({ user_id: data.user.id })
+          .eq('email', email.trim().toLowerCase())
+          .is('user_id', null)
+      } catch { /* non-fatal */ }
     }
 
     // App.jsx auth listener handles the redirect automatically

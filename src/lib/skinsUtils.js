@@ -18,3 +18,19 @@ export function calcSkins(playerScoreMap, numHoles) {
   }
   return skins
 }
+
+// Sub-played marker rows (sub_played=true) hold the SUB's holes on the absent
+// player's row — they must never win skins under that player's name. NULL
+// counts as false (legacy rows), so use this PostgREST filter via
+// `query.or(NOT_SUB_PLAYED)` rather than `.eq('sub_played', false)`.
+export const NOT_SUB_PLAYED = 'sub_played.is.null,sub_played.eq.false'
+
+// Client-side twin of the query filters: a verified, played, non-sub row with
+// hole scores. Missing entry_type/status count as played/verified (legacy).
+export function isSkinsEligibleScore(score) {
+  return !!score &&
+    (score.entry_type == null || score.entry_type === 'played') &&
+    (score.status == null || score.status === 'verified') &&
+    !score.sub_played &&
+    Array.isArray(score.hole_scores)
+}

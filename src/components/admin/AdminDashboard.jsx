@@ -20,22 +20,24 @@ const STEPS = [
   { id: 'publish', label: 'Lock & publish', num: 5 },
 ]
 
-function generateEmail(evt, scores, teams, players, skins, appName = 'Golf League App') {
+function generateEmail(evt, scores, teams, rosterRows, skins, appName = 'Golf League App') {
   const evtName = evt.name || evt.title || `Event ${evt.week_number || ''}`
   const date = evt.start_date
     ? formatLocalDate(evt.start_date, { weekday: 'long', month: 'long', day: 'numeric' })
     : ''
 
-  // Build player→team map (scores may only have player_id, not team_id)
+  // Build player→team map from the event's dated roster (scores may only
+  // have player_id, not team_id; teams are loaded as id + name only).
+  const teamById = {}
+  teams.forEach(t => { teamById[t.id] = t })
   const plrTeamMap = {}
-  teams.forEach(t => {
-    if (t.player1_id) plrTeamMap[t.player1_id] = t
-    if (t.player2_id) plrTeamMap[t.player2_id] = t
+  rosterRows.forEach(row => {
+    if (teamById[row.team_id]) plrTeamMap[row.player_id] = teamById[row.team_id]
   })
   const byTeam = {}
   scores.forEach(s => {
     if (s.status !== 'verified') return
-    const team = s.team_id ? teams.find(t => t.id === s.team_id) : plrTeamMap[s.player_id]
+    const team = (s.team_id && teamById[s.team_id]) || plrTeamMap[s.player_id]
     if (!team) return
     if (!byTeam[team.id]) byTeam[team.id] = { team, gross: 0, net: 0 }
     byTeam[team.id].gross += s.gross_total || 0
@@ -76,6 +78,7 @@ export default function AdminDashboard({ onWeekClosed = () => {} }) {
   const [teams, setTeams]           = useState([])
   const [players, setPlayers]       = useState([])
   const [rosterRows, setRosterRows] = useState([])
+  const [penaltyPar, setPenaltyPar] = useState(36)   // open event's course par (server falls back to 36)
   const [skins, setSkins]           = useState([])
   const [activeStep, setActiveStep] = useState('scores')
   const [emailBody, setEmailBody]   = useState('')
@@ -133,22 +136,27 @@ export default function AdminDashboard({ onWeekClosed = () => {} }) {
       // Load scores + course info for skins calculation
       const [{ data: scrs }, evtDetail, { data: eventRoster }] = await Promise.all([
         supabase.from('scores').select('*').eq('event_id', evt.id).eq('location_id', locationId).neq('status', 'rejected'),
-        supabase.from('events').select('*, courses(id, name, num_holes, hole_pars)').eq('id', evt.id).eq('location_id', locationId).eq('league_id', league.id).single(),
+        supabase.from('events').select('*, courses(id, name, num_holes, hole_pars, total_par)').eq('id', evt.id).eq('location_id', locationId).eq('league_id', league.id).single(),
         supabase.from('roster_at').select('team_id, player_id').eq('event_id', evt.id),
       ])
       const s = scrs || []
       setScores(s)
       setRosterRows(eventRoster || [])
+      // publish_week: penalty net = COALESCE(course total_par, 36) + handicap + 7
+      setPenaltyPar(evtDetail?.data?.courses?.total_par ?? 36)
 
       // ── Calculate skins from hole_scores (same logic as AdminSkins tab) ──
       // Penalty rows carry no hole_scores so the per-hole loop below skips them
       // naturally — but filter explicitly by entry_type so the intent is
       // unambiguous and the set size is tight.
       const skinsPlayerIds = new Set((plrs || []).filter(p => p.in_skins).map(p => p.id))
+      // Sub-played marker rows hold the sub's holes under the absent
+      // player's name — they never win skins.
       const skinsScores    = s.filter(sc =>
         skinsPlayerIds.has(sc.player_id) &&
         (!sc.entry_type || sc.entry_type === 'played') &&
-        sc.status === 'verified'
+        sc.status === 'verified' &&
+        !sc.sub_played
       )
       const holePars       = evtDetail?.data?.courses?.hole_pars || null
       const holeCount      = evtDetail?.data?.courses?.num_holes || 0
@@ -169,7 +177,7 @@ export default function AdminDashboard({ onWeekClosed = () => {} }) {
         }
       }
       setSkins(computed)
-      setEmailBody(generateEmail(evt, s, tms || [], plrs || [], computed, appName))
+      setEmailBody(generateEmail(evt, s, tms || [], eventRoster || [], computed, appName))
     }
 
     setLoading(false)
@@ -524,8 +532,9 @@ export default function AdminDashboard({ onWeekClosed = () => {} }) {
               </div>
 
               <div style={s.publishInfo}>
-                Publishing will: unlock results for all players, reveal skins winners in the app,
-                recalculate all handicaps, and update season standings.
+                Publishing will: lock this week's scores, add missed-week penalties, score the
+                week's format results, update season standings, and open the next week.
+                Handicaps aren't recalculated here — they update as scores are saved or approved.
               </div>
 
               {/* Missed-week penalty toggle + live preview ────────────────── */}
@@ -541,7 +550,7 @@ export default function AdminDashboard({ onWeekClosed = () => {} }) {
                     <div style={s.penaltyTextWrap}>
                       <span style={s.penaltyTitle}>Apply missed-week penalty</span>
                       <span style={s.penaltyDesc}>
-                        Players with no submitted score get a net of handicap + 7.
+                        Players with no submitted score get a net of course par ({penaltyPar}) + handicap + 7.
                         Penalty rows count toward standings but are excluded from
                         handicap and skins.
                       </span>
@@ -561,7 +570,7 @@ export default function AdminDashboard({ onWeekClosed = () => {} }) {
                         const name = pl.first_name
                           ? `${pl.first_name} ${pl.last_name || ''}`.trim()
                           : (pl.name || 'Unknown')
-                        const net = (pl.handicap ?? 0) + 7
+                        const net = penaltyPar + Math.round(pl.handicap ?? 0) + 7
                         return (
                           <div key={pl.id} style={s.penaltyRow}>
                             <span style={s.penaltyName}>{name}</span>

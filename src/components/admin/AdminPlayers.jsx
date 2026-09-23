@@ -13,7 +13,36 @@ import { Button, Toast, EmptyState, Input } from '../ui'
 import { loadWorkingLeague } from '../../lib/leagueUtils'
 import { mutationErrorMessage } from '../../lib/rpcErrors'
 
-const EMPTY_PLAYER_FORM = { name: '', email: '', handicap: '', in_skins: false, handicap_locked: false, league_password: 'password' }
+// `password` is write-only: it goes to the create-player-account Edge Function
+// (create or reset mode) and is never stored on the players row — the old
+// players.league_password column was readable by everyone in the location.
+const EMPTY_PLAYER_FORM = { name: '', email: '', handicap: '', in_skins: false, handicap_locked: false, password: '' }
+const MIN_PASSWORD_LENGTH = 6
+
+// Calls the create-player-account Edge Function with the caller's access
+// token (the function verifies we're an admin for the player's location).
+// Body is { player_id, email, password } to create/link an account, or
+// { mode: 'reset_password', player_id, password } to change the password of
+// an existing login. Throws with the function's error message on failure.
+async function callPlayerAccountFunction(body) {
+  const { data: { session } } = await supabase.auth.getSession()
+  const accessToken = session?.access_token
+  if (!accessToken) throw new Error('You are not signed in.')
+  const fnRes = await fetch(
+    import.meta.env.VITE_SUPABASE_URL + '/functions/v1/create-player-account',
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + accessToken,
+      },
+      body: JSON.stringify(body),
+    }
+  )
+  const fnBody = await fnRes.json().catch(() => null)
+  if (!fnRes.ok || fnBody?.error) throw new Error(fnBody?.error || `HTTP ${fnRes.status}`)
+  return fnBody
+}
 const EMPTY_TEAM_FORM   = { name: '', player1_id: '', player2_id: '' }
 
 export default function AdminPlayers() {
@@ -33,6 +62,12 @@ export default function AdminPlayers() {
   const [dialog, setDialog]           = useState(null)
   const [search, setSearch]           = useState('')
   const [workingLeague, setWorkingLeague] = useState(null)
+  // player_id → team_id for ACTIVE memberships (effective_to IS NULL) in the
+  // working league. players.team_id is a legacy location-wide column and
+  // goes stale across leagues, so roster availability comes from here.
+  const [teamByPlayer, setTeamByPlayer] = useState(() => new Map())
+  // Inline "Create Account" password prompt: { playerId, password }
+  const [accountPrompt, setAccountPrompt] = useState(null)
 
   // ── URL-driven sub-view state ────────────────────────────────────────────
   // /league/admin/players            → main list + teams (default)
@@ -56,13 +91,16 @@ export default function AdminPlayers() {
     try { league = await loadWorkingLeague(supabase, locationId) }
     catch (error) { showToast(error.message, 'error'); setLoading(false); return }
     setWorkingLeague(league)
-    const [{ data: plrs, error: plrErr }, { data: tms }] = await Promise.all([
+    const [{ data: plrs, error: plrErr }, { data: tms }, { data: mships, error: mshipErr }] = await Promise.all([
       supabase.from('players').select('*').eq('location_id', locationId).order('name'),
       supabase.from('teams').select('id, name, player1_id, player2_id').eq('location_id', locationId).eq('league_id', league.id).order('created_at', { ascending: true }),
+      supabase.from('team_memberships').select('player_id, team_id').eq('league_id', league.id).is('effective_to', null),
     ])
     if (plrErr) console.error('Players load error:', plrErr)
+    if (mshipErr) console.error('Team memberships load error:', mshipErr)
     setPlayers(plrs || [])
     setTeams(tms || [])
+    setTeamByPlayer(new Map((mships || []).map(m => [m.player_id, m.team_id])))
     setLoading(false)
   }
 
@@ -78,12 +116,14 @@ export default function AdminPlayers() {
 
     // Handicap is required by the form; still truncate + clamp on save as
     // defense in depth so a manually typed decimal or out-of-range value
-    // can't sneak into the DB. Spec: integers only, [-2, 27]. If you want
-    // different rules for a future league, change the floor/ceil here and
-    // the defaults in handicapCalc.js DEFAULT_SETTINGS in tandem.
+    // can't sneak into the DB. Spec: integers only, [-2, 27] for regular
+    // players and [-2, 40] for subs (matches the server-side clamp). If you
+    // want different rules for a future league, change the floor/ceil here
+    // and the defaults in handicapCalc.js DEFAULT_SETTINGS in tandem.
+    const maxHcp = editingPlayer?.is_sub ? 40 : 27
     const rawHcp = parseFloat(playerForm.handicap)
     const handicap = Number.isFinite(rawHcp)
-      ? Math.max(-2, Math.min(27, Math.floor(rawHcp)))
+      ? Math.max(-2, Math.min(maxHcp, Math.floor(rawHcp)))
       : null
 
     const payload = {
@@ -92,7 +132,11 @@ export default function AdminPlayers() {
       handicap,
       in_skins: playerForm.in_skins,
       handicap_locked: playerForm.handicap_locked,
-      league_password: playerForm.league_password.trim() || 'password',
+    }
+    // Write-only; blank = no change / no account yet.
+    const password = playerForm.password
+    if (password && password.length < MIN_PASSWORD_LENGTH) {
+      showToast(`Password must be at least ${MIN_PASSWORD_LENGTH} characters.`, 'error'); return
     }
 
     if (editingPlayer) {
@@ -101,9 +145,33 @@ export default function AdminPlayers() {
         p_player_id: editingPlayer.id,
         p_payload: payload,
       })
+      if (error) {
+        setSaving(false)
+        showToast('Error: ' + mutationErrorMessage(error, 'update this player'), 'error'); return
+      }
+      // A typed password resets the real login password (existing account)
+      // or creates the login (no account yet, email on file).
+      let msg = 'Player updated!'
+      let type = 'success'
+      if (password) {
+        try {
+          if (editingPlayer.user_id) {
+            await callPlayerAccountFunction({ mode: 'reset_password', player_id: editingPlayer.id, password })
+            msg = 'Player updated & login password changed.'
+          } else if (payload.email) {
+            await callPlayerAccountFunction({ player_id: editingPlayer.id, email: payload.email, password })
+            msg = 'Player updated & account created! They can sign in now.'
+          } else {
+            msg = 'Player updated. Password ignored — add an email to create a login.'
+            type = 'error'
+          }
+        } catch (e) {
+          msg = `Player updated, but the password change failed: ${e.message}`
+          type = 'error'
+        }
+      }
       setSaving(false)
-      if (error) { showToast('Error: ' + mutationErrorMessage(error, 'update this player'), 'error'); return }
-      showToast('Player updated!')
+      showToast(msg, type)
       setShowPlayerForm(false); setEditingPlayer(null); setPlayerForm(EMPTY_PLAYER_FORM)
       loadAll()
       return
@@ -141,18 +209,18 @@ export default function AdminPlayers() {
           `Add ${payload.name} anyway?`,
         confirmLabel: 'Add Anyway',
         destructive: false,
-        onConfirm: () => doInsertNewPlayer(payload),
+        onConfirm: () => doInsertNewPlayer(payload, password),
       })
       return
     }
 
-    await doInsertNewPlayer(payload)
+    await doInsertNewPlayer(payload, password)
   }
 
   // Extracted insert path — called either directly (no duplicate) or from
   // the "Add Anyway" branch of the duplicate-detection dialog. Keeps the
   // Edge Function call, toast choice, and form reset all in one place.
-  async function doInsertNewPlayer(payload) {
+  async function doInsertNewPlayer(payload, password) {
     setSaving(true)
 
     const { data: newPlayerId, error: insertError } = await supabase.rpc('admin_create_player', {
@@ -161,41 +229,18 @@ export default function AdminPlayers() {
     })
 
     setSaving(false)
-    if (insertError) { showToast('Error: ' + insertError.message, 'error'); return }
+    if (insertError) { showToast('Error: ' + mutationErrorMessage(insertError, 'add this player'), 'error'); return }
 
-    // Automatically create a login account if an email was provided
-    if (payload.email && newPlayerId) {
+    // Create a login account when both an email and a password were given
+    if (payload.email && password && newPlayerId) {
       try {
-        // Forward the caller's access token so the Edge Function verifies
-        // we're an admin for this player's location before creating anything.
-        const { data: { session } } = await supabase.auth.getSession()
-        const accessToken = session?.access_token
-        if (!accessToken) throw new Error('You are not signed in.')
-
-        const fnRes = await fetch(
-          import.meta.env.VITE_SUPABASE_URL + '/functions/v1/create-player-account',
-          {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': 'Bearer ' + accessToken,
-            },
-            body: JSON.stringify({
-              player_id: newPlayerId,
-              email:     payload.email,
-              password:  payload.league_password || 'password',
-            }),
-          }
-        )
-        const fnBody = await fnRes.json()
-        if (!fnRes.ok || fnBody?.error) {
-          showToast(`Player added, but account creation failed: ${fnBody?.error || fnRes.status}`, 'error')
-        } else {
-          showToast(`Player added & account created! They can sign in now.`)
-        }
+        await callPlayerAccountFunction({ player_id: newPlayerId, email: payload.email, password })
+        showToast(`Player added & account created! They can sign in now.`)
       } catch (e) {
         showToast(`Player added, but account creation failed: ${e.message}`, 'error')
       }
+    } else if (payload.email) {
+      showToast('Player added! (No password set — use Create Account to give them a login.)')
     } else {
       showToast('Player added! (No email — add one later to create a login.)')
     }
@@ -220,9 +265,9 @@ export default function AdminPlayers() {
   async function handleDeletePlayer(player) {
     // Count every child table that references this player. `head: true, count: 'exact'`
     // asks Postgres for the row count without returning the rows themselves.
-    let counts = { scores: 0, subs: 0, follows: 0, messages: 0 }
+    let counts = { scores: 0, subs: 0, follows: 0, messages: 0, ledger: 0 }
     try {
-      const [scoresRes, subsRes, followsRes, messagesRes] = await Promise.all([
+      const [scoresRes, subsRes, followsRes, messagesRes, ledgerRes] = await Promise.all([
         supabase.from('scores')
           .select('id', { count: 'exact', head: true })
           .eq('player_id', player.id),
@@ -235,12 +280,16 @@ export default function AdminPlayers() {
         supabase.from('messages')
           .select('id', { count: 'exact', head: true })
           .or(`sender_id.eq.${player.id},recipient_id.eq.${player.id}`),
+        supabase.from('ledger')
+          .select('id', { count: 'exact', head: true })
+          .eq('player_id', player.id),
       ])
       counts = {
         scores:   scoresRes.count   ?? 0,
         subs:     subsRes.count     ?? 0,
         follows:  followsRes.count  ?? 0,
         messages: messagesRes.count ?? 0,
+        ledger:   ledgerRes.count   ?? 0,
       }
     } catch (e) {
       // If the pre-count fails (RLS, network), fall through with zeros; the
@@ -253,6 +302,13 @@ export default function AdminPlayers() {
     if (counts.subs)     childLines.push(`${counts.subs} sub request${counts.subs === 1 ? '' : 's'}`)
     if (counts.follows)  childLines.push(`${counts.follows} friendship link${counts.follows === 1 ? '' : 's'}`)
     if (counts.messages) childLines.push(`${counts.messages} message${counts.messages === 1 ? '' : 's'}`)
+
+    // Money-list (ledger) entries are financial history: the server refuses
+    // the delete rather than cascading them away, so say so up front.
+    if (counts.ledger) {
+      showToast(`${player.name} has ${counts.ledger} money-list entr${counts.ledger === 1 ? 'y' : 'ies'} and can't be removed. Remove those entries first.`, 'error')
+      return
+    }
 
     const preamble = `Remove ${player.name}? This cannot be undone.`
     const message  = childLines.length
@@ -272,53 +328,29 @@ export default function AdminPlayers() {
     })
   }
 
-  function handleCreateAccount(player) {
+  // "Create Account" opens an inline password prompt on the player's row;
+  // this runs when the admin submits it.
+  async function handleCreateAccount(player, password) {
     if (!player.email) {
       showToast('Add an email address for this player first.', 'error'); return
     }
-    setDialog({
-      message: `Create a login account for ${player.name}?\n\nEmail: ${player.email}\nPassword: ${player.league_password || 'password'}\n\nThey can sign in immediately after this.`,
-      confirmLabel: 'Create Account',
-      destructive: false,
-      onConfirm: async () => {
-        try {
-          // Forward the caller's access token so the Edge Function can verify
-          // we're an admin for this player's location.
-          const { data: { session } } = await supabase.auth.getSession()
-          const accessToken = session?.access_token
-          if (!accessToken) throw new Error('You are not signed in.')
-
-          const fnRes = await fetch(
-            import.meta.env.VITE_SUPABASE_URL + '/functions/v1/create-player-account',
-            {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': 'Bearer ' + accessToken,
-              },
-              body: JSON.stringify({
-                player_id: player.id,
-                email:     player.email,
-                password:  player.league_password || 'password',
-              }),
-            }
-          )
-          const fnBody = await fnRes.json()
-          if (!fnRes.ok || fnBody?.error) {
-            showToast('Error: ' + (fnBody?.error || fnRes.status), 'error')
-          } else {
-            showToast(`Account created for ${player.name}! They can now sign in.`)
-            loadAll()
-          }
-        } catch (e) {
-          showToast('Error: ' + e.message, 'error')
-        }
-      },
-    })
+    if (!password || password.length < MIN_PASSWORD_LENGTH) {
+      showToast(`Password must be at least ${MIN_PASSWORD_LENGTH} characters.`, 'error'); return
+    }
+    setSaving(true)
+    try {
+      await callPlayerAccountFunction({ player_id: player.id, email: player.email, password })
+      showToast(`Account created for ${player.name}! They can now sign in.`)
+      setAccountPrompt(null)
+      loadAll()
+    } catch (e) {
+      showToast('Error: ' + e.message, 'error')
+    }
+    setSaving(false)
   }
 
   function startEditPlayer(player) {
-    setPlayerForm({ name: player.name || '', email: player.email || '', handicap: player.handicap != null ? String(player.handicap) : '', in_skins: player.in_skins || false, handicap_locked: player.handicap_locked || false, league_password: player.league_password || 'password' })
+    setPlayerForm({ name: player.name || '', email: player.email || '', handicap: player.handicap != null ? String(player.handicap) : '', in_skins: player.in_skins || false, handicap_locked: player.handicap_locked || false, password: '' })
     setEditingPlayer(player)
     setShowPlayerForm(true)
     setShowTeamForm(false)
@@ -410,13 +442,15 @@ export default function AdminPlayers() {
     return teams.findIndex(t => t.id === team.id) + 1
   }
 
-  // Players available for team assignment (unassigned, or already on this team)
+  // Players available for team assignment: no active membership in the
+  // working league, or already on this team.
   function availablePlayers(slot) {
     const currentTeamId = editingTeam?.id
     const otherSlot = slot === 'p1' ? teamForm.player2_id : teamForm.player1_id
-    return players.filter(p =>
-      (!p.team_id || p.team_id === currentTeamId) && p.id !== otherSlot
-    )
+    return players.filter(p => {
+      const teamId = teamByPlayer.get(p.id)
+      return (!teamId || teamId === currentTeamId) && p.id !== otherSlot
+    })
   }
 
   const filtered = players.filter(p =>
@@ -424,7 +458,7 @@ export default function AdminPlayers() {
     p.email?.toLowerCase().includes(search.toLowerCase())
   )
 
-  const unassigned = players.filter(p => !p.team_id)
+  const unassigned = players.filter(p => !teamByPlayer.has(p.id))
 
   if (loading) return <div style={styles.loading}>Loading…</div>
 
@@ -525,16 +559,21 @@ export default function AdminPlayers() {
               <input type="email" style={styles.input} value={playerForm.email} onChange={e => setPlayerForm(f => ({ ...f, email: e.target.value }))} placeholder="john@example.com" />
             </div>
             <div style={styles.fieldGroup}>
-              <label style={styles.label}>Login Password</label>
+              <label style={styles.label}>{editingPlayer?.user_id ? 'Reset Login Password' : 'Set Login Password'}</label>
               <input
                 type="text"
                 style={styles.input}
-                value={playerForm.league_password}
-                onChange={e => setPlayerForm(f => ({ ...f, league_password: e.target.value }))}
-                placeholder="password"
-                autoComplete="off"
+                value={playerForm.password}
+                onChange={e => setPlayerForm(f => ({ ...f, password: e.target.value }))}
+                placeholder={editingPlayer?.user_id ? 'Leave blank to keep current password' : `At least ${MIN_PASSWORD_LENGTH} characters`}
+                minLength={MIN_PASSWORD_LENGTH}
+                autoComplete="new-password"
               />
-              <span style={styles.hint}>Default is "password" — player can change this after logging in.</span>
+              <span style={styles.hint}>
+                {editingPlayer?.user_id
+                  ? 'Blank = no change. A new password takes effect immediately.'
+                  : 'Needs an email too. Leave blank to create their login later. Not stored — share it with the player directly.'}
+              </span>
             </div>
             <div style={styles.fieldGroup}>
               <label style={styles.label}>Handicap</label>
@@ -542,14 +581,14 @@ export default function AdminPlayers() {
                 type="number"
                 step="1"
                 min="-2"
-                max="27"
+                max={editingPlayer?.is_sub ? 40 : 27}
                 required
                 style={styles.input}
                 value={playerForm.handicap}
                 onChange={e => setPlayerForm(f => ({ ...f, handicap: e.target.value }))}
                 placeholder="e.g. 12"
               />
-              <span style={styles.hint}>Whole numbers only, -2 to 27.</span>
+              <span style={styles.hint}>Whole numbers only, -2 to {editingPlayer?.is_sub ? 40 : 27}.</span>
             </div>
 
             {/* Handicap Lock Toggle */}
@@ -644,7 +683,8 @@ export default function AdminPlayers() {
           />
         ) : (
           filtered.map(player => {
-            const team = player.team_id ? teams.find(t => t.id === player.team_id) : null
+            const teamId = teamByPlayer.get(player.id)
+            const team = teamId ? teams.find(t => t.id === teamId) : null
             const num  = team ? teamNumber(team) : null
             return (
               <div key={player.id} style={styles.playerRow}>
@@ -681,17 +721,47 @@ export default function AdminPlayers() {
                           <CheckCircle2 size={12} strokeWidth={2.5} style={{ verticalAlign: '-2px', marginRight: 4 }} />
                           Account active
                         </span>
-                      : (
-                        <Button
-                          variant="primary"
-                          size="sm"
-                          icon={<KeyRound size={13} strokeWidth={2.25} />}
-                          onClick={() => handleCreateAccount(player)}
-                          style={{ background: 'var(--green-dark)', borderColor: 'var(--green-dark)', padding: '3px 10px', fontSize: 11, borderRadius: 10 }}
-                        >
-                          Create Account
-                        </Button>
-                      )
+                      : accountPrompt?.playerId === player.id
+                        ? (
+                          <form
+                            style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}
+                            onSubmit={e => { e.preventDefault(); handleCreateAccount(player, accountPrompt.password) }}
+                          >
+                            <input
+                              type="text"
+                              style={{ ...styles.input, padding: '4px 8px', fontSize: 12, width: 150 }}
+                              value={accountPrompt.password}
+                              onChange={e => setAccountPrompt(a => ({ ...a, password: e.target.value }))}
+                              placeholder={`Password (${MIN_PASSWORD_LENGTH}+ chars)`}
+                              minLength={MIN_PASSWORD_LENGTH}
+                              autoComplete="new-password"
+                              autoFocus
+                            />
+                            <Button type="submit" variant="primary" size="sm" loading={saving}
+                              disabled={accountPrompt.password.length < MIN_PASSWORD_LENGTH}
+                              style={{ padding: '3px 10px', fontSize: 11, borderRadius: 10 }}>
+                              Create
+                            </Button>
+                            <Button type="button" variant="secondary" size="sm" onClick={() => setAccountPrompt(null)}
+                              style={{ padding: '3px 10px', fontSize: 11, borderRadius: 10 }}>
+                              Cancel
+                            </Button>
+                          </form>
+                        )
+                        : (
+                          <Button
+                            variant="primary"
+                            size="sm"
+                            icon={<KeyRound size={13} strokeWidth={2.25} />}
+                            onClick={() => {
+                              if (!player.email) { showToast('Add an email address for this player first.', 'error'); return }
+                              setAccountPrompt({ playerId: player.id, password: '' })
+                            }}
+                            style={{ background: 'var(--green-dark)', borderColor: 'var(--green-dark)', padding: '3px 10px', fontSize: 11, borderRadius: 10 }}
+                          >
+                            Create Account
+                          </Button>
+                        )
                     }
                   </div>
                 </div>

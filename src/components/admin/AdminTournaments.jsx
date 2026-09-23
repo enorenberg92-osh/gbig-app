@@ -24,13 +24,19 @@ const EMPTY_FORM = {
   team_handicap_pct: '35', balls_counted: '1', allowance_pct: '100', quota_basis: 'none',
 }
 
+// Blank/invalid → default, but a deliberate 0 (e.g. 0% handicap) is kept.
+function numOr(v, fallback) {
+  const n = parseFloat(v)
+  return Number.isFinite(n) ? n : fallback
+}
+
 function buildConfig(f) {
   const cfg = { version: 1 }
   if (f.format !== 'stroke') cfg.no_show = 'forfeit'
-  if (f.format === 'scramble') cfg.team_handicap_pct = parseFloat(f.team_handicap_pct) || 35
+  if (f.format === 'scramble') cfg.team_handicap_pct = numOr(f.team_handicap_pct, 35)
   if (f.format === 'best_ball') {
     cfg.balls_counted = parseInt(f.balls_counted, 10) || 1
-    cfg.allowance_pct = parseFloat(f.allowance_pct) || 100
+    cfg.allowance_pct = numOr(f.allowance_pct, 100)
   }
   if (f.format === 'stableford') cfg.quota_basis = f.quota_basis
   return cfg

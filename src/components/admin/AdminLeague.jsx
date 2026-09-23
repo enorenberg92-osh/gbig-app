@@ -7,6 +7,7 @@ import { Button, Toast, EmptyState } from '../ui'
 import { formatLocalDate } from '../../lib/dateUtils'
 import { mutationErrorMessage } from '../../lib/rpcErrors'
 import { useFeature } from '../../context/FeatureContext'
+import { buildWeekSchedule } from '../../lib/leagueUtils'
 
 const EMPTY_FORM = { name: '', num_weeks: '', start_date: '', is_active: false, default_format: 'stroke' }
 const FEATURE_KEYS = ['friends', 'events', 'skins', 'subs', 'news', 'cups', 'flights', 'money', 'tournaments']
@@ -19,7 +20,9 @@ const FORMAT_OPTIONS = [
   ['best_ball',        'Best ball'],
 ]
 
-export default function AdminLeague() {
+// onWorkingLeagueChange: called after the working league switches so the
+// admin shell (AdminPanel) can reload its working league + active event.
+export default function AdminLeague({ onWorkingLeagueChange }) {
   const { locationId } = useLocation()
   const [leagues, setLeagues]       = useState([])
   const [loading, setLoading]       = useState(true)
@@ -45,31 +48,19 @@ export default function AdminLeague() {
 
   // Rebuild week preview whenever form dates/weeks change
   useEffect(() => {
-    const n = parseInt(form.num_weeks)
-    if (!form.start_date || !n || n < 1) { setWeekPreview([]); return }
-    const weeks = []
-    for (let i = 0; i < n; i++) {
-      const start = new Date(form.start_date + 'T12:00:00')
-      start.setDate(start.getDate() + i * 7)
-      const end = new Date(start)
-      end.setDate(end.getDate() + 6)
-      weeks.push({
-        week:  i + 1,
-        start: start.toISOString().split('T')[0],
-        end:   end.toISOString().split('T')[0],
-      })
-    }
-    setWeekPreview(weeks)
+    setWeekPreview(buildWeekSchedule(form.start_date, form.num_weeks))
   }, [form.num_weeks, form.start_date])
 
   async function loadLeagues() {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('league_config')
       .select('*')
       .eq('location_id', locationId)
       .order('start_date', { ascending: false })
+    if (error) showToast('Error loading leagues: ' + error.message, 'error')
     setLeagues(data || [])
     setLoading(false)
+    return data || []
   }
 
   function showToast(msg, type = 'success') {
@@ -78,19 +69,41 @@ export default function AdminLeague() {
   }
 
   // ── Set "working with" league ─────────────────────────────────────────────
+  // A partial unique index allows only one working league per location, so
+  // the old one must be cleared before the new one is set. If setting the new
+  // one fails, restore the old one so the location never sits with no
+  // working league.
   async function handleSetWorking(league) {
-    // Clear all, then set this one
-    const ids = leagues.map(l => l.id)
-    await supabase.from('league_config').update({ is_working: false }).in('id', ids).eq('location_id', locationId)
-    await supabase.from('league_config').update({ is_working: true }).eq('id', league.id).eq('location_id', locationId)
+    // Clear whatever is working in the DB (not just what local state thinks),
+    // returning the cleared ids so they can be restored on failure.
+    const { data: cleared, error: clearErr } = await supabase.from('league_config')
+      .update({ is_working: false })
+      .eq('location_id', locationId).eq('is_working', true).neq('id', league.id)
+      .select('id')
+    if (clearErr) { showToast('Error: ' + clearErr.message, 'error'); loadLeagues(); return }
+    const previous = (cleared || []).map(l => l.id)
+    const { error: setErr } = await supabase.from('league_config')
+      .update({ is_working: true }).eq('id', league.id).eq('location_id', locationId)
+    if (setErr) {
+      if (previous.length) {
+        const { error: restoreErr } = await supabase.from('league_config')
+          .update({ is_working: true }).eq('id', previous[0]).eq('location_id', locationId)
+        if (restoreErr) console.error('Restoring previous working league failed:', restoreErr)
+      }
+      showToast('Error: ' + setErr.message, 'error')
+      loadLeagues()
+      return
+    }
     showToast(`Now working with "${league.name}"`)
-    loadLeagues()
+    await loadLeagues()
+    onWorkingLeagueChange?.()
   }
 
   // ── Toggle "display on website" ───────────────────────────────────────────
   async function handleToggleActive(league) {
     const newVal = !league.is_active
-    await supabase.from('league_config').update({ is_active: newVal }).eq('id', league.id).eq('location_id', locationId)
+    const { error } = await supabase.from('league_config').update({ is_active: newVal }).eq('id', league.id).eq('location_id', locationId)
+    if (error) { showToast('Error: ' + error.message, 'error'); return }
     showToast(newVal ? `"${league.name}" is now live for players` : `"${league.name}" hidden from players`)
     loadLeagues()
   }
@@ -98,7 +111,6 @@ export default function AdminLeague() {
   // ── Save (create or update) ───────────────────────────────────────────────
   async function handleSave(e) {
     e.preventDefault()
-    setSaving(true)
     const payload = {
       name:       form.name.trim(),
       num_weeks:  parseInt(form.num_weeks) || null,
@@ -106,6 +118,39 @@ export default function AdminLeague() {
       is_active:  form.is_active,
       default_format: form.default_format,
     }
+
+    // Team rosters are dated: each membership starts on the league's start
+    // date at the time the team was created. Moving the start date later
+    // leaves week 1 before every membership (nobody rostered that week), and
+    // moving it earlier leaves the new first days unrostered. Make the admin
+    // confirm, since fixing it means re-saving every team.
+    if (editing && editing.start_date && payload.start_date !== editing.start_date) {
+      setSaving(true)
+      const { count, error: countErr } = await supabase.from('teams')
+        .select('id', { count: 'exact', head: true })
+        .eq('location_id', locationId).eq('league_id', editing.id)
+      setSaving(false)
+      if (countErr) { showToast('Error: ' + countErr.message, 'error'); return }
+      if (count > 0) {
+        setDialog({
+          message:
+            `This league already has ${count} team${count === 1 ? '' : 's'}.\n\n` +
+            `Team rosters are dated from the current start date (${formatDate(editing.start_date)}). ` +
+            `Changing it to ${payload.start_date ? formatDate(payload.start_date) : 'no date'} can leave week 1 ` +
+            `with no rostered players, so scores and standings for that week may not count toward any team.\n\n` +
+            `Only change it if the season hasn't really started yet. Change the start date anyway?`,
+          confirmLabel: 'Change Start Date',
+          destructive: true,
+          onConfirm: () => doSave(payload),
+        })
+        return
+      }
+    }
+    await doSave(payload)
+  }
+
+  async function doSave(payload) {
+    setSaving(true)
     let error
     if (editing) {
       ;({ error } = await supabase.from('league_config').update(payload).eq('id', editing.id).eq('location_id', locationId))
@@ -134,10 +179,15 @@ export default function AdminLeague() {
     })
   }
 
+  // Generates from the SAVED league row (not unsaved form values), so the
+  // events always match what's stored for the league.
   function handleGenerateSchedule(league) {
-    if (!weekPreview.length) return
+    const saved = league && leagues.find(l => l.id === league.id)
+    if (!saved) { showToast('Save the league before generating its schedule.', 'error'); return }
+    const savedWeeks = buildWeekSchedule(saved.start_date, saved.num_weeks)
+    if (!savedWeeks.length) { showToast('Set and save a start date and number of weeks first.', 'error'); return }
     setDialog({
-      message: `Create ${weekPreview.length} events for "${league?.name || 'this league'}"?\n\nExisting weeks won't be duplicated.`,
+      message: `Create ${savedWeeks.length} events for "${saved.name || 'this league'}"?\n\nExisting weeks won't be duplicated.`,
       confirmLabel: 'Create Events',
       destructive: false,
       onConfirm: async () => {
@@ -145,11 +195,11 @@ export default function AdminLeague() {
           .from('events')
           .select('week_number')
           .eq('location_id', locationId)
-          .eq('league_id', league.id)
+          .eq('league_id', saved.id)
           .not('week_number', 'is', null)
 
         const existingWeeks = new Set((existing || []).map(e => e.week_number))
-        const toInsert = weekPreview
+        const toInsert = savedWeeks
           .filter(w => !existingWeeks.has(w.week))
           .map(w => ({
             name:        `Week ${w.week}`,
@@ -164,7 +214,7 @@ export default function AdminLeague() {
           return
         }
         const { data: inserted, error } = await supabase.rpc('admin_generate_schedule', {
-          p_league_id: league.id,
+          p_league_id: saved.id,
           p_weeks: toInsert.map(week => ({
             name: week.name,
             week_number: week.week_number,
@@ -197,6 +247,14 @@ export default function AdminLeague() {
 
   const workingLeague = leagues.find(l => l.is_working)
 
+  // True when the form's start date / week count differ from the saved
+  // league — schedule generation is disabled until they're saved.
+  const savedEditing = editing && leagues.find(l => l.id === editing.id)
+  const scheduleDirty = !!savedEditing && (
+    (form.start_date || '') !== (savedEditing.start_date || '') ||
+    (parseInt(form.num_weeks) || null) !== (savedEditing.num_weeks || null)
+  )
+
   async function toggleFeature(key) {
     if (!workingLeague) return
     const features = { ...(workingLeague.features || {}), [key]: workingLeague.features?.[key] === false }
@@ -214,14 +272,18 @@ export default function AdminLeague() {
   useEffect(() => {
     if (!workingId || !flightsEnabled) return
     let cancelled = false
+    // Combined handicap comes from the ACTIVE roster for this league
+    // (team_memberships), not the legacy location-wide players.team_id.
     Promise.all([
       supabase.from('flights').select('*').eq('league_id', workingId).eq('location_id', locationId).order('sort_order'),
       supabase.from('teams').select('id, name, flight_id').eq('league_id', workingId).eq('location_id', locationId).order('created_at'),
-      supabase.from('players').select('team_id, handicap').eq('location_id', locationId).not('team_id', 'is', null),
-    ]).then(([f, t, p]) => {
+      supabase.from('team_memberships').select('team_id, player_id').eq('league_id', workingId).is('effective_to', null),
+      supabase.from('players').select('id, handicap').eq('location_id', locationId),
+    ]).then(([f, t, m, p]) => {
       if (cancelled) return
+      const hcpByPlayer = new Map((p.data || []).map(pl => [pl.id, pl.handicap]))
       const hcpByTeam = {}
-      ;(p.data || []).forEach(pl => { hcpByTeam[pl.team_id] = (hcpByTeam[pl.team_id] || 0) + (pl.handicap || 0) })
+      ;(m.data || []).forEach(ms => { hcpByTeam[ms.team_id] = (hcpByTeam[ms.team_id] || 0) + (hcpByPlayer.get(ms.player_id) || 0) })
       setFlights(f.data || [])
       setFlightTeams((t.data || []).map(team => ({ ...team, combinedHcp: hcpByTeam[team.id] ?? null })))
     })
@@ -238,7 +300,10 @@ export default function AdminLeague() {
   }
 
   async function renameFlight(flight, name) {
-    await supabase.from('flights').update({ name }).eq('id', flight.id).eq('location_id', locationId)
+    const { error } = await supabase.from('flights').update({ name }).eq('id', flight.id).eq('location_id', locationId)
+    if (error) showToast('Error: ' + error.message, 'error')
+    else showToast('Flight renamed.')
+    refreshFlights()
   }
 
   async function deleteFlight(flight) {
@@ -624,7 +689,11 @@ export default function AdminLeague() {
                   Schedule Preview — {weekPreview.length} Weeks
                 </div>
                 <p style={s.previewNote}>
-                  Click <strong>Generate Schedule</strong> to add these weeks to the Schedule tab.
+                  {!editing
+                    ? <>Create the league first, then click <strong>Edit</strong> on it to generate its schedule.</>
+                    : scheduleDirty
+                      ? <>Save your changes first — the schedule is generated from the saved start date and week count.</>
+                      : <>Click <strong>Generate Schedule</strong> to add these weeks to the Schedule tab.</>}
                 </p>
                 <div style={s.weekGrid}>
                   {weekPreview.map(w => (
@@ -636,16 +705,19 @@ export default function AdminLeague() {
                     </div>
                   ))}
                 </div>
-                <Button
-                  type="button"
-                  variant="primary"
-                  fullWidth
-                  icon={<Calendar size={16} strokeWidth={2.25} />}
-                  onClick={() => handleGenerateSchedule(editing)}
-                  style={{ background: 'var(--green-dark)', borderColor: 'var(--green-dark)' }}
-                >
-                  Generate {weekPreview.length}-Week Schedule
-                </Button>
+                {editing && (
+                  <Button
+                    type="button"
+                    variant="primary"
+                    fullWidth
+                    disabled={scheduleDirty}
+                    icon={<Calendar size={16} strokeWidth={2.25} />}
+                    onClick={() => handleGenerateSchedule(editing)}
+                    style={{ background: 'var(--green-dark)', borderColor: 'var(--green-dark)' }}
+                  >
+                    Generate {weekPreview.length}-Week Schedule
+                  </Button>
+                )}
               </div>
             )}
 

@@ -106,6 +106,9 @@ export default function AdminAlerts() {
           body:      body.trim(),
           sentBy:    `${appName} Admin`,
           expiresAt,
+          // The function verifies the caller administers this location; without
+          // it, multi-location admins would broadcast to whichever came first.
+          locationId,
         }),
       })
       const json = await res.json()

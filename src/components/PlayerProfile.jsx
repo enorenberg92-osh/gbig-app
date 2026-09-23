@@ -261,27 +261,30 @@ export default function PlayerProfile({ session, onBack, playerId: adminPlayerId
       }
       setPlayer(playerRow)
 
-      // 2. Resolve the active roster from memberships and fetch only the most
-      // recent verified effective rounds. The nested event join supplies the
-      // canonical chronological keys at the query boundary.
-      const league = await loadWorkingLeague(supabase, locationId)
+      // 2. Resolve the active roster from memberships and fetch the verified
+      // effective rounds. No working league (off-season / not configured yet)
+      // just means no current team — history and the password form still load.
+      const league = await loadWorkingLeague(supabase, locationId).catch(() => null)
       const [{ data: membership }, scoresRes] = await Promise.all([
-        supabase.from('team_memberships')
-          .select('team_id, teams(id, name)')
-          .eq('player_id', playerRow.id)
-          .eq('league_id', league.id)
-          .is('effective_to', null)
-          .maybeSingle(),
+        league
+          ? supabase.from('team_memberships')
+              .select('team_id, teams(id, name)')
+              .eq('player_id', playerRow.id)
+              .eq('league_id', league.id)
+              .is('effective_to', null)
+              .maybeSingle()
+          : { data: null },
+        // Ordering by a referenced table only sorts the embedded rows, not the
+        // parent scores, so order by a real scores column here and pick the
+        // most recent rounds by event date client-side below.
         supabase.from('scores')
           .select('id, event_id, gross_total, net_total, hole_scores, hole_stats, handicap_used, entry_type, status, sub_played, created_at, events!inner(id, name, week_number, start_date, league_id, courses(id, name, num_holes, hole_pars, total_par))')
           .eq('player_id', playerRow.id)
           .eq('location_id', locationId)
           .eq('status', 'verified')
           .or('sub_played.eq.false,sub_played.is.null')
-          .order('week_number', { referencedTable: 'events', ascending: false, nullsFirst: false })
-          .order('start_date', { referencedTable: 'events', ascending: false, nullsFirst: false })
           .order('created_at', { ascending: false })
-          .limit(24),
+          .limit(200),
       ])
 
       const myTeam = membership?.teams || null
@@ -297,7 +300,12 @@ export default function PlayerProfile({ session, onBack, playerId: adminPlayerId
         setTeammate(teammateMembership?.players || null)
       }
 
-      const scoreRows = scoresRes.data || []
+      // Most recent 24 rounds by event date (then entry time).
+      const scoreRows = (scoresRes.data || [])
+        .sort((a, b) =>
+          String(b.events?.start_date ?? '').localeCompare(String(a.events?.start_date ?? '')) ||
+          String(b.created_at ?? '').localeCompare(String(a.created_at ?? '')))
+        .slice(0, 24)
       if (scoreRows.length === 0) { setRounds([]); setLoading(false); return }
 
       // 3. Normalize into chronological rounds for both the trend and list.
@@ -618,24 +626,25 @@ export default function PlayerProfile({ session, onBack, playerId: adminPlayerId
 
   async function handleChangePassword(e) {
     e.preventDefault()
-    if (pwForm.next !== pwForm.confirm) {
+    // LoginScreen trims the password on sign-in, so store it trimmed too —
+    // otherwise a stray trailing space would lock the player out.
+    const next = pwForm.next.trim()
+    if (next !== pwForm.confirm.trim()) {
       setPwMsg({ text: 'New passwords do not match.', type: 'error' }); return
     }
-    if (pwForm.next.length < 6) {
+    if (next.length < 6) {
       setPwMsg({ text: 'Password must be at least 6 characters.', type: 'error' }); return
     }
     setPwSaving(true)
     setPwMsg(null)
-    const { error: authErr } = await supabase.auth.updateUser({ password: pwForm.next })
+    const { error: authErr } = await supabase.auth.updateUser({ password: next })
     if (authErr) {
       setPwMsg({ text: authErr.message, type: 'error' })
       setPwSaving(false)
       return
     }
-    // Also update the visible password in the players table
-    if (player?.id) {
-      await supabase.from('players').update({ league_password: pwForm.next }).eq('id', player.id).eq('location_id', locationId)
-    }
+    // Auth is the only store for the password — never mirror it into
+    // players.league_password (that column is readable location-wide).
     setPwMsg({ text: 'Password updated successfully!', type: 'success' })
     setPwForm({ current: '', next: '', confirm: '' })
     setPwSaving(false)

@@ -139,6 +139,12 @@ a {
   100% { background-position: -200% 0; }
 }
 
+/* -- HoleEventAnimation target ring: gentle breathing pulse -- */
+@keyframes pulseRing {
+  0%, 100% { transform: scale(1);    box-shadow: 0 0 0 0 rgba(255,255,255,0.18); }
+  50%      { transform: scale(1.05); box-shadow: 0 0 0 12px rgba(255,255,255,0); }
+}
+
 /* -- InstallPrompt modal (iOS "Add to Home Screen" sheet) -- */
 @keyframes installFadeIn {
   from { opacity: 0; }

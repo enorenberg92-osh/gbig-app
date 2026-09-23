@@ -6,7 +6,10 @@
 // work that belongs in a separate file with DB fixtures.
 
 import { describe, it, expect } from 'vitest'
-import { calcHandicap, calcBreakdown, DEFAULT_SETTINGS, DISCARD_TABLE } from './handicapCalc.js'
+import {
+  calcHandicap, calcBreakdown, DEFAULT_SETTINGS, DISCARD_TABLE,
+  scoresUsedForLeague, isHandicapEligibleEvent, settingsForPlayer, handicapRounds,
+} from './handicapCalc.js'
 
 describe('calcHandicap — input validation', () => {
   it('returns null for null input', () => {
@@ -156,6 +159,7 @@ describe('calcBreakdown', () => {
       used: [10, 20, 30, 40],
       avg: 25,
       raw: 22.5,
+      truncated: 22,
       capped: 22,
     })
   })
@@ -186,5 +190,60 @@ describe('DISCARD_TABLE — sanity check', () => {
       const remaining = count - rule.high - rule.low
       expect(remaining).toBeGreaterThan(0)
     }
+  })
+})
+
+describe('calcHandicap — exact integer truncation (server parity)', () => {
+  it('uses floor(sum*9 / (n*10)), not float avg*0.9', () => {
+    // sum -50 over 3 rounds: exact -15; Math.floor(-50/3*0.9) gives -16.
+    const wide = { ...DEFAULT_SETTINGS, minHandicap: -40 }
+    expect(calcHandicap([-20, -15, -15], wide)).toBe(-15)
+  })
+
+  it('matches the integer formula across a sweep of inputs', () => {
+    const wide = { ...DEFAULT_SETTINGS, minHandicap: -100, maxHandicap: 100 }
+    for (let a = -10; a <= 30; a += 3) {
+      for (let b = -10; b <= 30; b += 4) {
+        const diffs = [a, b, a + b]
+        expect(calcHandicap(diffs, wide)).toBe(Math.floor((diffs.reduce((x, y) => x + y, 0) * 9) / 30))
+      }
+    }
+  })
+})
+
+describe('server-parity helpers', () => {
+  it('caps scoresUsed at 12 and floors it at 1', () => {
+    expect(scoresUsedForLeague(null)).toBe(12)
+    expect(scoresUsedForLeague(8)).toBe(8)
+    expect(scoresUsedForLeague(16)).toBe(12)
+    expect(scoresUsedForLeague(0)).toBe(1)
+  })
+
+  it('excludes scrambles unless the flag says otherwise', () => {
+    expect(isHandicapEligibleEvent({ format: 'stroke' })).toBe(true)
+    expect(isHandicapEligibleEvent({ format: 'scramble' })).toBe(false)
+    expect(isHandicapEligibleEvent({ format: 'scramble', format_config: { exclude_from_handicap: false } })).toBe(true)
+    expect(isHandicapEligibleEvent({ format: 'best_ball', format_config: { exclude_from_handicap: true } })).toBe(false)
+    expect(isHandicapEligibleEvent({ format: 'scramble', format_config: {} })).toBe(false)
+  })
+
+  it('lets subs play off up to 40', () => {
+    expect(calcHandicap([50], settingsForPlayer(DEFAULT_SETTINGS, { is_sub: true }))).toBe(40)
+    expect(calcHandicap([50], settingsForPlayer(DEFAULT_SETTINGS, { is_sub: false }))).toBe(27)
+  })
+
+  it('handicapRounds filters ineligible rows and orders by event date', () => {
+    const course = { total_par: 36 }
+    const rows = [
+      { id: 'late',  gross_total: 40, events: { start_date: '2026-03-01', week_number: 1, courses: course } },
+      { id: 'early', gross_total: 45, events: { start_date: '2026-01-01', week_number: 9, courses: course } },
+      { id: 'scr',   gross_total: 30, events: { start_date: '2026-02-01', format: 'scramble', courses: course } },
+      { id: 'sub',   gross_total: 50, sub_played: true, events: { start_date: '2026-02-02', courses: course } },
+      { id: 'pen',   gross_total: null, entry_type: 'missed_penalty', events: { start_date: '2026-02-03', courses: course } },
+      { id: 'pars',  gross_total: 38, events: { event_date: '2026-02-15', courses: { hole_pars: [4, 4, 4, 4, 4, 4, 4, 4, 4] } } },
+    ]
+    const out = handicapRounds(rows)
+    expect(out.map(r => r.id)).toEqual(['early', 'pars', 'late'])
+    expect(out.map(r => r.diff)).toEqual([9, 2, 4])
   })
 })

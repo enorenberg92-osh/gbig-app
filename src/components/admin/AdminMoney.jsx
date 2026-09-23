@@ -4,7 +4,8 @@ import { supabase } from '../../lib/supabase'
 import { useLocation } from '../../context/LocationContext'
 import { loadWorkingLeague } from '../../lib/leagueUtils'
 import { mutationErrorMessage } from '../../lib/rpcErrors'
-import { calcSkins } from '../../lib/skinsUtils'
+import { calcSkins, NOT_SUB_PLAYED } from '../../lib/skinsUtils'
+import { typeSign, roundCents, signedAmount, ledgerBalances, markDuplicateSuggestions } from '../../lib/moneyUtils'
 import { Button, Toast, EmptyState } from '../ui'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -45,7 +46,7 @@ export default function AdminMoney() {
       supabase.from('ledger').select('*').eq('location_id', locationId).eq('league_id', lg.id).order('created_at', { ascending: false }),
       supabase.from('players').select('id, name, in_skins').eq('location_id', locationId).order('name'),
       supabase.from('teams').select('id, name').eq('location_id', locationId).eq('league_id', lg.id).order('created_at'),
-      supabase.from('events').select('id, name, week_number, status, course_id').eq('location_id', locationId).eq('league_id', lg.id).neq('is_bye', true).order('week_number'),
+      supabase.from('events').select('id, name, week_number, status, course_id').eq('location_id', locationId).eq('league_id', lg.id).or('is_bye.is.null,is_bye.eq.false').order('week_number'),
     ])
     setEntries(led.data || [])
     setPlayers(pl.data || [])
@@ -75,7 +76,9 @@ export default function AdminMoney() {
 
   async function handleManualAdd(e) {
     e.preventDefault()
-    const amount = parseFloat(form.amount)
+    // Sign comes from the type (fees/payouts negative, winnings positive) —
+    // the server rejects wrong signs; adjustments keep what was typed.
+    const amount = signedAmount(form.type, form.amount)
     if (!amount) { showToast('Enter a non-zero amount.', 'error'); return }
     if (!form.player_id && !form.team_id) { showToast('Pick a player or a team.', 'error'); return }
     const ok = await addEntries([{
@@ -104,9 +107,10 @@ export default function AdminMoney() {
 
     if (perSkin > 0) {
       const [{ data: evtScores }, { data: courseRow }] = await Promise.all([
+        // Sub-played marker rows (the sub's holes on the absent player's row) never win skins.
         supabase.from('scores').select('player_id, hole_scores')
           .eq('event_id', suggestEvent).eq('location_id', locationId)
-          .eq('entry_type', 'played').eq('status', 'verified'),
+          .eq('entry_type', 'played').eq('status', 'verified').or(NOT_SUB_PLAYED),
         evt.course_id
           ? supabase.from('courses').select('num_holes').eq('id', evt.course_id).eq('location_id', locationId).single()
           : Promise.resolve({ data: null }),
@@ -123,7 +127,7 @@ export default function AdminMoney() {
       Object.entries(skinCount).forEach(([pid, n]) => {
         out.push({
           include: true, player_id: pid, team_id: null, type: 'skins',
-          amount: n * perSkin, event_id: suggestEvent,
+          amount: roundCents(n * perSkin), event_id: suggestEvent,
           note: `${n} skin${n > 1 ? 's' : ''} — Wk ${evt.week_number ?? ''}`.trim(),
         })
       })
@@ -137,41 +141,46 @@ export default function AdminMoney() {
         if (!m.home_team_id) return
         if (Number(m.points_home) > 0) out.push({
           include: true, player_id: null, team_id: m.home_team_id, type: 'match_points',
-          amount: Number(m.points_home) * perPoint, event_id: suggestEvent,
+          amount: roundCents(Number(m.points_home) * perPoint), event_id: suggestEvent,
           note: `${Number(m.points_home)} pts — Wk ${evt.week_number ?? ''}`.trim(),
         })
         if (Number(m.points_away) > 0) out.push({
           include: true, player_id: null, team_id: m.away_team_id, type: 'match_points',
-          amount: Number(m.points_away) * perPoint, event_id: suggestEvent,
+          amount: roundCents(Number(m.points_away) * perPoint), event_id: suggestEvent,
           note: `${Number(m.points_away)} pts — Wk ${evt.week_number ?? ''}`.trim(),
         })
       })
     }
 
-    setSuggestions(out)
+    // Don't let a week be paid twice: untick anything already in the ledger.
+    const { data: existing } = await supabase.from('ledger').select('event_id, type, player_id, team_id')
+      .eq('location_id', locationId).eq('league_id', league.id).eq('event_id', suggestEvent)
+    const marked = markDuplicateSuggestions(out, existing)
+    setSuggestions(marked)
     if (!out.length) showToast('Nothing to suggest for that week.', 'error')
+    else if (marked.some(x => x.duplicate)) showToast('Some suggestions are already in the ledger for this week — unticked.', 'error')
   }
 
   async function confirmSuggestions() {
-    const list = suggestions.filter(s => s.include).map(({ include, ...rest }) => rest)
-    if (!list.length) { setSuggestions(null); return }
+    // Re-check right before writing (another tab or a double click may have
+    // added them since the suggestions were built).
+    const { data: existing } = await supabase.from('ledger').select('event_id, type, player_id, team_id')
+      .eq('location_id', locationId).eq('league_id', league.id).eq('event_id', suggestEvent)
+    const checked = markDuplicateSuggestions(suggestions, existing)
+    const list = checked.filter(s => s.include).map(({ include, duplicate, ...rest }) => rest)
+    if (!list.length) {
+      setSuggestions(checked)
+      showToast('Nothing new to add — those entries are already in the ledger.', 'error')
+      return
+    }
     const ok = await addEntries(list)
     if (ok) { showToast(`Added ${list.length} entr${list.length === 1 ? 'y' : 'ies'}.`); setSuggestions(null) }
   }
 
-  // ── Who's owed: net balance per player/team ─────────────────────────────────
-  const balances = {}
-  entries.forEach(e => {
-    const key = e.player_id ? `p:${e.player_id}` : `t:${e.team_id}`
-    balances[key] = (balances[key] || 0) + Number(e.amount)
-  })
-  const owed = Object.entries(balances)
-    .map(([key, amt]) => ({
-      name: key.startsWith('p:') ? playerName(key.slice(2)) : teamName(key.slice(2)),
-      amt,
-    }))
-    .filter(x => x.name && x.amt !== 0)
-    .sort((a, b) => b.amt - a.amt)
+  // ── Who's owed: net balance per player/team (keyed by id, cents-rounded) ───
+  const owed = ledgerBalances(entries)
+    .map(b => ({ ...b, name: b.playerId ? playerName(b.playerId) : teamName(b.teamId) }))
+    .filter(x => x.name)
 
   if (loading) return <div style={st.loading}>Loading…</div>
 
@@ -185,7 +194,7 @@ export default function AdminMoney() {
         {owed.length === 0 ? (
           <p style={st.hint}>All settled — no outstanding balances.</p>
         ) : owed.map(x => (
-          <div key={x.name} style={st.owedRow}>
+          <div key={x.key} style={st.owedRow}>
             <span style={{ flex: 1, fontSize: 13, fontWeight: 600 }}>{x.name}</span>
             <span style={{ fontSize: 14, fontWeight: 800, color: x.amt > 0 ? 'var(--green-dark)' : '#c53030' }}>
               {x.amt > 0 ? '+' : ''}{x.amt.toFixed(2)}
@@ -222,6 +231,7 @@ export default function AdminMoney() {
                   onChange={() => setSuggestions(prev => prev.map((x, j) => j === i ? { ...x, include: !x.include } : x))} />
                 <span style={{ flex: 1, fontSize: 12 }}>
                   {whoName(s)} · {s.type} · {s.note}
+                  {s.duplicate && <span style={st.dupPill}>already in ledger</span>}
                 </span>
                 <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--green-dark)' }}>${Number(s.amount).toFixed(2)}</span>
               </label>
@@ -252,9 +262,29 @@ export default function AdminMoney() {
           <select style={{ ...st.input, flex: 1 }} value={form.type} onChange={e => setForm(f => ({ ...f, type: e.target.value }))}>
             {TYPES.map(t => <option key={t} value={t}>{t.replace('_', ' ')}</option>)}
           </select>
-          <input type="number" step="0.01" placeholder="Amount (− = paid out)" style={{ ...st.input, flex: 1 }}
+          <input type="number" step="0.01"
+            placeholder={typeSign(form.type) === 0 ? 'Amount (+ credit / − charge)' : 'Amount'}
+            style={{ ...st.input, flex: 1 }}
             value={form.amount} onChange={e => setForm(f => ({ ...f, amount: e.target.value }))} />
         </div>
+        {(() => {
+          // Sign is set by the type; show exactly what will be recorded.
+          const sign = typeSign(form.type)
+          const preview = signedAmount(form.type, form.amount)
+          const signText = sign < 0 ? 'Charge / money out — recorded as negative'
+            : sign > 0 ? 'Credit to player/team — recorded as positive'
+            : 'Adjustment — enter + for a credit, − for a charge'
+          return (
+            <div style={st.hint}>
+              {signText}
+              {Number.isFinite(preview) && preview !== 0 && (
+                <strong style={{ marginLeft: 6, color: preview > 0 ? 'var(--green-dark)' : '#c53030' }}>
+                  → {preview > 0 ? '+' : ''}{preview.toFixed(2)}
+                </strong>
+              )}
+            </div>
+          )
+        })()}
         <input placeholder="Note (optional)" style={st.input}
           value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} />
         <Button type="submit" variant="primary" size="sm">Add to Ledger</Button>
@@ -299,5 +329,6 @@ const st = {
   suggestRow: { display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', borderBottom: '1px dashed var(--gray-100)', cursor: 'pointer' },
   entryRow: { display: 'flex', alignItems: 'center', gap: 10, padding: '7px 0', borderBottom: '1px solid var(--gray-100)' },
   typePill: { fontSize: 9, fontWeight: 700, background: 'var(--gray-100)', color: 'var(--gray-500)', padding: '1px 6px', borderRadius: 8, marginLeft: 6, textTransform: 'uppercase' },
+  dupPill: { fontSize: 9, fontWeight: 700, background: '#fff5f5', color: '#c53030', padding: '1px 6px', borderRadius: 8, marginLeft: 6, textTransform: 'uppercase' },
   deleteBtn: { display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 6, background: '#fff5f5', color: '#c53030', border: '1px solid #fecaca', cursor: 'pointer' },
 }

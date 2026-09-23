@@ -4,6 +4,15 @@
 // can log in. Called by AdminPlayers when an admin adds a player, or clicks
 // "Create Account" on a player that was added without an email.
 //
+// Modes (request body):
+//   create (default): { player_id, email, password }
+//     Creates the auth user with `password`, or links an existing auth user
+//     with that email WITHOUT touching its password.
+//   reset_password:   { mode: 'reset_password', player_id, password }
+//     Sets a new password on the player's already-linked auth user. The
+//     password is never stored on the players row (league_password is
+//     readable location-wide, so it is no longer used).
+//
 // Security model:
 //   1. Caller must pass their user JWT in Authorization.
 //   2. Caller must be an admin for the target player's location (location_admins)
@@ -42,17 +51,24 @@ const json = (obj: unknown, status = 200) =>
     headers: { ...CORS, 'Content-Type': 'application/json' },
   })
 
+const MIN_PASSWORD_LENGTH = 6
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
 
   try {
-    const { player_id, email, password } = await req.json()
-    if (!player_id || !email || !password) return json({ error: 'missing fields' }, 400)
+    const { player_id, email, password, mode } = await req.json()
+    const isReset = mode === 'reset_password'
+    if (mode != null && !isReset && mode !== 'create') return json({ error: 'unknown mode' }, 400)
+    if (!player_id || !password || (!isReset && !email)) return json({ error: 'missing fields' }, 400)
+    if (typeof password !== 'string' || password.length < MIN_PASSWORD_LENGTH) {
+      return json({ error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters` }, 400)
+    }
 
     const url        = Deno.env.get('SUPABASE_URL')!
     const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     const anonKey    = Deno.env.get('SUPABASE_ANON_KEY')!
-    const clean      = email.toLowerCase().trim()
+    const clean      = String(email || '').toLowerCase().trim()
 
     // ── 1. Identify the caller from their JWT ──────────────────────────────
     const authHeader = req.headers.get('Authorization') || ''
@@ -73,7 +89,7 @@ Deno.serve(async (req) => {
 
     const { data: targetPlayer, error: targetErr } = await admin
       .from('players')
-      .select('id, location_id')
+      .select('id, location_id, user_id')
       .eq('id', player_id)
       .maybeSingle()
 
@@ -101,6 +117,43 @@ Deno.serve(async (req) => {
       return json({ error: 'Not authorized for this location' }, 403)
     }
 
+    // ── 3b. Reset mode: set a new password on the linked auth user ─────────
+    if (isReset) {
+      if (!targetPlayer.user_id) {
+        return json({ error: 'This player has no login account yet — create one first' }, 400)
+      }
+      const targetUserId = targetPlayer.user_id
+
+      // The same auth user can also be an admin (or a player elsewhere). A
+      // location admin must not be able to take over an account that has
+      // more reach than their own, so every location the target user is
+      // attached to must be one the caller administers (super-admins skip).
+      if (!isSuperAdmin) {
+        const [targetSuper, targetAdminLocs, targetPlayerLocs, callerAdminLocs] = await Promise.all([
+          admin.from('super_admins').select('user_id').eq('user_id', targetUserId).maybeSingle(),
+          admin.from('location_admins').select('location_id').eq('user_id', targetUserId),
+          admin.from('players').select('location_id').eq('user_id', targetUserId),
+          admin.from('location_admins').select('location_id').eq('user_id', callerUserId),
+        ])
+        for (const r of [targetSuper, targetAdminLocs, targetPlayerLocs, callerAdminLocs]) {
+          if (r.error) throw r.error
+        }
+        const callerLocs = new Set((callerAdminLocs.data || []).map((r) => r.location_id))
+        const targetLocs = [
+          ...(targetAdminLocs.data || []),
+          ...(targetPlayerLocs.data || []),
+        ].map((r) => r.location_id)
+        if (targetSuper.data || targetLocs.some((loc) => !callerLocs.has(loc))) {
+          return json({ error: 'This account is linked outside your locations; ask a super-admin to reset it' }, 403)
+        }
+      }
+
+      const { error: resetErr } = await admin.auth.admin.updateUserById(targetUserId, { password })
+      if (resetErr) return json({ error: resetErr.message }, 400)
+      console.log('[create-player-account] reset password for player', player_id)
+      return json({ success: true, user_id: targetUserId, reset: true })
+    }
+
     // ── 4. Lookup-first: does an auth user with this email already exist? ──
     // Using the SDK's listUsers rather than the raw ?email= querystring — the
     // querystring doesn't actually filter on current GoTrue versions, which
@@ -121,6 +174,8 @@ Deno.serve(async (req) => {
     let createdNewAuthUser = false
 
     if (existingUser) {
+      // Deliberately leave the existing user's password alone — resetting it
+      // is only done through the explicit reset_password mode above.
       authUserId = existingUser.id
       console.log('[create-player-account] reusing existing auth user', authUserId)
     } else {
@@ -160,7 +215,8 @@ Deno.serve(async (req) => {
     return json({ success: true, user_id: authUserId, reused: !createdNewAuthUser })
 
   } catch (e) {
+    // Log the detail server-side; never echo internals to the client.
     console.error('[create-player-account] fatal:', String(e))
-    return json({ error: String(e) }, 500)
+    return json({ error: 'Account request failed due to a server error' }, 500)
   }
 })

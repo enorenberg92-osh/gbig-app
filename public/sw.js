@@ -24,19 +24,43 @@ self.addEventListener('push', event => {
   event.waitUntil(self.registration.showNotification(title, options))
 })
 
-// ── Notification tapped — open / focus the app ─────────────────
+// Older payloads carried hash-router URLs; map them to the real routes.
+const LEGACY_URLS = { '/#/alerts': '/alerts', '/#/social': '/league/friends' }
+
+// ── Notification tapped — open / focus the app at the target URL ──
 self.addEventListener('notificationclick', event => {
   event.notification.close()
-  const target = event.notification.data?.url || '/'
+  const raw    = event.notification.data?.url || '/'
+  const target = new URL(LEGACY_URLS[raw] || raw, self.location.origin).href
   event.waitUntil(
-    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(async list => {
       for (const client of list) {
-        if (client.url.includes(self.location.origin) && 'focus' in client) {
-          client.focus()
+        if (client.url.startsWith(self.location.origin) && 'focus' in client) {
+          // Focus first (needs the click's user activation), then route the
+          // existing window to the notification's page. navigate() only
+          // works on controlled clients — an uncontrolled one just focuses.
+          const win = await client.focus()
+          if (raw !== '/' && client.url !== target && 'navigate' in client) {
+            try { await (win || client).navigate(target) } catch { /* uncontrolled */ }
+          }
           return
         }
       }
-      clients.openWindow(target)
+      return clients.openWindow(target)
     })
+  )
+})
+
+// ── Push subscription rotated/expired by the browser ─────────────
+// No auth here, so we can't call subscribe_push — just resubscribe with the
+// same key. The app re-syncs the new endpoint to the server on next open.
+self.addEventListener('pushsubscriptionchange', event => {
+  const options = event.oldSubscription?.options
+  if (!options?.applicationServerKey) return
+  event.waitUntil(
+    self.registration.pushManager.subscribe({
+      userVisibleOnly:      true,
+      applicationServerKey: options.applicationServerKey,
+    }).catch(() => {})
   )
 })

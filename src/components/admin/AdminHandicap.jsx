@@ -1,11 +1,10 @@
 import React, { useState, useEffect } from 'react'
 import { Settings, RefreshCw, Lock, Inbox } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
-import { DEFAULT_SETTINGS, calcBreakdown } from '../../lib/handicapCalc'
+import { DEFAULT_SETTINGS, calcBreakdown, handicapRounds, scoresUsedForLeague, settingsForPlayer } from '../../lib/handicapCalc'
 import { useLocation } from '../../context/LocationContext'
 import { Button, Toast, EmptyState } from '../ui'
 import { formatLocalDate } from '../../lib/dateUtils'
-import { compareRoundsChronologically } from '../../lib/roundUtils'
 import { mutationErrorMessage } from '../../lib/rpcErrors'
 
 // ── Component ────────────────────────────────────────────────────────────────
@@ -28,53 +27,47 @@ export default function AdminHandicap() {
       supabase.from('players').select('*').eq('location_id', locationId).order('name'),
       supabase
         .from('scores')
-        // NOTE: `scores` has no `created_at` column. Previously this query
-        // selected + ordered by created_at, which silently errored the whole
-        // query — every player showed "No Score History" and recalculate
-        // couldn't change any handicap. Order is derived client-side from
-        // the joined events.week_number + start_date instead.
+        // Order is derived client-side from the joined event date (then
+        // week_number, then created_at) — see handicapRounds below.
         //
-        // Also filter `sub_played=false`: when a regular player sits out and
+        // Also exclude sub_played rows: when a regular player sits out and
         // a sub plays for them, AdminScores writes a marker row on the regular
         // player with sub_played=true. That row is NOT part of their handicap
         // history (the sub gets credited on their own row where
         // player_id = sub_player_id). Without this filter, Erich's handicap
-        // moved with his sub's score.
-        .select('player_id, gross_total, sub_played, events(id, name, start_date, event_date, week_number, courses(name, hole_pars))')
+        // moved with his sub's score. NULL counts as false (legacy rows).
+        //
+        // Event date + format/format_config feed handicapRounds, which mirrors
+        // recalculate_handicaps: event-date ordering and scramble /
+        // exclude_from_handicap exclusion, so the "Calculated" preview matches.
+        .select('id, player_id, gross_total, entry_type, status, sub_played, created_at, events(id, name, start_date, event_date, week_number, format, format_config, courses(name, total_par, hole_pars))')
         .eq('location_id', locationId)
         .eq('entry_type', 'played')
         .eq('status', 'verified')
-        .eq('sub_played', false),
+        .or('sub_played.is.null,sub_played.eq.false')
+        .not('gross_total', 'is', null),
       supabase.from('league_config').select('num_weeks').eq('location_id', locationId).eq('is_working', true).maybeSingle(),
     ])
 
-    // Merge league num_weeks into settings
-    if (leagueCfg?.num_weeks) {
-      setSettings(s => ({ ...s, scoresUsed: leagueCfg.num_weeks }))
-    }
+    // Server rule: most recent min(num_weeks, 12) rounds (at least 1).
+    setSettings(s => ({ ...s, scoresUsed: scoresUsedForLeague(leagueCfg?.num_weeks) }))
 
-    // Sort client-side by events.week_number ascending (nulls last), then
-    // start_date. Mirrors handicapCalc.js so `scoresUsed` (slice -N) really
-    // does pick the N most recent rounds.
-    const sortedScores = [...(scores || [])].sort(compareRoundsChronologically)
+    // Eligible rounds, oldest first by event date — so `scoresUsed`
+    // (slice -N) really does pick the N most recent rounds.
+    const sortedScores = handicapRounds(scores)
 
     // Build score history per player
     const history = {}
     sortedScores.forEach(s => {
       const pid = s.player_id
       if (!history[pid]) history[pid] = []
-      const holePars  = s.events?.courses?.hole_pars
-      const coursePar = holePars ? holePars.reduce((sum, p) => sum + p, 0) : null
-      const diff      = coursePar != null && s.gross_total != null
-        ? s.gross_total - coursePar
-        : null
       history[pid].push({
         eventName: s.events?.name || 'Unknown Event',
         courseName: s.events?.courses?.name || null,
         date:  s.events?.start_date || s.events?.event_date || null,
         gross: s.gross_total,
-        par:   coursePar,
-        diff,
+        par:   s.par,
+        diff:  s.diff,
       })
     })
 
@@ -90,7 +83,7 @@ export default function AdminHandicap() {
 
   async function handleRecalcAll() {
     setUpdating(true)
-    const { data, error } = await supabase.rpc('recalculate_handicaps')
+    const { data, error } = await supabase.rpc('recalculate_handicaps', { p_location_id: locationId })
     const updated = data?.updated || 0
 
     setUpdating(false)
@@ -142,19 +135,20 @@ export default function AdminHandicap() {
           </div>
           <div style={styles.settingItem}>
             <span style={styles.settingLabel}>Max Handicap</span>
-            <span style={styles.settingValue}>27</span>
+            <span style={styles.settingValue}>27 (subs 40)</span>
           </div>
           <div style={styles.settingItem}>
             <span style={styles.settingLabel}>Rounding</span>
             <span style={styles.settingValue}>Truncate</span>
           </div>
           <div style={styles.settingItem}>
-            <span style={styles.settingLabel}>Discards (4+ scores)</span>
-            <span style={styles.settingValue}>1 high · 1 low</span>
+            <span style={styles.settingLabel}>Discards</span>
+            <span style={styles.settingValue}>1 high (4+) · 1 low (5+)</span>
           </div>
         </div>
         <div style={styles.formulaNote}>
           Differential = Gross Score − Course Par &nbsp;·&nbsp; Handicap = avg(used diffs) × 90% → truncate
+          &nbsp;·&nbsp; Most recent by event date; scrambles and events excluded from handicap don't count
         </div>
       </div>
 
@@ -183,7 +177,7 @@ export default function AdminHandicap() {
           {playersWithScores.map(player => {
             const rounds      = (scoreHistory[player.id] || []).filter(r => r.diff != null)
             const diffs       = rounds.map(r => r.diff)
-            const breakdown   = calcBreakdown(diffs, settings)
+            const breakdown   = calcBreakdown(diffs, settingsForPlayer(settings, player))
             const newHcp      = breakdown?.capped
             const currentHcp  = player.handicap
             const changed     = newHcp != null && newHcp !== currentHcp
@@ -296,11 +290,11 @@ export default function AdminHandicap() {
                       </div>
                       <div style={styles.calcRow}>
                         <span style={styles.calcLabel}>Truncate</span>
-                        <span style={styles.calcVal}>{Math.floor(breakdown.raw)}</span>
+                        <span style={styles.calcVal}>{breakdown.truncated}</span>
                       </div>
-                      {Math.floor(breakdown.raw) !== breakdown.capped && (
+                      {breakdown.truncated !== breakdown.capped && (
                         <div style={styles.calcRow}>
-                          <span style={styles.calcLabel}>Capped at {settings.maxHandicap}</span>
+                          <span style={styles.calcLabel}>Clamped to {settingsForPlayer(settings, player).minHandicap}…{settingsForPlayer(settings, player).maxHandicap}</span>
                           <span style={styles.calcVal}>{breakdown.capped}</span>
                         </div>
                       )}

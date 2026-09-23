@@ -9,10 +9,25 @@ export function FeatureProvider({ children }) {
   const [locationFlags, setLocationFlags] = useState({})
   const [leagueFlags, setLeagueFlags] = useState({})
   const [loading, setLoading] = useState(true)
+  // locations / league_config are only readable when signed in, so a
+  // signed-out boot reads {} — re-fetch whenever the auth user changes.
+  const [userId, setUserId] = useState(undefined)
+
+  useEffect(() => {
+    let active = true
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (active) setUserId(session?.user?.id ?? null)
+    })
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUserId(session?.user?.id ?? null)
+    })
+    return () => { active = false; subscription.unsubscribe() }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
     if (!locationId) { setLoading(false); return undefined }
+    if (userId === undefined) return undefined // auth not resolved yet
     setLoading(true)
     Promise.all([
       supabase.from('locations').select('features').eq('id', locationId).maybeSingle(),
@@ -24,7 +39,7 @@ export function FeatureProvider({ children }) {
       setLoading(false)
     })
     return () => { cancelled = true }
-  }, [locationId])
+  }, [locationId, userId])
 
   const value = useMemo(() => ({
     loading,

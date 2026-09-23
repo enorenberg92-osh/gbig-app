@@ -4,106 +4,10 @@ import { supabase } from '../../lib/supabase'
 import { useLocation } from '../../context/LocationContext'
 import { Button, Toast } from '../ui'
 import { mutationErrorMessage } from '../../lib/rpcErrors'
+import { parseSignupCSV, normalizeEmail } from '../../lib/signupImport'
 
-// ── CSV helpers ───────────────────────────────────────────────────────────────
-
-function parseCSVLine(line) {
-  const result = []
-  let current = ''
-  let inQuotes = false
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i]
-    if (ch === '"') {
-      inQuotes = !inQuotes
-    } else if (ch === ',' && !inQuotes) {
-      result.push(current.trim())
-      current = ''
-    } else {
-      current += ch
-    }
-  }
-  result.push(current.trim())
-  return result
-}
-
-function splitName(fullName) {
-  const parts = (fullName || '').trim().split(/\s+/)
-  return {
-    firstName: parts[0] || '',
-    lastName:  parts.slice(1).join(' ') || '',
-  }
-}
-
-function parseHandicap(val) {
-  const n = parseFloat(val)
-  return isNaN(n) ? null : n
-}
-
-// WPForms column layout (0-indexed):
-//  0  Name*          (P1)
-//  1  Phone Number*  (P1)
-//  2  Email*         (P1)
-//  3  9 Hole Handicap* (P1)
-//  4  Day*
-//  5  Time*
-//  6,7,8  blank
-//  9  Name*          (P2)
-// 10  Phone Number*  (P2)
-// 11  Email*         (P2)
-// 12  9 Hole Handicap* (P2)
-// 13  Message
-// 14+ metadata
-
-function parseCSV(text) {
-  const lines = text.trim().split(/\r?\n/)
-  if (lines.length < 2) return { rows: [], error: 'CSV appears empty.' }
-
-  const parsed = []
-  for (let i = 1; i < lines.length; i++) {
-    const line = lines[i].trim()
-    if (!line) continue
-    const cols = parseCSVLine(line)
-
-    const p1Name = cols[0] || ''
-    if (!p1Name) continue  // skip empty rows
-
-    const { firstName: p1First, lastName: p1Last } = splitName(p1Name)
-    const { firstName: p2First, lastName: p2Last } = splitName(cols[9] || '')
-
-    const lastName1 = p1Last || p1First
-    const lastName2 = p2Last || p2First
-    const teamName  = lastName1 && lastName2
-      ? `${lastName1}/${lastName2}`
-      : p1Name
-
-    parsed.push({
-      p1: {
-        firstName: p1First,
-        lastName:  p1Last,
-        fullName:  p1Name,
-        phone:     cols[1] || '',
-        email:     cols[2] || '',
-        handicap:  parseHandicap(cols[3]),
-      },
-      p2: {
-        firstName: p2First,
-        lastName:  p2Last,
-        fullName:  cols[9] || '',
-        phone:     cols[10] || '',
-        email:     cols[11] || '',
-        handicap:  parseHandicap(cols[12]),
-      },
-      day:      cols[4] || '',
-      time:     cols[5] || '',
-      teamName,
-      slot:     [cols[4], cols[5]].filter(Boolean).join(' '),
-      submissionId: cols[15] || '',
-      submittedAt:  cols[16] || '',
-    })
-  }
-
-  return { rows: parsed, error: null }
-}
+// CSV parsing (RFC 4180 quoting, BOM, multi-line fields) and the WPForms
+// column mapping live in lib/signupImport so they can be unit-tested.
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
@@ -129,7 +33,7 @@ export default function AdminImport({ leagueId }) {
     setFileName(file.name)
     const reader = new FileReader()
     reader.onload = (ev) => {
-      const { rows: parsed, error } = parseCSV(ev.target.result)
+      const { rows: parsed, error } = parseSignupCSV(ev.target.result)
       if (error) { setParseError(error); setRows([]); return }
       setParseError(null)
       setRows(parsed)
@@ -158,71 +62,85 @@ export default function AdminImport({ leagueId }) {
     const toImport = rows.filter((_, i) => selected.has(i))
     const successes = [], errors = []
 
-    for (const row of toImport) {
-      try {
-        // ── Insert Player 1 ──
-        const p1Payload = {
-          first_name:       row.p1.firstName,
-          last_name:        row.p1.lastName,
-          name:             row.p1.fullName,
-          email:            row.p1.email || null,
-          handicap:         row.p1.handicap,
+    // Returning players: match by email (case-insensitive) within this
+    // location and reuse the existing player instead of creating a duplicate.
+    // Players created earlier in this same import are added to the map too.
+    const byEmail = new Map()
+    const { data: existing, error: existingErr } = await supabase
+      .from('players')
+      .select('id, name, email')
+      .eq('location_id', locationId)
+    if (existingErr) {
+      setImporting(false)
+      showToast('Could not load existing players: ' + existingErr.message, 'error')
+      return
+    }
+    for (const p of existing || []) {
+      const key = normalizeEmail(p.email)
+      if (key && !byEmail.has(key)) byEmail.set(key, p.id)
+    }
+
+    // Returns { id, reused } or throws with a readable message.
+    async function findOrCreatePlayer(p, label) {
+      const key = normalizeEmail(p.email)
+      if (key && byEmail.has(key)) return { id: byEmail.get(key), reused: true }
+      const { data: id, error } = await supabase.rpc('admin_create_player', {
+        p_location_id: locationId,
+        p_payload: {
+          first_name:       p.firstName,
+          last_name:        p.lastName,
+          name:             p.fullName,
+          email:            key || null,
+          handicap:         p.handicap,  // already rounded by parseHandicap
           in_skins:         false,
           handicap_locked:  false,
-        }
-        const { data: p1Id, error: p1Err } = await supabase.rpc('admin_create_player', {
-          p_location_id: locationId,
-          p_payload: p1Payload,
-        })
+        },
+      })
+      if (error) throw new Error(`${label} (${p.fullName}): ${mutationErrorMessage(error, 'import this player')}`)
+      if (key) byEmail.set(key, id)
+      return { id, reused: false }
+    }
 
-        if (p1Err) {
-          errors.push({ team: row.teamName, msg: `Player 1 (${row.p1.fullName}): ${p1Err.message}` })
+    for (const row of toImport) {
+      // Players created for this row — if a later step fails they exist
+      // without a team, so the error says exactly who needs pairing by hand.
+      const created = []
+      const leftover = () => created.length
+        ? ` ${created.join(' and ')} ${created.length === 1 ? 'was' : 'were'} added as ${created.length === 1 ? 'a player' : 'players'} without a team — pair them in Players & Teams, or delete them before re-importing this row.`
+        : ''
+      try {
+        const p1 = await findOrCreatePlayer(row.p1, 'Player 1')
+        if (!p1.reused) created.push(row.p1.fullName)
+
+        if (!row.p2.firstName) {
+          errors.push({ team: row.teamName, msg: 'No Player 2 on this row — a team requires exactly two players.' + leftover() })
+          continue
+        }
+        const p2 = await findOrCreatePlayer(row.p2, 'Player 2')
+        if (!p2.reused) created.push(row.p2.fullName)
+
+        if (p1.id === p2.id) {
+          errors.push({ team: row.teamName, msg: 'Player 1 and Player 2 resolve to the same player (same email).' + leftover() })
           continue
         }
 
-        // ── Insert Player 2 ──
-        let p2Id = null
-        if (row.p2.firstName) {
-          const p2Payload = {
-            first_name:      row.p2.firstName,
-            last_name:       row.p2.lastName,
-            name:            row.p2.fullName,
-            email:           row.p2.email || null,
-            handicap:        row.p2.handicap,
-            in_skins:        false,
-            handicap_locked: false,
-          }
-          const { data: p2CreatedId, error: p2Err } = await supabase.rpc('admin_create_player', {
-            p_location_id: locationId,
-            p_payload: p2Payload,
-          })
-
-          if (p2Err) {
-            errors.push({ team: row.teamName, msg: `Player 2 (${row.p2.fullName}): ${p2Err.message}` })
-          } else {
-            p2Id = p2CreatedId
-          }
-        }
-
-        // ── Create Team ──
-        if (!p2Id) {
-          errors.push({ team: row.teamName, msg: 'A team requires exactly two players.' })
-          continue
-        }
         const { error: teamErr } = await supabase.rpc('admin_save_team', {
           p_team_id: null,
           p_league_id: leagueId,
           p_name: row.teamName,
-          p_player_ids: [p1Id, p2Id],
+          p_player_ids: [p1.id, p2.id],
         })
 
         if (teamErr) {
-          errors.push({ team: row.teamName, msg: `Team: ${mutationErrorMessage(teamErr, 'import this team')}` })
+          errors.push({ team: row.teamName, msg: `Team: ${mutationErrorMessage(teamErr, 'import this team')}.` + leftover() })
         } else {
-          successes.push(row.teamName)
+          const reusedNames = [p1.reused && row.p1.fullName, p2.reused && row.p2.fullName].filter(Boolean)
+          successes.push(reusedNames.length
+            ? `${row.teamName} (returning: ${reusedNames.join(', ')})`
+            : row.teamName)
         }
       } catch (e) {
-        errors.push({ team: row.teamName, msg: e.message })
+        errors.push({ team: row.teamName, msg: e.message + leftover() })
       }
     }
 
@@ -259,7 +177,7 @@ export default function AdminImport({ leagueId }) {
         <div style={styles.instructions}>
           <div style={styles.step}><span style={styles.stepNum}>1</span> Go to <strong>WPForms → Entries → League Sign Up Form</strong></div>
           <div style={styles.step}><span style={styles.stepNum}>2</span> Click <strong>Export</strong> and download the CSV</div>
-          <div style={styles.step}><span style={styles.stepNum}>3</span> Upload it below — players and teams are created automatically</div>
+          <div style={styles.step}><span style={styles.stepNum}>3</span> Upload it below — players and teams are created automatically (returning players are matched by email)</div>
         </div>
       </div>
 

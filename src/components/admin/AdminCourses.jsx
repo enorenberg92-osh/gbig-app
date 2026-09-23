@@ -123,6 +123,28 @@ export default function AdminCourses() {
     }
     setSaving(true)
 
+    // Played scores store one entry per hole, validated against the course's
+    // hole count. Changing num_holes after scores exist would make those
+    // rounds unreadable/unscorable, so block it.
+    const prevHoles = editing ? (editing.num_holes || (editing.hole_pars || []).length || null) : null
+    if (editing && prevHoles && prevHoles !== numHoles) {
+      const played = await countPlayedRounds(editing.id)
+      if (played.error) {
+        setSaving(false)
+        showToast('Error checking existing scores: ' + played.error.message, 'error')
+        return
+      }
+      if (played.count > 0) {
+        setSaving(false)
+        showToast(
+          `Can't change "${editing.name}" from ${prevHoles} to ${numHoles} holes: ${played.count} round${played.count === 1 ? ' has' : 's have'} already been scored on it. ` +
+          `Create a new course for the ${numHoles}-hole layout instead.`,
+          'error'
+        )
+        return
+      }
+    }
+
     const payload = {
       name:       courseName.trim(),
       num_holes:  numHoles,
@@ -147,6 +169,29 @@ export default function AdminCourses() {
       resetForm()
       load()
     }
+  }
+
+  // Number of scored rounds (league scores + tournament cards) on a course.
+  async function countPlayedRounds(courseId) {
+    const [{ data: evts, error: evErr }, { data: tourneys, error: tErr }] = await Promise.all([
+      supabase.from('events').select('id').eq('location_id', locationId).eq('course_id', courseId),
+      supabase.from('tournaments').select('id').eq('location_id', locationId).eq('course_id', courseId),
+    ])
+    if (evErr) return { error: evErr }
+    // tournaments may be absent on older installs; treat that as "none"
+    const eventIds = (evts || []).map(e => e.id)
+    const tourneyIds = tErr ? [] : (tourneys || []).map(t => t.id)
+    const [scoresRes, entriesRes] = await Promise.all([
+      eventIds.length
+        ? supabase.from('scores').select('id', { count: 'exact', head: true }).in('event_id', eventIds)
+        : Promise.resolve({ count: 0 }),
+      tourneyIds.length
+        ? supabase.from('tournament_entries').select('id', { count: 'exact', head: true })
+            .in('tournament_id', tourneyIds).not('hole_scores', 'is', null)
+        : Promise.resolve({ count: 0 }),
+    ])
+    if (scoresRes.error) return { error: scoresRes.error }
+    return { count: (scoresRes.count || 0) + (entriesRes.error ? 0 : (entriesRes.count || 0)) }
   }
 
   function handleDelete(course) {

@@ -92,6 +92,8 @@ export default function AdminPanel({ session, onBack }) {
     } catch {
       setAllEvents([])
       setActiveEventId(null)
+      setActiveEventLabel(null)
+      setActiveEventOpen(false)
       return
     }
     // Fetch all playable events for this location
@@ -114,6 +116,12 @@ export default function AdminPanel({ session, onBack }) {
       setActiveEventId(chosen.id)
       setActiveEventLabel(chosen.week_number != null ? `Wk ${chosen.week_number}` : chosen.name || 'Event')
       setActiveEventOpen(chosen.status === 'open')
+    } else {
+      // e.g. a newly-selected working league with no schedule yet — don't
+      // keep showing the previous league's week.
+      setActiveEventId(null)
+      setActiveEventLabel(null)
+      setActiveEventOpen(false)
     }
   }
 
@@ -159,7 +167,7 @@ export default function AdminPanel({ session, onBack }) {
       <Route path="scores"     element={<AdminScores    activeEventId={activeEventId} onEventChange={handleEventChange} />} />
       <Route path="standings"  element={<AdminStandings session={session} />} />
       <Route path="players/*"  element={<AdminPlayers />} />
-      <Route path="league"     element={<AdminLeague />} />
+      <Route path="league"     element={<AdminLeague onWorkingLeagueChange={loadActiveEvent} />} />
       <Route path="handicap"   element={<AdminHandicap />} />
       <Route path="schedule"   element={<AdminSchedule />} />
       <Route path="subs"       element={subsEnabled ? <AdminSubs /> : <Navigate to="/league/admin/dashboard" replace />} />

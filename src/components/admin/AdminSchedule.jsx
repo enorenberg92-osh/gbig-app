@@ -7,9 +7,11 @@ import { Button, Toast, EmptyState } from '../ui'
 import { formatLocalDate, isFutureDate } from '../../lib/dateUtils'
 import { loadWorkingLeague } from '../../lib/leagueUtils'
 import { mutationErrorMessage } from '../../lib/rpcErrors'
+import { planRoundRobin, seedPlayoff } from '../../lib/scheduleUtils'
 
 const EMPTY_FORM = {
   name: '',
+  week_number: '',       // prefilled with the next week for new events
   start_date: '',
   end_date: '',
   status: 'open',
@@ -46,30 +48,7 @@ function numOr(v, fallback) {
   return Number.isFinite(n) ? n : fallback
 }
 
-// Circle-method round robin. Returns array of rounds; each round is an array
-// of [homeId, awayId]. Odd team count → one team sits out each round.
-export function roundRobinRounds(teamIds) {
-  const ids = [...teamIds]
-  if (ids.length < 2) return []
-  if (ids.length % 2 === 1) ids.push(null) // bye slot
-  const n = ids.length
-  const rounds = []
-  const rotation = ids.slice(1)
-  for (let r = 0; r < n - 1; r++) {
-    const left = [ids[0], ...rotation.slice(0, n / 2 - 1)]
-    const right = rotation.slice(n / 2 - 1).reverse()
-    const pairs = []
-    for (let i = 0; i < n / 2; i++) {
-      if (left[i] != null && right[i] != null) {
-        // alternate home/away by round so nobody is always home
-        pairs.push(r % 2 === 0 ? [left[i], right[i]] : [right[i], left[i]])
-      }
-    }
-    rounds.push(pairs)
-    rotation.push(rotation.shift())
-  }
-  return rounds
-}
+// Round-robin / playoff pairing helpers live in lib/scheduleUtils (tested).
 
 // Builds the versioned config the server validates. Only keys the chosen
 // format accepts are included — the validator rejects everything else.
@@ -136,7 +115,7 @@ export default function AdminSchedule() {
         .order('week_number', { ascending: true, nullsFirst: false }),
       supabase
         .from('courses')
-        .select('id, name')
+        .select('id, name, num_holes')
         .eq('location_id', locationId)
         .order('name'),
       supabase
@@ -180,11 +159,22 @@ export default function AdminSchedule() {
     e.preventDefault()
     setSaving(true)
 
+    const weekNumber = form.week_number === '' ? null : parseInt(form.week_number, 10)
+    if (weekNumber != null && (!Number.isInteger(weekNumber) || weekNumber < 1)) {
+      setSaving(false); showToast('Week # must be a whole number of 1 or more.', 'error'); return
+    }
+    const clash = weekNumber != null && events.find(ev => ev.week_number === weekNumber && ev.id !== editing?.id)
+    if (clash) {
+      setSaving(false); showToast(`Week ${weekNumber} is already used by "${clash.name}".`, 'error'); return
+    }
+
     const payload = {
       name: form.name.trim(),
       start_date: form.start_date || null,
       end_date: form.end_date || null,
-      status: form.is_bye ? 'closed' : form.status,
+      // A published (closed) event stays closed — the server allows editing
+      // its other fields only while the status is unchanged.
+      status: (form.is_bye || editing?.status === 'closed') ? 'closed' : form.status,
       notes: form.notes.trim() || null,
       course_id: form.is_bye ? null : (form.course_id || null),
       hole_event_hole: form.is_bye ? null : (form.hole_event_hole ? parseInt(form.hole_event_hole, 10) : null),
@@ -192,8 +182,10 @@ export default function AdminSchedule() {
       is_bye: form.is_bye,
       is_playoff: form.is_bye ? false : form.is_playoff,
     }
-    // '' on a new event = inherit league default (omit both keys).
-    if (form.format) {
+    // '' on a new event = inherit league default (omit both keys). A
+    // published week keeps its stored format/config (the server rejects any
+    // change), so omit them rather than risk a rebuilt config that differs.
+    if (form.format && editing?.status !== 'closed') {
       payload.format = form.format
       payload.format_config = buildFormatConfig(form)
     }
@@ -201,7 +193,8 @@ export default function AdminSchedule() {
     const { error } = await supabase.rpc('admin_upsert_event', {
       p_event_id: editing?.id || null,
       p_league_id: league.id,
-      p_payload: { ...payload, week_number: editing?.week_number ?? null },
+      // null on a new event → server assigns the next week number.
+      p_payload: { ...payload, week_number: weekNumber ?? (editing ? editing.week_number ?? null : null) },
     })
 
     setSaving(false)
@@ -260,22 +253,27 @@ export default function AdminSchedule() {
   // ── Matchups ───────────────────────────────────────────────────────────────
   // ponytail: generator covers team round robin only; individual match pairing
   // ships with the bracket work in 3.5.
+  // Only regular-season team match-play weeks without results are
+  // (re)generated; see planRoundRobin for how the rotation continues after
+  // weeks already played.
   async function handleGenerateRoundRobin() {
-    const matchWeeks = events.filter(e => !e.is_bye && e.status !== 'closed' && e.format === 'match_team')
     if (teams.length < 2) { showToast('Need at least 2 teams to generate matchups.', 'error'); return }
-    if (matchWeeks.length === 0) { showToast('No open/draft weeks with Team match play format.', 'error'); return }
-    const rounds = roundRobinRounds(teams.map(t => t.id))
+    const plan = planRoundRobin(events, matchupsByEvent, teams.map(t => t.id))
+    if (plan.length === 0) { showToast('No unplayed regular-season weeks with Team match play format.', 'error'); return }
     let saved = 0
-    for (let i = 0; i < matchWeeks.length; i++) {
-      const pairs = rounds[i % rounds.length].map(([home, away]) => ({ home_team_id: home, away_team_id: away }))
+    for (const { event, pairs } of plan) {
       const { error } = await supabase.rpc('admin_set_matchups', {
-        p_event_id: matchWeeks[i].id,
-        p_pairs: pairs,
+        p_event_id: event.id,
+        p_pairs: pairs.map(([home, away]) => ({ home_team_id: home, away_team_id: away })),
       })
-      if (error) { showToast(`Week ${matchWeeks[i].week_number ?? i + 1}: ` + mutationErrorMessage(error, 'set matchups'), 'error'); return }
+      if (error) {
+        showToast(`Week ${event.week_number ?? '?'}: ` + mutationErrorMessage(error, 'set matchups'), 'error')
+        if (saved) loadAll()
+        return
+      }
       saved++
     }
-    showToast(`Round robin generated for ${saved} week${saved === 1 ? '' : 's'}.`)
+    showToast(`Round robin generated for ${saved} unplayed week${saved === 1 ? '' : 's'}.`)
     loadAll()
   }
 
@@ -287,29 +285,43 @@ export default function AdminSchedule() {
     setEditingMatchups(evt.id)
   }
 
-  // Playoff seeding suggestion: rank teams by season match-play points, then
-  // pair 1 v N, 2 v N-1, … Admin can still edit before saving.
+  // Playoff seeding suggestion: rank teams by season match-play points (ties
+  // broken by lower season net total), then pair 1 v N, 2 v N-1, … With an
+  // odd team count the top seed gets the bye. Admin can still edit before
+  // saving.
   async function autoSeedPlayoff() {
-    const { data: scored } = await supabase
-      .from('matchups')
-      .select('home_team_id, away_team_id, points_home, points_away')
-      .eq('location_id', locationId)
-      .eq('league_id', league.id)
-      .eq('status', 'scored')
+    const closedIds = events.filter(e => e.status === 'closed' && !e.is_bye && !e.is_playoff).map(e => e.id)
+    const [{ data: scored, error: muErr }, { data: scoreRows, error: scErr }] = await Promise.all([
+      supabase
+        .from('matchups')
+        .select('home_team_id, away_team_id, points_home, points_away')
+        .eq('location_id', locationId)
+        .eq('league_id', league.id)
+        .eq('status', 'scored'),
+      closedIds.length
+        ? supabase.from('scores').select('team_id, net_total')
+            .eq('location_id', locationId).eq('status', 'verified')
+            .in('event_id', closedIds).not('team_id', 'is', null)
+        : Promise.resolve({ data: [] }),
+    ])
+    if (muErr || scErr) { showToast('Error: ' + (muErr || scErr).message, 'error'); return }
     const pts = {}
-    teams.forEach(t => { pts[t.id] = 0 })
     ;(scored || []).forEach(m => {
       if (!m.home_team_id) return
       pts[m.home_team_id] = (pts[m.home_team_id] || 0) + Number(m.points_home || 0)
       pts[m.away_team_id] = (pts[m.away_team_id] || 0) + Number(m.points_away || 0)
     })
-    const seeded = [...teams].sort((a, b) => (pts[b.id] || 0) - (pts[a.id] || 0))
-    const pairs = []
-    for (let i = 0; i < Math.floor(seeded.length / 2); i++) {
-      pairs.push([seeded[i].id, seeded[seeded.length - 1 - i].id])
-    }
+    const net = {}
+    ;(scoreRows || []).forEach(r => {
+      if (r.net_total == null) return
+      net[r.team_id] = (net[r.team_id] || 0) + Number(r.net_total)
+    })
+    const { pairs, byeTeamId } = seedPlayoff(teams, pts, net)
     setMatchupDraft(pairs.length ? pairs : [['', '']])
-    showToast('Seeded by season points — review and save.')
+    const byeName = byeTeamId && teams.find(t => t.id === byeTeamId)?.name
+    showToast(byeName
+      ? `Seeded by season points — ${byeName} (top seed) has the bye. Review and save.`
+      : 'Seeded by season points — review and save.')
   }
 
   async function saveMatchups(evt) {
@@ -330,6 +342,7 @@ export default function AdminSchedule() {
     const cfg = event.format_config || {}
     setForm({
       name: event.name || '',
+      week_number: event.week_number != null ? String(event.week_number) : '',
       start_date: event.start_date ? event.start_date.split('T')[0] : '',
       end_date: event.end_date ? event.end_date.split('T')[0] : '',
       status: event.status || 'open',
@@ -382,6 +395,10 @@ export default function AdminSchedule() {
     return                                 { label: 'active',    bg: '#d8f3dc', color: '#2d6a4f' }
   }
 
+  const nextWeekNumber = events.reduce((max, e) => Math.max(max, e.week_number || 0), 0) + 1
+  const editingClosed = editing?.status === 'closed'
+  const formCourse = courses.find(c => c.id === form.course_id)
+
   if (loading) return <div style={styles.loading}>Loading…</div>
 
   return (
@@ -400,7 +417,7 @@ export default function AdminSchedule() {
         size="lg"
         fullWidth
         icon={<Plus size={16} strokeWidth={2.5} />}
-        onClick={() => { setShowForm(true); setEditing(null); setForm(EMPTY_FORM) }}
+        onClick={() => { setShowForm(true); setEditing(null); setForm({ ...EMPTY_FORM, week_number: String(nextWeekNumber) }) }}
         style={{ fontSize: 15, boxShadow: '0 2px 8px rgba(45,106,79,0.3)' }}
       >
         Create New Event / Round
@@ -412,16 +429,30 @@ export default function AdminSchedule() {
           <h3 style={styles.cardTitle}>{editing ? 'Edit Event' : 'New Event'}</h3>
           <form onSubmit={handleSave} style={styles.form}>
 
-            {/* Event Name */}
-            <div style={styles.fieldGroup}>
-              <label style={styles.label}>Event Name *</label>
-              <input
-                style={styles.input}
-                value={form.name}
-                onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-                placeholder="e.g. Week 4 — Pebble Beach"
-                required
-              />
+            {/* Event Name + Week # */}
+            <div style={styles.row}>
+              <div style={{ ...styles.fieldGroup, flex: 1 }}>
+                <label style={styles.label}>Event Name *</label>
+                <input
+                  style={styles.input}
+                  value={form.name}
+                  onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+                  placeholder="e.g. Week 4 — Pebble Beach"
+                  required
+                />
+              </div>
+              <div style={{ ...styles.fieldGroup, width: '90px' }}>
+                <label style={styles.label}>Week #</label>
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  style={styles.input}
+                  value={form.week_number}
+                  onChange={e => setForm(f => ({ ...f, week_number: e.target.value }))}
+                  placeholder={String(nextWeekNumber)}
+                />
+              </div>
             </div>
 
             {/* Bye Week Toggle */}
@@ -504,15 +535,23 @@ export default function AdminSchedule() {
               </div>
               <div style={{ ...styles.fieldGroup, flex: 1 }}>
                 <label style={styles.label}>Status</label>
-                <select
-                  style={styles.select}
-                  value={form.status}
-                  onChange={e => setForm(f => ({ ...f, status: e.target.value }))}
-                >
-                  {STATUS_OPTIONS.map(s => (
-                    <option key={s} value={s}>{s}</option>
-                  ))}
-                </select>
+                {editingClosed ? (
+                  // Published weeks can't be reopened here; other fields can
+                  // still be edited while the status stays closed.
+                  <select style={styles.select} value="closed" disabled title="Published weeks stay closed">
+                    <option value="closed">closed</option>
+                  </select>
+                ) : (
+                  <select
+                    style={styles.select}
+                    value={form.status}
+                    onChange={e => setForm(f => ({ ...f, status: e.target.value }))}
+                  >
+                    {STATUS_OPTIONS.map(s => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
+                )}
               </div>
             </div>}
 
@@ -526,6 +565,8 @@ export default function AdminSchedule() {
                     <select
                       style={styles.select}
                       value={form.format}
+                      disabled={editingClosed}
+                      title={editingClosed ? 'The format of a published week cannot change' : undefined}
                       onChange={e => setForm(f => ({ ...f, format: e.target.value }))}
                     >
                       {!editing && <option value="">League default</option>}
@@ -534,7 +575,12 @@ export default function AdminSchedule() {
                       ))}
                     </select>
                   </div>
-                  {form.format && form.format !== 'stroke' && (
+                  {editingClosed && (
+                    <div style={{ ...styles.fieldGroup, flex: 1, justifyContent: 'flex-end', fontSize: 12, color: 'var(--gray-500)' }}>
+                      Published week — format and scoring settings are locked.
+                    </div>
+                  )}
+                  {!editingClosed && form.format && form.format !== 'stroke' && (
                     <div style={{ ...styles.fieldGroup, flex: 1 }}>
                       <label style={styles.label}>No-show policy</label>
                       <select
@@ -549,7 +595,7 @@ export default function AdminSchedule() {
                     </div>
                   )}
                 </div>
-                {(form.format === 'match_team' || form.format === 'match_individual') && (
+                {!editingClosed && (form.format === 'match_team' || form.format === 'match_individual') && (
                   <div style={styles.row}>
                     {[['points_win', 'Win pts'], ['points_tie', 'Tie pts'], ['points_loss', 'Loss pts'], ['allowance_pct', 'Hcp %']].map(([key, label]) => (
                       <div key={key} style={{ ...styles.fieldGroup, flex: 1 }}>
@@ -563,7 +609,7 @@ export default function AdminSchedule() {
                     ))}
                   </div>
                 )}
-                {form.format === 'best_ball' && (
+                {!editingClosed && form.format === 'best_ball' && (
                   <div style={styles.row}>
                     <div style={{ ...styles.fieldGroup, flex: 1 }}>
                       <label style={styles.label}>Balls counted</label>
@@ -586,7 +632,7 @@ export default function AdminSchedule() {
                     </div>
                   </div>
                 )}
-                {form.format === 'scramble' && (
+                {!editingClosed && form.format === 'scramble' && (
                   <div style={{ ...styles.fieldGroup, maxWidth: 160 }}>
                     <label style={styles.label}>Team hcp %</label>
                     <input
@@ -596,7 +642,7 @@ export default function AdminSchedule() {
                     />
                   </div>
                 )}
-                {form.format === 'stableford' && (
+                {!editingClosed && form.format === 'stableford' && (
                   <div style={{ ...styles.fieldGroup, maxWidth: 220 }}>
                     <label style={styles.label}>Quota basis</label>
                     <select
@@ -605,7 +651,11 @@ export default function AdminSchedule() {
                       onChange={e => setForm(f => ({ ...f, quota_basis: e.target.value }))}
                     >
                       <option value="none">No quota (raw points)</option>
-                      <option value="handicap">Handicap quota (36 − hcp)</option>
+                      <option value="handicap">
+                        {formCourse?.num_holes
+                          ? `Handicap quota (${2 * formCourse.num_holes} − hcp)`
+                          : 'Handicap quota (2 × holes − hcp)'}
+                      </option>
                     </select>
                   </div>
                 )}
@@ -669,14 +719,14 @@ export default function AdminSchedule() {
       )}
 
       {/* Round-robin generator — shows once any week uses team match play */}
-      {teams.length >= 2 && events.some(e => e.format === 'match_team' && !e.is_bye && e.status !== 'closed') && (
+      {teams.length >= 2 && events.some(e => e.format === 'match_team' && !e.is_bye && !e.is_playoff && e.status !== 'closed') && (
         <Button
           variant="secondary"
           fullWidth
           onClick={handleGenerateRoundRobin}
           style={{ background: 'var(--green-xlight)', color: 'var(--green-dark)', borderColor: 'var(--green)', fontWeight: 700 }}
         >
-          Generate round-robin matchups for match-play weeks
+          Generate round-robin matchups for unplayed match-play weeks
         </Button>
       )}
 
