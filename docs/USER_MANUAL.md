@@ -103,6 +103,7 @@ Rules to know:
 - **Matchups card** — on match-play weeks, This Week shows who plays whom and the result (e.g. 2–0) once scored.
 - **Team result column** — on scramble/best-ball nights, the team-of-the-night result appears once computed.
 - Players see closed (finalized) weeks; only **admin-approved** scores count. Missed weeks show as penalty entries (see [Section 8.3](#83-the-missed-week-penalty)).
+- **Season picker** — the dropdown at the top switches between the current season and past ones (archived seasons included, newest first). This Week, Season, segments, and flights all follow the season you pick.
 
 ### 4.4 My Profile
 
@@ -112,6 +113,7 @@ Rules to know:
 - **Personal bests**: best net, best gross, most birdies in a round.
 - **Scoring by par type**: how you do on par 3s / 4s / 5s.
 - **Recent rounds**: tap any round to expand a full **hole-by-hole scorecard** — vs-par coloring, your tracked putts/FW/GIR, and any **skins you won** that night.
+- **Seasons (career)**: every season you've played — rounds, average gross, average net, best net, and the handicap you played off in that season's last round — with career totals on top. Only verified rounds you played count (no penalties or sub rounds).
 - **Avatar**: tap the camera badge to upload and crop a photo.
 - **Password change** at the bottom.
 
@@ -236,10 +238,21 @@ The Overview section is a 5-step wizard for week close-out:
 - **Season segments** — optional named week ranges (e.g. First Half Wk 1–6, Second Half Wk 7–12); standings gain a segment picker with per-segment winners.
 - **Flights / Divisions** (when enabled) — create flights, assign teams manually or **auto-suggest by combined handicap** (splits evenly, low handicaps in Flight A). Standings gain a flight filter.
 - **Features card** — league-level toggles (see 5.11).
+- **Archive season** — when a season is over, archive it (load a different working league first; the working league can't be archived). Archived seasons show an **Archived** tag, stay browsable in Standings and player profiles, and can be un-archived. Nothing is deleted.
 
 ### 5.10 Alerts Section
 
 Write an announcement → **Send**. Every member sees it in their Alerts tab; members with notifications on get a push (branded with your location's icon). Alerts can carry an expiry date and can be deleted.
+
+**Weekly "Scores due" reminder** — every week the app pushes a **Scores due** reminder, by default **Friday at 9:00 AM** (your location's time zone). By default it goes only to players whose team **hasn't submitted** scores for the open week (a submitted round counts even while it awaits approval). It only goes out while a week is open, never more than once a day. The **Weekly Scores Reminder** card lets you turn it on/off, pick the day and time, choose who gets it (teams that haven't submitted, or everyone on the roster), see how many players and devices would get it right now, and **Send Reminder Now**. Only players who turned on notifications receive pushes.
+
+### 5.10a Sign-ups Section (website sign-ups)
+
+New teams who sign up on the website form land in the app automatically. If the pair is clean (two players, neither already on a team in the working league), the players and team are created right away; returning players are matched by email so their history and handicap carry over. Admins get a phone notification for every sign-up (turn on notifications in the Alerts tab on your phone).
+
+Anything unclear — one player only, a player already on a team, no working league — shows a **Needs review** chip with the reason: fix the cause, then **Retry import**, or **Dismiss**. A second submission with the same emails within 24 hours is marked **Duplicate**; tap **Import anyway** if it's real.
+
+**Setup (once per location):** **Generate key**, copy the webhook URL, and paste it into WPForms → Settings → Webhooks (POST, JSON); the Setup panel lists the field keys. **Rotate key** replaces the URL; **Turn off** stops website sign-ups. CSV import under Players still works.
 
 ### 5.11 Feature Toggles
 
