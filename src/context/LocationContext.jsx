@@ -12,6 +12,14 @@ const LocationContext = createContext(null)
 // paints the right brand immediately — no other tenant's logo ever flashes.
 const CACHE_KEY = `loc:${window.location.hostname.toLowerCase()}`
 
+// Hostname's first label is the location slug. Vercel project names end in
+// "-app" (gbig-app, appleton-app) — strip that suffix so the same rule covers
+// both *.vercel.app aliases and future <slug>.domain hosts.
+const HOST_SLUG = window.location.hostname.toLowerCase().split('.')[0].replace(/-app$/, '')
+// A real location host must resolve by slug. The env fallback (GBIG) is only
+// for dev/localhost and hosts whose slug definitively matches no location.
+const USE_SLUG = !import.meta.env.DEV && !!HOST_SLUG && HOST_SLUG !== 'www' && HOST_SLUG !== 'localhost'
+
 function readCachedLocation() {
   try {
     const raw = localStorage.getItem(CACHE_KEY)
@@ -28,7 +36,9 @@ export function LocationProvider({ children }) {
   const [lookupFailed, setLookupFailed] = useState(false)
   const [attempt, setAttempt] = useState(0)
   const [retrying, setRetrying] = useState(false)
-  const locationId = resolved?.id || fallbackId
+  // On a location host, never expose the fallback id before the slug lookup
+  // settles — queries and branding would briefly run as GBIG.
+  const locationId = resolved?.id || (USE_SLUG ? null : fallbackId)
   const appName     = resolved?.name || import.meta.env.VITE_APP_NAME || 'Golf League App'
   const appFullName = resolved?.name || import.meta.env.VITE_APP_FULL_NAME || appName
   const timezone = resolved?.timezone || 'America/Chicago'
@@ -36,12 +46,8 @@ export function LocationProvider({ children }) {
   useEffect(() => {
     let cancelled = false
     async function resolveLocation() {
-      const hostname = window.location.hostname.toLowerCase()
-      // Hostname's first label is the location slug. Vercel project names end
-      // in "-app" (gbig-app, appleton-app) — strip that suffix so the same
-      // rule covers both *.vercel.app aliases and future <slug>.domain hosts.
-      const slug = hostname.split('.')[0].replace(/-app$/, '')
-      const useSlug = !import.meta.env.DEV && slug && slug !== 'www' && slug !== 'localhost'
+      const slug = HOST_SLUG
+      const useSlug = USE_SLUG
       let data = null
       if (useSlug) {
         // A transient fetch failure must not silently boot a DIFFERENT
@@ -84,14 +90,22 @@ export function LocationProvider({ children }) {
 
   /* Location data is cached in this context after the single public boot lookup. */
   /* eslint-disable react-hooks/exhaustive-deps */
+  // Dev/localhost only: hydrate the env fallback's row. On a location host
+  // this used to race the slug lookup and could boot Appleton as GBIG.
   useEffect(() => {
-    if (!locationId || resolved) return undefined
+    if (USE_SLUG || !locationId || resolved) return undefined
     let cancelled = false
     supabase.from('location_public').select('*').eq('id', locationId).maybeSingle().then(({ data }) => {
       if (!cancelled && data) setResolved(data)
     })
     return () => { cancelled = true }
   }, [locationId])
+
+  // Location host, first visit, lookup still in flight: render nothing
+  // branded yet (the HTML already carries this location's name and icon).
+  if (USE_SLUG && !resolved && !lookupFailed) {
+    return <div style={retryStyles.screen} aria-busy="true" />
+  }
 
   if (!locationId) {
     console.error(
