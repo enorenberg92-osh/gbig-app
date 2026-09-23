@@ -73,6 +73,13 @@ END;
 $$;
 
 
+-- First-login self-claim by email never matched (the update also needs SELECT
+-- visibility), and making it work would let any login whose email matches an
+-- unclaimed row, at any location, adopt it. create-player-account already
+-- links accounts server-side, so the policy is removed.
+DROP POLICY IF EXISTS "players: claim own profile" ON public.players;
+
+
 -- ── 3. Push subscriptions: owners only ──────────────────────────────────────
 -- The old FOR ALL location-member policy let any player read every endpoint
 -- and key at the location, delete them, or repoint them to themselves.
@@ -83,6 +90,9 @@ CREATE POLICY "push_subscriptions: own rows" ON public.push_subscriptions
   FOR ALL TO authenticated
   USING (user_id = auth.uid())
   WITH CHECK (user_id = auth.uid());
+-- Writes go only through subscribe_push/unsubscribe_push (endpoint allowlist);
+-- a direct insert/update would bypass it.
+REVOKE INSERT, UPDATE ON public.push_subscriptions FROM authenticated;
 -- Admins still need the subscriber count on the Alerts screen.
 CREATE POLICY "push_subscriptions: admins read" ON public.push_subscriptions
   FOR SELECT TO authenticated
@@ -968,7 +978,8 @@ BEGIN
 
   SELECT max(COALESCE(start_date, event_date)) INTO last_closed
     FROM public.events
-   WHERE league_id = team_row.league_id AND location_id = team_row.location_id AND status = 'closed';
+   WHERE league_id = team_row.league_id AND location_id = team_row.location_id AND status = 'closed'
+     AND NOT COALESCE(is_bye, false);  -- bye weeks are created already closed
   IF last_closed IS NOT NULL AND p_effective_date <= last_closed THEN
     RAISE EXCEPTION 'Effective date must be after the last published week (%) so past results stay intact', last_closed;
   END IF;
@@ -1176,10 +1187,16 @@ BEGIN
   before_row := to_jsonb(sub_row);
 
   profile_id := sub_row.sub_player_id;
-  -- Never adopt a non-sub (league) player as a sub profile.
+  -- Never adopt a league player as a sub profile. An unflagged legacy sub
+  -- profile (no login, not on any active team) is still adopted, so the
+  -- AdminSubs repair of pre-fix rows keeps working without duplicating it.
   IF profile_id IS NOT NULL AND NOT EXISTS (
-    SELECT 1 FROM public.players
-     WHERE id = profile_id AND location_id = sub_row.location_id AND COALESCE(is_sub, false)
+    SELECT 1 FROM public.players p
+     WHERE p.id = profile_id AND p.location_id = sub_row.location_id
+       AND (COALESCE(p.is_sub, false)
+            OR (p.user_id IS NULL AND NOT EXISTS (
+                  SELECT 1 FROM public.team_memberships tm
+                   WHERE tm.player_id = p.id AND tm.effective_to IS NULL)))
   ) THEN
     profile_id := NULL;
   END IF;
@@ -1204,8 +1221,9 @@ BEGIN
     ELSE
       PERFORM set_config('app.player_write', 'on', true);
       UPDATE public.players
-         SET handicap = greatest(-2, least(40, round(COALESCE(sub_row.sub_handicap, 0))::integer))
-       WHERE id = profile_id AND location_id = sub_row.location_id AND COALESCE(is_sub, false);
+         SET handicap = greatest(-2, least(40, round(COALESCE(sub_row.sub_handicap, 0))::integer)),
+             is_sub = true
+       WHERE id = profile_id AND location_id = sub_row.location_id;
     END IF;
   END IF;
 
@@ -1226,6 +1244,8 @@ $$;
 -- a) Form-created weeks had week_number NULL: publish_week never auto-opened
 --    them and standings/handicaps mis-ordered them. Default to next number.
 -- b) Editing a published week always failed ("Only publish_week may close").
+--    Name/notes/hole event are now editable; format, course, dates and bye
+--    status stay frozen because results and rosters depend on them.
 -- c) course_id wasn't checked against the league's location.
 CREATE OR REPLACE FUNCTION public.admin_upsert_event(p_event_id UUID, p_league_id UUID, p_payload JSONB)
 RETURNS UUID
@@ -1306,6 +1326,14 @@ BEGIN
     IF before_row->>'status' = 'closed' AND
        course_value IS DISTINCT FROM NULLIF(before_row->>'course_id', '')::uuid THEN
       RAISE EXCEPTION 'The course of a published event cannot change';
+    END IF;
+    -- Dates decide who was rostered (roster_at), so they're frozen too.
+    IF before_row->>'status' = 'closed' AND (
+         NULLIF(p_payload->>'start_date', '')::date IS DISTINCT FROM NULLIF(before_row->>'start_date', '')::date
+      OR NULLIF(p_payload->>'end_date', '')::date IS DISTINCT FROM NULLIF(before_row->>'end_date', '')::date
+      OR COALESCE((p_payload->>'is_bye')::boolean, false) IS DISTINCT FROM COALESCE((before_row->>'is_bye')::boolean, false)
+    ) THEN
+      RAISE EXCEPTION 'The dates and bye status of a published event cannot change';
     END IF;
     PERFORM public.validate_format_config(format_value, format_config_value);
     event_id_value := p_event_id;

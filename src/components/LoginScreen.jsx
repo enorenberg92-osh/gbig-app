@@ -27,19 +27,8 @@ export default function LoginScreen() {
       return
     }
 
-    // Best-effort self-link of an unlinked player row. Under RLS an unlinked
-    // row isn't visible to this user, so this normally matches nothing — the
-    // create-player-account edge function does the real linking. Kept as a
-    // harmless fallback; its result is intentionally ignored.
-    if (data?.user) {
-      try {
-        await supabase
-          .from('players')
-          .update({ user_id: data.user.id })
-          .eq('email', email.trim().toLowerCase())
-          .is('user_id', null)
-      } catch { /* non-fatal */ }
-    }
+    // Player rows are linked to logins server-side by the create-player-account
+    // edge function; there is no client-side self-claim.
 
     // App.jsx auth listener handles the redirect automatically
     setLoading(false)

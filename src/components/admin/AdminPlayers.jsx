@@ -28,6 +28,7 @@ async function callPlayerAccountFunction(body) {
   const { data: { session } } = await supabase.auth.getSession()
   const accessToken = session?.access_token
   if (!accessToken) throw new Error('You are not signed in.')
+  if (typeof body.password === 'string') body = { ...body, password: body.password.trim() }
   const fnRes = await fetch(
     import.meta.env.VITE_SUPABASE_URL + '/functions/v1/create-player-account',
     {
@@ -42,6 +43,22 @@ async function callPlayerAccountFunction(body) {
   const fnBody = await fnRes.json().catch(() => null)
   if (!fnRes.ok || fnBody?.error) throw new Error(fnBody?.error || `HTTP ${fnRes.status}`)
   return fnBody
+}
+
+// Create (or link) a login for a player and make sure the typed password is
+// the one that works. An email that already has a login gets linked with its
+// old password untouched, so follow up with a reset (the edge function refuses
+// it when that login belongs to someone outside this admin's locations).
+// Returns a short note for the toast.
+async function createPlayerLogin(playerId, email, password) {
+  const res = await callPlayerAccountFunction({ player_id: playerId, email, password })
+  if (!res?.reused) return 'account created! They can sign in now.'
+  try {
+    await callPlayerAccountFunction({ mode: 'reset_password', player_id: playerId, password })
+    return 'linked to their existing login and set the new password.'
+  } catch (e) {
+    return `linked to their existing login, but its password was NOT changed (${e.message}).`
+  }
 }
 const EMPTY_TEAM_FORM   = { name: '', player1_id: '', player2_id: '' }
 
@@ -134,7 +151,8 @@ export default function AdminPlayers() {
       handicap_locked: playerForm.handicap_locked,
     }
     // Write-only; blank = no change / no account yet.
-    const password = playerForm.password
+    // Trimmed because LoginScreen trims what the player types.
+    const password = playerForm.password.trim()
     if (password && password.length < MIN_PASSWORD_LENGTH) {
       showToast(`Password must be at least ${MIN_PASSWORD_LENGTH} characters.`, 'error'); return
     }
@@ -159,8 +177,7 @@ export default function AdminPlayers() {
             await callPlayerAccountFunction({ mode: 'reset_password', player_id: editingPlayer.id, password })
             msg = 'Player updated & login password changed.'
           } else if (payload.email) {
-            await callPlayerAccountFunction({ player_id: editingPlayer.id, email: payload.email, password })
-            msg = 'Player updated & account created! They can sign in now.'
+            msg = 'Player updated & ' + await createPlayerLogin(editingPlayer.id, payload.email, password)
           } else {
             msg = 'Player updated. Password ignored — add an email to create a login.'
             type = 'error'
@@ -234,8 +251,7 @@ export default function AdminPlayers() {
     // Create a login account when both an email and a password were given
     if (payload.email && password && newPlayerId) {
       try {
-        await callPlayerAccountFunction({ player_id: newPlayerId, email: payload.email, password })
-        showToast(`Player added & account created! They can sign in now.`)
+        showToast('Player added & ' + await createPlayerLogin(newPlayerId, payload.email, password))
       } catch (e) {
         showToast(`Player added, but account creation failed: ${e.message}`, 'error')
       }
@@ -330,7 +346,8 @@ export default function AdminPlayers() {
 
   // "Create Account" opens an inline password prompt on the player's row;
   // this runs when the admin submits it.
-  async function handleCreateAccount(player, password) {
+  async function handleCreateAccount(player, rawPassword) {
+    const password = (rawPassword || '').trim()
     if (!player.email) {
       showToast('Add an email address for this player first.', 'error'); return
     }
@@ -339,8 +356,7 @@ export default function AdminPlayers() {
     }
     setSaving(true)
     try {
-      await callPlayerAccountFunction({ player_id: player.id, email: player.email, password })
-      showToast(`Account created for ${player.name}! They can now sign in.`)
+      showToast(`${player.name}: ` + await createPlayerLogin(player.id, player.email, password))
       setAccountPrompt(null)
       loadAll()
     } catch (e) {

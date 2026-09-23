@@ -57,7 +57,9 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
 
   try {
-    const { player_id, email, password, mode } = await req.json()
+    const { player_id, email, password: rawPassword, mode } = await req.json()
+    // Trim like LoginScreen does, so a stray keyboard space can't lock anyone out.
+    const password = typeof rawPassword === 'string' ? rawPassword.trim() : rawPassword
     const isReset = mode === 'reset_password'
     if (mode != null && !isReset && mode !== 'create') return json({ error: 'unknown mode' }, 400)
     if (!player_id || !password || (!isReset && !email)) return json({ error: 'missing fields' }, 400)
