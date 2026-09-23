@@ -1,6 +1,6 @@
 # League App — User Manual
 
-_Version 3.0 — covers the app as deployed July 2026 (Phases 1–5, Tournaments, multi-location)._
+_Version 3.1 — covers the app as deployed September 2026 (Phases 1–5, Tournaments, multi-location, pre-season review fixes)._
 _Audience: players, league admins, and super-admins. Written for training new users._
 
 ---
@@ -47,7 +47,7 @@ Every change an admin makes (score approvals, week publishes, handicap changes, 
 
 ### Logging in
 1. Open the app link for your location (e.g. `gbig-app.vercel.app` or `appleton-app.vercel.app`).
-2. Enter the **email** and **league password** your admin set up for you.
+2. Enter the **email** and **password** your admin set up for you.
 3. First login links your account automatically — your profile, team, and scores appear.
 
 ### Installing on your phone
@@ -61,7 +61,7 @@ The installed icon and app name match **your location's** branding.
 Open the **Alerts** tab and tap **Enable Notifications** when prompted. You'll get push notifications for league announcements even when the app is closed.
 
 ### Changing your password
-League tab → **My Profile** → scroll to the password section → enter current + new password → **Update Password**.
+League tab → **My Profile** → scroll to the password section → enter and confirm a new password (6+ characters) → **Update Password**. Forgot it? Your admin can set a new one for you (Players → edit → Set login password).
 
 ---
 
@@ -116,7 +116,7 @@ Rules to know:
 
 Can't make a week? League tab → **Request Sub**.
 
-1. Pick the week, enter your sub's name and contact info, and their handicap (whole number, −2 to 27). Past subs can be re-picked quickly.
+1. Pick the week, enter your sub's name and contact info, and their handicap (whole number, −2 to 40). Past subs can be re-picked quickly.
 2. Submit — your admin reviews it.
 3. Once approved, the admin enters the sub's score for your team that week. The sub's score counts for your **team's standings**, but never for **your personal handicap**.
 
@@ -149,7 +149,7 @@ Open with **League tab → Open Admin Panel**. Sections (left nav on desktop, ch
 
 1. **Courses** — create each 9- or 18-hole course with **par for every hole** (3–6 each). Optionally add a **stroke index** (rank each hole 1 = hardest … n = easiest) — match play and Stableford allocate handicap strokes by it; without one, strokes spread evenly. The app blocks score entry on any event whose course has missing/invalid pars.
 2. **Leagues** — create the league (name, number of weeks, start date, **default scoring format**), then mark it as your **working league**. The working league is the one all admin screens operate on.
-3. **Players** — add players (name, email, handicap, league password). Adding an email auto-creates their login account. Or bulk-import from CSV (Players → Import).
+3. **Players** — add players (name, email, handicap) and type a **login password** for them. Adding an email + password creates their login account. Passwords are never stored in the app — only in the secure sign-in system — so tell the player their password when you set it. Or bulk-import from CSV (Players → Import).
 4. **Teams** — pair players into 2-person teams. Every team must have exactly two players.
 5. **Schedule** — generate the season's weeks from the Leagues section (one tap), or add events one at a time in Schedule. Assign a course to each event. Set bye weeks and per-week **format overrides** as needed.
 6. **Open week 1** — in Schedule, set the first event's status to **Open**. Players can now submit.
@@ -157,9 +157,9 @@ Open with **League tab → Open Admin Panel**. Sections (left nav on desktop, ch
 ### 5.2 Scores Section (the one you'll live in)
 
 Pick any week from the dropdown. When player-submitted scores are waiting, a **Review Queue** card shows the pending count with one-tap **Approve all**; each score also has individual **Approve / Reject** buttons. For each team you can:
-- **Enter Scores** — type both players' hole scores yourself (all holes, 1–20). Admin-entered scores are **instantly approved** — no review step.
+- **Enter Scores** — type the players' hole scores yourself (all holes, 1–20). You can leave one player's grid completely blank to record just the other player (e.g. one teammate didn't play). Admin-entered scores are **instantly approved** — no review step.
 - **Edit** — fix an existing score (works on **closed weeks too** — see 5.3). Saving an edit approves it.
-- **Remove** — delete a score row entirely.
+- **Remove** — delete a score row entirely. On a published week, removing a played score puts the missed-week penalty back.
 - **Skins calculator** — after scores are in, one tap computes skins (lowest unique score per hole, no carryovers; only players marked "in skins" count).
 
 Handicaps recalculate automatically after every save/approval. Rejected scores free the team to resubmit.
@@ -173,7 +173,7 @@ Life happens — someone's score was wrong three weeks ago, or someone got a mis
 Just pick the old week in **Scores** and edit or enter the score. The week itself stays closed (standings history stays intact), and:
 - Entering a real score for a player who had a **missed-week penalty automatically deletes the penalty** — the real score takes over.
 - The correction is audit-logged, and the player's handicap recalculates.
-- On a match-play week, re-run the results afterward (the rescore action) so matchup points reflect the fix.
+- Matchup points, Stableford points, and team-of-the-night results **re-score automatically** — no extra step.
 
 ### 5.4 Overview — Closing Out a Week
 
@@ -192,12 +192,13 @@ The Overview section is a 5-step wizard for week close-out:
 
 ### 5.5 Players Section
 
-- **Add/edit players** — name, email, handicap (−2 to 27), skins participation, handicap lock, league password.
+- **Add/edit players** — name, email, handicap (−2 to 27; subs −2 to 40), skins participation, handicap lock, and **Set login password** (write-only: type a new one to reset it, leave blank to keep it).
 - **Create account** — for players added without email; sets up their login.
 - **CSV import** — bulk player+team import (Players → Import). Teams require both players.
-- **Delete player** — blocked while they're on an active team (remove them from the team first); otherwise removes the player and all their data.
+- **Delete player** — blocked while they're on an active team (remove them from the team first) or while they have money-list entries; otherwise removes the player and all their data.
+- **Delete team** — blocked once the team has recorded scores (that would erase standings history); use a mid-season swap instead.
 - **Teams** — create/edit/delete; exactly two players each; edits are audit-logged.
-- **Mid-season swap** — in a team's edit form: pick the outgoing player, the incoming player, and the **effective date**. Past weeks stay with the outgoing player (history never rewrites); the new player takes over from that date. Team edits *without* a date correct the roster from the start of the season instead.
+- **Mid-season swap** — in a team's edit form: pick the outgoing player, the incoming player, and the **effective date** (must be after the last published week). Past weeks stay with the outgoing player (history never rewrites); the new player takes over from that date. Editing a team *without* a date (a correction) only touches the player you changed: the replacement takes over that player's slot from the same date, and renaming a team changes nothing about its roster.
 
 ### 5.6 Subs Section
 
@@ -220,7 +221,7 @@ The Overview section is a 5-step wizard for week close-out:
 - **Playoff weeks** — flag an event as a playoff; its matchup editor gains **Auto-seed from standings** (1 v N, 2 v N−1 — adjustable before saving).
 - **Weekly hole event** — e.g., closest-to-pin on hole 5; shows players a target celebration.
 - **Bye weeks** — marked events that don't expect scores.
-- **Statuses**: `draft` (staged), `open` (accepting scores — only one at a time), `cancelled`. Weeks become `closed` only through **Publish** in Overview. Closed weeks can't be deleted and their format is frozen.
+- **Statuses**: `draft` (staged), `open` (accepting scores — only one at a time), `cancelled`. Weeks become `closed` only through **Publish** in Overview. Closed weeks can't be deleted and their format and course are frozen, but you can still fix their name, dates, and notes.
 
 ### 5.9 Leagues Section
 
@@ -404,7 +405,7 @@ Each week carries its own format and options, validated when saved — a typo'd 
 
 A custom league handicap, recalculated automatically after every score save:
 
-1. Take the player's most recent **N** verified rounds (N = the league's week count, up to 12; sub-played weeks and handicap-excluded nights like scrambles are skipped).
+1. Take the player's most recent **N** verified rounds by date (N = the league's week count, up to 12; sub-played weeks and handicap-excluded nights like scrambles are skipped).
 2. For each round, compute the **differential**: gross score − course par.
 3. Discard outliers: with 4+ rounds, drop the **1 highest**; with 5+ rounds, also drop the **1 lowest**.
 4. Average what's left and multiply by **0.90**.
@@ -438,10 +439,10 @@ Approve or reject the pending scores in the Scores section (one tap on "Approve 
 The other teammate (or an admin) already submitted. Corrections go through the admin.
 
 **Someone got a penalty but actually played.**
-Scores → pick that (closed) week → Enter Scores for the team. The penalty is replaced automatically. Match week? Rescore the event afterward.
+Scores → pick that (closed) week → Enter Scores for that player (leave the teammate blank if they really missed). The penalty is replaced and match results re-score automatically.
 
 **Matchup shows "not scored" after publish.**
-The matchup list was added after publishing, or a score was corrected later. Use the rescore action (or re-publish is not needed — rescore only).
+The matchup list was added after publishing. Re-save any score for that week (or ask the developer to run the rescore) — corrections to scores re-score the week automatically.
 
 **A whole section/tile is missing.**
 The feature is toggled off. League admins: Leagues → Features. Location defaults: super-admin console.
@@ -453,7 +454,7 @@ Should never happen since July 2026 — the app retries lookups and caches your 
 The tournament is full, sign-ups closed, or your account has no player profile at this location.
 
 **Player can't log in.**
-Admin: Players → find the player → confirm email → Create Account (if never created) or reset the league password.
+Admin: Players → find the player → confirm email → **Create Account** (if never created) or edit the player and type a new **login password** to reset it.
 
 **Push notifications stopped.**
 Re-enable in the Alerts tab. (If keys were rotated, every device re-subscribes once.)
