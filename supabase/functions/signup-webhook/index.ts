@@ -15,7 +15,8 @@
 // Body: JSON object, application/x-www-form-urlencoded or multipart/form-data
 // with flat keys p1_name, p1_email, p1_phone, p1_handicap, p2_name, p2_email,
 // p2_phone, p2_handicap, day, time, message, team_name (aliases accepted —
-// see SIGNUP_FIELD_ALIASES). Max 32 KB; 30 sign-ups per location per hour.
+// see SIGNUP_FIELD_ALIASES). Max 32 KB; past 30 sign-ups per location per hour, entries are stored for
+// review instead of imported; 300/hour is refused.
 //
 // Deploy:  supabase functions deploy signup-webhook --no-verify-jwt --project-ref mtuzmasicpcxcvtslevm
 // Secrets: same VAPID_* secrets as send-alert (push is skipped if unset).

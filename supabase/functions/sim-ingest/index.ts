@@ -72,10 +72,13 @@ Deno.serve(async (req) => {
       { auth: { autoRefreshToken: false, persistSession: false } },
     )
 
-    const { data, error } = await admin.rpc('sim_ingest', {
-      p_key_hash: await sha256Hex(apiKey),
-      p_payload: payload,
-    })
+    const keyHash = await sha256Hex(apiKey)
+    const call = () => admin.rpc('sim_ingest', { p_key_hash: keyHash, p_payload: payload })
+    let { data, error } = await call()
+    // Deadlock / serialization conflict with a concurrent bay: safe to retry once.
+    if (error && (error.code === '40P01' || error.code === '40001')) {
+      ({ data, error } = await call())
+    }
 
     if (error) {
       if (error.code === '28000') return json({ error: 'Invalid API key' }, 401)

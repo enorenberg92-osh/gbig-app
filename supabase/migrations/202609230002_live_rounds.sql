@@ -597,6 +597,13 @@ BEGIN
     RAISE EXCEPTION 'Player is not rostered for this week' USING ERRCODE = '22023';
   END IF;
 
+  -- Finalize needs the event row FOR UPDATE; take it before recording holes
+  -- (which share-lock the row) so two bays finishing together queue up
+  -- instead of deadlocking on a share -> update lock upgrade.
+  IF p_payload->'finalize' = 'true'::jsonb THEN
+    PERFORM 1 FROM public.events WHERE id = target_event FOR UPDATE;
+  END IF;
+
   -- Holes: a single {hole, strokes} and/or a catch-up batch in "holes".
   IF p_payload ? 'hole' THEN
     IF jsonb_typeof(p_payload->'hole') <> 'number'

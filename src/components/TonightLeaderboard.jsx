@@ -44,7 +44,7 @@ export default function TonightLeaderboard({ onBack }) {
   const [tvPage, setTvPage] = useState(0)
   const mounted = useRef(true)
 
-  useEffect(() => () => { mounted.current = false }, [])
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
 
   const load = useCallback(async () => {
     if (!locationId) return

@@ -55,7 +55,10 @@ export function LocationProvider({ children }) {
         // definitive "no such slug" falls through to the fallback.
         let succeeded = false
         for (let i = 0; i < 3; i++) {
-          const result = await supabase.from('location_public').select('*').eq('slug', slug).maybeSingle()
+          // A hung request (no error) would otherwise hold the blank boot
+          // screen until the browser gives up; time out and retry instead.
+          const result = await supabase.from('location_public').select('*').eq('slug', slug)
+            .abortSignal(AbortSignal.timeout(8000)).maybeSingle()
           if (!result.error) { data = result.data; succeeded = true; break }
           await new Promise(r => setTimeout(r, 400 * (i + 1)))
         }

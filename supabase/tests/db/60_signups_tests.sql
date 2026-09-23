@@ -214,16 +214,27 @@ RESET ROLE;
 SELECT harness.ok('new stint starts the day after the old one',
   (SELECT effective_from FROM team_memberships WHERE player_id = :p9 AND effective_to IS NULL) = DATE '2026-09-11');
 
--- 9. rate limit: 30 per location per hour
+-- 9. burst: past 30/hour entries are stored for review (not imported, not
+--    dropped); only 300/hour is refused outright.
 RESET ROLE;
 INSERT INTO signup_submissions (location_id, status, created_at)
 SELECT :loc_a, 'dismissed', now() - INTERVAL '5 minutes'
   FROM generate_series(1, 30 - (SELECT count(*) FROM signup_submissions WHERE location_id = :loc_a AND created_at > now() - INTERVAL '1 hour'));
 SET ROLE service_role;
 SELECT signup_webhook_ingest(:'hash', '{}', harness.signup('Late Larry', 'larry@new.test', 1, 'Late Lou', 'lou@new.test', 2))::text AS r \gset
-SELECT harness.ok('31st submission in an hour rate-limited', (:'r'::jsonb->>'error') = 'rate_limited', :'r');
+SELECT harness.ok('31st submission in an hour accepted', (:'r'::jsonb->>'ok') = 'true', :'r');
 RESET ROLE;
-SELECT harness.ok('rate-limited submission not stored', NOT EXISTS (SELECT 1 FROM signup_submissions WHERE email_key LIKE '%larry%'));
+SELECT harness.ok('burst submission stored for review, nothing imported',
+  EXISTS (SELECT 1 FROM signup_submissions WHERE email_key LIKE '%larry%' AND status = 'needs_review' AND error_text LIKE 'Arrived during a burst%')
+  AND NOT EXISTS (SELECT 1 FROM players WHERE lower(email) = 'larry@new.test'));
+INSERT INTO signup_submissions (location_id, status, created_at)
+SELECT :loc_a, 'dismissed', now() - INTERVAL '5 minutes'
+  FROM generate_series(1, 300 - (SELECT count(*) FROM signup_submissions WHERE location_id = :loc_a AND created_at > now() - INTERVAL '1 hour'));
+SET ROLE service_role;
+SELECT signup_webhook_ingest(:'hash', '{}', harness.signup('Spam Sam', 'spam@new.test', 1, 'Spam Sal', 'sal@new.test', 2))::text AS r \gset
+SELECT harness.ok('300th+ submission in an hour refused', (:'r'::jsonb->>'error') = 'rate_limited', :'r');
+RESET ROLE;
+SELECT harness.ok('refused submission not stored', NOT EXISTS (SELECT 1 FROM signup_submissions WHERE email_key LIKE '%spam%'));
 
 -- 10. revoke
 SELECT harness.login(:admin_a, 'admin@a.test');

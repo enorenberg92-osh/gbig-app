@@ -357,6 +357,7 @@ DECLARE
   dup_id UUID;
   dup_at TIMESTAMPTZ;
   new_id UUID;
+  recent_count INTEGER;
 BEGIN
   SELECT * INTO key_row FROM public.location_integration_keys
    WHERE kind = 'signup_webhook' AND key_hash = lower(COALESCE(p_key_hash, ''));
@@ -370,9 +371,13 @@ BEGIN
   -- the rate limit or both miss the duplicate check.
   PERFORM pg_advisory_xact_lock(hashtext('signup_intake:' || key_row.location_id::text));
 
-  IF (SELECT count(*) FROM public.signup_submissions
-       WHERE location_id = key_row.location_id
-         AND created_at > now() - INTERVAL '1 hour') >= 30 THEN
+  -- A registration-opening rush must not lose entries (WPForms doesn't
+  -- retry): past 30/hour they're stored for review instead of imported, and
+  -- only a clearly abusive volume is refused.
+  SELECT count(*) INTO recent_count FROM public.signup_submissions
+   WHERE location_id = key_row.location_id
+     AND created_at > now() - INTERVAL '1 hour';
+  IF recent_count >= 300 THEN
     RETURN jsonb_build_object('ok', false, 'error', 'rate_limited');
   END IF;
 
@@ -407,6 +412,13 @@ BEGIN
   ) RETURNING id INTO new_id;
 
   IF dup_id IS NOT NULL THEN
+    RETURN public.signup_submission_summary(new_id) || jsonb_build_object('ok', true);
+  END IF;
+  IF recent_count >= 30 THEN
+    UPDATE public.signup_submissions
+       SET error_text = 'Arrived during a burst of sign-ups (30+ this hour) — check it, then Retry import.',
+           processed_at = now()
+     WHERE id = new_id;
     RETURN public.signup_submission_summary(new_id) || jsonb_build_object('ok', true);
   END IF;
   RETURN public.process_signup_submission(new_id) || jsonb_build_object('ok', true);

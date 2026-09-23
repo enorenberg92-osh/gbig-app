@@ -38,7 +38,9 @@ async function lookupBrand(slug, origin) {
   ])
   if (!locRes?.ok) return null // transient: don't cache, fall through this time
   const loc = (await locRes.json())[0]
-  const brand = loc ? { ...loc, hasIcons: !!iconRes?.ok } : null
+  // vercel.json rewrites missing paths to index.html (200), so require an image.
+  const hasIcons = !!iconRes?.ok && (iconRes.headers.get('content-type') || '').startsWith('image/')
+  const brand = loc ? { ...loc, hasIcons } : null
   brandCache.set(slug, { brand, at: Date.now() })
   return brand
 }
