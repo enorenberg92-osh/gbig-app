@@ -1,8 +1,12 @@
-import React from 'react'
+import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Trophy, User, Repeat2, Users, Flag, Lock, Shield } from 'lucide-react'
+import { Trophy, User, Repeat2, Users, Flag, Lock, Shield, Radio } from 'lucide-react'
 import { Button, StatTile } from './ui'
 import { useFeature } from '../context/FeatureContext'
+import { useLocation } from '../context/LocationContext'
+import { supabase } from '../lib/supabase'
+import { isPlayingNow, isTodayAt } from '../lib/liveUtils'
+import { LiveDot, LiveDotKeyframes } from './TonightLeaderboard'
 
 export default function LeagueDashboard({
   session,
@@ -15,6 +19,7 @@ export default function LeagueDashboard({
   const friendsEnabled = useFeature('friends')
   const subsEnabled = useFeature('subs')
   const email = session?.user?.email || 'Player'
+  const tonight = useTonightActivity()
 
   const tiles = [
     { Icon: Trophy,  label: 'Standings',    path: '/league/standings'   },
@@ -69,6 +74,29 @@ export default function LeagueDashboard({
         </button>
       )}
 
+      {/* Tonight's leaderboard — live dot while anyone is mid-round */}
+      {(activeRound || tonight.today > 0) && (
+        <button style={styles.tonightBanner} onClick={() => navigate('/league/tonight')}>
+          <LiveDotKeyframes />
+          <span style={styles.tonightIcon}>
+            {tonight.playing > 0
+              ? <LiveDot size={12} />
+              : <Radio size={20} strokeWidth={2} color="var(--green)" />}
+          </span>
+          <div style={styles.scoresBannerText}>
+            <span style={styles.tonightTitle}>Tonight's leaderboard</span>
+            <span style={styles.tonightSub}>
+              {tonight.playing > 0
+                ? `${tonight.playing} playing now · live hole-by-hole`
+                : tonight.today > 0
+                  ? `${tonight.today} played today`
+                  : 'Scores appear live as players enter them'}
+            </span>
+          </div>
+          <span style={{ ...styles.scoresBannerArrow, color: 'var(--gray-400)' }}>›</span>
+        </button>
+      )}
+
       {/* 2×2 tile grid */}
       <div style={styles.grid}>
         {tiles.map(({ Icon, label, path, soon }) => (
@@ -107,6 +135,36 @@ export default function LeagueDashboard({
   )
 }
 
+// Lightweight count of today's live cards for the banner (refreshes every
+// minute; the leaderboard itself is realtime).
+function useTonightActivity() {
+  const { locationId, timezone } = useLocation()
+  const [activity, setActivity] = useState({ playing: 0, today: 0 })
+  useEffect(() => {
+    if (!locationId) return undefined
+    let cancelled = false
+    const load = async () => {
+      const since = new Date(Date.now() - 36 * 60 * 60 * 1000).toISOString()
+      const { data } = await supabase
+        .from('live_rounds')
+        .select('updated_at, holes_played, submitted')
+        .eq('location_id', locationId)
+        .gte('updated_at', since)
+        .limit(500)
+      if (cancelled || !data) return
+      const now = new Date()
+      setActivity({
+        playing: data.filter(r => isPlayingNow(r, timezone, now)).length,
+        today: data.filter(r => r.holes_played > 0 && isTodayAt(r.updated_at, timezone, now)).length,
+      })
+    }
+    load()
+    const t = setInterval(load, 60000)
+    return () => { cancelled = true; clearInterval(t) }
+  }, [locationId, timezone])
+  return activity
+}
+
 const styles = {
   container:   { padding: '20px 16px 32px' },
 
@@ -133,6 +191,16 @@ const styles = {
   scoresBannerTitle: { fontSize: '14px', fontWeight: 700 },
   scoresBannerSub:   { fontSize: '12px' },
   scoresBannerArrow: { fontSize: '22px', color: 'rgba(255,255,255,0.5)', flexShrink: 0 },
+
+  tonightBanner: {
+    display: 'flex', alignItems: 'center', gap: '12px',
+    width: '100%', padding: '12px 16px', marginBottom: '14px',
+    borderRadius: 'var(--radius)', border: '1px solid var(--gray-200)', textAlign: 'left',
+    boxSizing: 'border-box', boxShadow: 'var(--shadow)', background: 'var(--white)', cursor: 'pointer',
+  },
+  tonightIcon:  { width: '26px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+  tonightTitle: { fontSize: '14px', fontWeight: 700, color: 'var(--green-dark)' },
+  tonightSub:   { fontSize: '12px', color: 'var(--gray-500)' },
 
   grid: {
     display: 'grid', gridTemplateColumns: '1fr 1fr',

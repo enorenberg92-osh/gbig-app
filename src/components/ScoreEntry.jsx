@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { ArrowLeft, ArrowRight, Check } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import HoleEventAnimation from './HoleEventAnimation'
@@ -7,6 +7,7 @@ import { scoreColor, scoreBg, vsParLabel } from '../lib/scoreUtils'
 import { hasCompleteCoursePars } from '../lib/holeUtils'
 import { loadWorkingLeague } from '../lib/leagueUtils'
 import { mutationErrorMessage } from '../lib/rpcErrors'
+import { createLiveSync, holesFromLive, resumeHoleIndex } from '../lib/liveUtils'
 import { Button, Toast } from './ui'
 
 /**
@@ -14,6 +15,11 @@ import { Button, Toast } from './ui'
  *
  * Player-facing, hole-by-hole score entry for both teammates.
  * One player on the team enters scores for both players.
+ *
+ * Each hole is also mirrored to live_rounds in the background (record_live_hole)
+ * so the Tonight leaderboard updates as the round goes, and reopening this
+ * screen — on any teammate's phone — resumes the round. That sync never blocks
+ * entry; the final Submit still goes through submit_scores.
  *
  * Props:
  *   session   {object}  - Supabase auth session
@@ -35,6 +41,9 @@ export default function ScoreEntry({ session, onBack }) {
   const [saving, setSaving]             = useState(false)
   const [toast, setToast]               = useState(null)
   const [error, setError]               = useState(null)
+  const [liveStatus, setLiveStatus]     = useState('idle')     // idle | syncing | paused
+  const liveSyncRef = useRef(null)                             // background record_live_hole queue
+  const syncedRef   = useRef({ p1: [], p2: [] })               // last values handed to the queue
 
   const numHoles = course?.num_holes || 0
 
@@ -136,11 +145,23 @@ export default function ScoreEntry({ session, onBack }) {
         setAlreadySubmitted(true); setLoading(false); return
       }
 
-      // 5. Initialize blank scores
-      setScores({
-        p1: Array(loadedCourse.num_holes).fill(null),
-        p2: Array(loadedCourse.num_holes).fill(null),
-      })
+      // 5. Start from the live card if this round is already under way
+      // (another phone, or the app was closed mid-round); otherwise blank.
+      const n = loadedCourse.num_holes
+      const { data: liveRows } = await supabase
+        .from('live_rounds')
+        .select('player_id, hole_scores, submitted')
+        .eq('event_id', evtRow.id)
+        .in('player_id', [hydratedTeam.p1.id, hydratedTeam.p2.id])
+      const liveBy = {}
+      ;(liveRows || []).forEach(r => { if (!r.submitted) liveBy[r.player_id] = r })
+      const start = {
+        p1: holesFromLive(liveBy[hydratedTeam.p1.id], n),
+        p2: holesFromLive(liveBy[hydratedTeam.p2.id], n),
+      }
+      syncedRef.current = { p1: [...start.p1], p2: [...start.p2] }
+      setScores(start)
+      if (Object.keys(liveBy).length) setCurrentHole(resumeHoleIndex(start.p1, start.p2, n))
       setStats({
         p1: Array.from({ length: loadedCourse.num_holes }, () => ({})),
         p2: Array.from({ length: loadedCourse.num_holes }, () => ({})),
@@ -152,6 +173,42 @@ export default function ScoreEntry({ session, onBack }) {
       setLoading(false)
     }
   }
+
+  // Background live sync for this week's card. Fire-and-forget: failures only
+  // flip the small header indicator to "Sync paused" and retry with backoff.
+  useEffect(() => {
+    if (!event?.id) return undefined
+    const queue = createLiveSync({
+      send: (playerId, hole, strokes) => supabase.rpc('record_live_hole', {
+        p_event_id: event.id, p_player_id: playerId, p_hole: hole, p_strokes: strokes,
+      }),
+      onStatus: setLiveStatus,
+    })
+    liveSyncRef.current = queue
+    // Phones kill backgrounded tabs — push what's queued when the screen hides.
+    const onVisibility = () => { if (document.visibilityState === 'hidden') queue.flush() }
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility)
+      queue.dispose()
+      liveSyncRef.current = null
+    }
+  }, [event?.id])
+
+  // Queue every hole that changed since the last sync (either teammate).
+  useEffect(() => {
+    const queue = liveSyncRef.current
+    if (!queue || !team || alreadySubmitted) return
+    ;['p1', 'p2'].forEach(pk => {
+      const cur = scores[pk]
+      if (!Array.isArray(cur)) return
+      const prev = syncedRef.current[pk] || []
+      cur.forEach((v, i) => {
+        if ((v ?? null) !== (prev[i] ?? null)) queue.push(team[pk].id, i + 1, v ?? null)
+      })
+      syncedRef.current[pk] = [...cur]
+    })
+  }, [scores])   // eslint-disable-line react-hooks/exhaustive-deps
 
   // When we land on a hole, check if it's the hole event hole
   useEffect(() => {
@@ -242,6 +299,7 @@ export default function ScoreEntry({ session, onBack }) {
     }
 
     setSaving(true)
+    liveSyncRef.current?.flush()
 
     const entries = [
       { player_id: team.p1.id, hole_scores: scores.p1, hole_stats: statsPayload('p1') },
@@ -388,7 +446,14 @@ export default function ScoreEntry({ session, onBack }) {
         <div style={styles.headerCenter}>
           <div style={styles.headerEventName}>{event?.name || 'Score Entry'}</div>
         </div>
-        <div style={{ width: 52 }} />
+        {/* Subtle live-sync indicator — never an error mid-round */}
+        <div
+          style={styles.liveSlot}
+          title={liveStatus === 'paused' ? 'Live leaderboard sync paused — your scores are safe and will be submitted normally' : 'Scores show on Tonight\'s leaderboard as you play'}
+        >
+          <span style={{ ...styles.liveDot, background: liveStatus === 'paused' ? '#f59e0b' : '#74c69d' }} />
+          <span style={styles.liveText}>{liveStatus === 'paused' ? 'Sync paused' : 'Live'}</span>
+        </div>
       </div>
 
       {/* Progress dots */}
@@ -654,6 +719,9 @@ const styles = {
   headerBack: { color: 'rgba(255,255,255,0.8)', fontSize: 13, fontWeight: 500, width: 52 },
   headerCenter: { flex: 1, textAlign: 'center' },
   headerEventName: { fontSize: 14, fontWeight: 700, color: 'var(--white)' },
+  liveSlot: { width: 52, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2, flexShrink: 0 },
+  liveDot: { width: 7, height: 7, borderRadius: '50%' },
+  liveText: { fontSize: 9, fontWeight: 700, color: 'rgba(255,255,255,0.7)', textTransform: 'uppercase', letterSpacing: '0.4px', textAlign: 'right', lineHeight: 1.1 },
 
   // Progress dots
   progressRow: { display: 'flex', gap: 6, justifyContent: 'center', padding: '12px 16px', background: 'var(--white)', borderBottom: '1px solid var(--gray-200)', flexShrink: 0 },

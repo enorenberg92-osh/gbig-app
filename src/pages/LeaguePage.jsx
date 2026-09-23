@@ -11,6 +11,7 @@ import Standings from '../components/Standings'
 import PlayerProfile from '../components/PlayerProfile'
 import SubRequest from '../components/SubRequest'
 import FriendsTab from '../components/FriendsTab'
+import TonightLeaderboard from '../components/TonightLeaderboard'
 import { useFeature } from '../context/FeatureContext'
 
 // Admin panel is ~half the bundle and only admins ever open it — load on demand.
@@ -86,6 +87,8 @@ function LeagueHub({ session }) {
       />
 
       <Route path="standings"   element={<Standings   session={session} onBack={backToHub} />} />
+      {/* Tonight's live leaderboard — ?tv=1 turns it into a lobby screen */}
+      <Route path="tonight"     element={<TonightLeaderboard onBack={backToHub} />} />
       <Route path="profile"     element={<PlayerProfile session={session} onBack={backToHub} />} />
       <Route path="sub-request" element={subsEnabled ? <SubRequest session={session} onBack={backToHub} /> : <Navigate to="/league" replace />} />
 
