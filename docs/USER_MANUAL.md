@@ -389,7 +389,7 @@ Per league, exactly **one** event can be open at a time — the database itself 
 
 ### 8.3 The Missed-Week Penalty
 
-When a week is published, any rostered player with no approved score gets a penalty entry: **net = course par + their handicap + 7** (a 2-handicap on a par-36 course gets a 45). It counts in standings (missing a week costs you) but never affects handicaps or skins. If a real score is entered later, the penalty is deleted automatically. On match-play weeks, a side with no verified scores is handled by the week's **no-show policy** (forfeit / zero points / half points).
+When a week is published, any rostered player with no approved score gets a penalty entry: **net = course par + their handicap + 7** (a 2-handicap on a par-36 course gets a 45). It counts in standings (missing a week costs you) but never affects handicaps or skins. If a real score is entered later, the penalty is deleted automatically. On match-play weeks, a side with no verified scores is handled by the week's **no-show policy** (forfeit / zero points / half points). If only one teammate played, the missing teammate still counts in match play and two-ball best ball: they're scored at net par + their handicap + 7 for the round, spread evenly across the holes.
 
 ### 8.4 Teams and Rosters Are Dated
 
@@ -405,7 +405,7 @@ Each week carries its own format and options, validated when saved — a typo'd 
 
 A custom league handicap, recalculated automatically after every score save:
 
-1. Take the player's most recent **N** verified rounds by date (N = the league's week count, up to 12; sub-played weeks and handicap-excluded nights like scrambles are skipped).
+1. Take the player's most recent **N** verified rounds by date (N = the league's week count; sub-played weeks and handicap-excluded nights like scrambles are skipped).
 2. For each round, compute the **differential**: gross score − course par.
 3. Discard outliers: with 4+ rounds, drop the **1 highest**; with 5+ rounds, also drop the **1 lowest**.
 4. Average what's left and multiply by **0.90**.

@@ -212,10 +212,10 @@ describe('calcHandicap — exact integer truncation (server parity)', () => {
 })
 
 describe('server-parity helpers', () => {
-  it('caps scoresUsed at 12 and floors it at 1', () => {
+  it('uses the league week count (default 12) and floors it at 1', () => {
     expect(scoresUsedForLeague(null)).toBe(12)
     expect(scoresUsedForLeague(8)).toBe(8)
-    expect(scoresUsedForLeague(16)).toBe(12)
+    expect(scoresUsedForLeague(16)).toBe(16)
     expect(scoresUsedForLeague(0)).toBe(1)
   })
 

@@ -193,8 +193,8 @@ CREATE TRIGGER event_signups_capacity
 --    whole number (avg of 3,3,4 → 2.99999… → 2). Now exact: floor(sum*9/(n*10)).
 -- b) "Most recent N" ordered by week_number, which restarts each season and
 --    interleaves concurrent leagues. Now ordered by event date.
--- c) N is the league's week count capped at 12 (per the handicap rules).
--- d) Sub profiles clamp at -2..40 like everywhere else.
+-- c) Sub profiles clamp at -2..40 like everywhere else.
+-- (N stays the league's week count, as before.)
 CREATE OR REPLACE FUNCTION public.recalculate_player_handicap(p_player_id UUID)
 RETURNS JSONB
 LANGUAGE plpgsql
@@ -219,7 +219,7 @@ BEGIN
   IF COALESCE(player_row.handicap_locked, false) THEN RETURN jsonb_build_object('skipped', true, 'reason', 'locked'); END IF;
   SELECT COALESCE(num_weeks, 12) INTO score_limit FROM public.league_config
    WHERE location_id = player_row.location_id AND is_working ORDER BY id LIMIT 1;
-  score_limit := least(12, greatest(1, COALESCE(score_limit, 12)));
+  score_limit := greatest(1, COALESCE(score_limit, 12));
   max_handicap := CASE WHEN COALESCE(player_row.is_sub, false) THEN 40 ELSE 27 END;
 
   SELECT array_agg(diff)
@@ -667,8 +667,8 @@ $$;
 -- ── 9. Match play / best ball: a short-handed side can't win by default ─────
 -- A team with one verified score was compared hole-by-hole (one net) against
 -- a full team (two nets summed) and won nearly every hole. A missing teammate
--- now counts as the missed-week penalty spread across the holes: net par + 7
--- for the round (par + 7/holes per hole). A side with NO scores is still a
+-- now plays their missed-week penalty: net par + their handicap + 7 for the
+-- round, spread evenly across the holes. A side with NO scores is still a
 -- no-show handled by the week's no-show policy.
 CREATE OR REPLACE FUNCTION public.per_hole_net_sum(
   p_event_id UUID,
@@ -691,7 +691,8 @@ DECLARE
   pars INTEGER[];
   i INTEGER;
   found_count INTEGER := 0;
-  roster_count INTEGER := 0;
+  missing_count INTEGER := 0;
+  missing_over_par INTEGER := 0;
 BEGIN
   totals := array_fill(0::numeric, ARRAY[p_num_holes]);
   FOR s IN
@@ -716,16 +717,33 @@ BEGIN
   IF found_count = 0 THEN RETURN NULL; END IF;
 
   IF p_player_id IS NULL THEN
-    SELECT count(*) INTO roster_count FROM public.roster_at
-     WHERE event_id = p_event_id AND team_id = p_team_id;
-    IF roster_count > found_count THEN
+    -- Each rostered teammate with no verified round plays their penalty:
+    -- par + (handicap + 7) over the round, using the handicap stored on
+    -- their penalty row when publish already issued one.
+    SELECT count(*), COALESCE(sum(
+             COALESCE(pen.handicap_used, round(COALESCE(p.handicap, 0))::integer) + 7
+           ), 0)
+      INTO missing_count, missing_over_par
+      FROM public.roster_at r
+      JOIN public.players p ON p.id = r.player_id
+      LEFT JOIN public.scores pen
+        ON pen.event_id = p_event_id AND pen.player_id = r.player_id
+       AND pen.entry_type = 'missed_penalty' AND pen.status = 'verified'
+     WHERE r.event_id = p_event_id AND r.team_id = p_team_id
+       AND NOT EXISTS (
+         SELECT 1 FROM public.scores sc
+          WHERE sc.event_id = p_event_id AND sc.player_id = r.player_id
+            AND sc.entry_type = 'played' AND sc.status = 'verified'
+       );
+    IF missing_count > 0 THEN
       SELECT ARRAY(SELECT jsonb_array_elements_text(c.hole_pars)::integer)
         INTO pars
         FROM public.events e JOIN public.courses c ON c.id = e.course_id
        WHERE e.id = p_event_id;
       FOR i IN 1..p_num_holes LOOP
         totals[i] := totals[i]
-          + (roster_count - found_count) * (COALESCE(pars[i], 4) + 7.0 / p_num_holes);
+          + missing_count * COALESCE(pars[i], 4)
+          + missing_over_par::numeric / p_num_holes;
       END LOOP;
     END IF;
   END IF;
@@ -751,7 +769,8 @@ DECLARE
   hole_sum NUMERIC;
   i INTEGER;
   member_count INTEGER;
-  roster_count INTEGER;
+  missing_count INTEGER;
+  missing_over_par INTEGER;
   combined_hcp NUMERIC;
   strokes INTEGER[];
   teams_scored INTEGER := 0;
@@ -781,11 +800,23 @@ BEGIN
     ELSE
       -- best_ball: per-hole best net (balls_counted=1) or both nets summed (=2).
       balls := COALESCE((cfg->>'balls_counted')::integer, 1);
-      SELECT count(*) INTO member_count FROM public.scores sc
-       WHERE sc.event_id = p_event_id AND sc.team_id = team.team_id
-         AND sc.entry_type = 'played' AND sc.status = 'verified' AND sc.hole_scores IS NOT NULL;
-      SELECT count(*) INTO roster_count FROM public.roster_at
-       WHERE event_id = p_event_id AND team_id = team.team_id;
+      -- Missing teammates (no verified round) play their penalty, handicap + 7
+      -- over par, spread across the holes like match play.
+      SELECT count(*), COALESCE(sum(
+               COALESCE(pen.handicap_used, round(COALESCE(p.handicap, 0))::integer) + 7
+             ), 0)
+        INTO missing_count, missing_over_par
+        FROM public.roster_at r
+        JOIN public.players p ON p.id = r.player_id
+        LEFT JOIN public.scores pen
+          ON pen.event_id = p_event_id AND pen.player_id = r.player_id
+         AND pen.entry_type = 'missed_penalty' AND pen.status = 'verified'
+       WHERE r.event_id = p_event_id AND r.team_id = team.team_id
+         AND NOT EXISTS (
+           SELECT 1 FROM public.scores sc
+            WHERE sc.event_id = p_event_id AND sc.player_id = r.player_id
+              AND sc.entry_type = 'played' AND sc.status = 'verified'
+         );
       team_result := 0;
       FOR i IN 1..course_row.num_holes LOOP
         best := NULL; hole_sum := 0;
@@ -804,10 +835,11 @@ BEGIN
             best := s.hole_scores[i] - strokes[i];
           END IF;
         END LOOP;
-        -- Counting both balls: a missing teammate counts as net par + 7/round.
-        IF balls = 2 AND roster_count > member_count THEN
-          hole_sum := hole_sum + (roster_count - member_count)
-            * ((course_row.hole_pars->>(i - 1))::integer + 7.0 / course_row.num_holes);
+        -- Counting both balls: each missing teammate plays their penalty.
+        IF balls = 2 AND missing_count > 0 THEN
+          hole_sum := hole_sum
+            + missing_count * (course_row.hole_pars->>(i - 1))::integer
+            + missing_over_par::numeric / course_row.num_holes;
         END IF;
         team_result := team_result + CASE WHEN balls = 2 THEN hole_sum ELSE COALESCE(best, 0) END;
       END LOOP;

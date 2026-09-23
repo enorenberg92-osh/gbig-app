@@ -30,7 +30,7 @@ Merge the branch and let Vercel deploy. (The Handicap screen's "Recalculate All"
 - If a `VITE_SUPABASE_SERVICE_ROLE_KEY` was ever deployed, rotate the service-role key.
 
 ## 6. After deploy
-- Admin → Handicap → **Recalculate All**. Handicaps are now computed exactly (the old math dropped a stroke in some cases) over the most recent 12 rounds by date, so a few players may move by 1.
+- Admin → Handicap → **Recalculate All**. Handicaps are now computed exactly (the old math dropped a stroke in some cases) over the most recent rounds by event date (the window is still the league's week count), so a few players may move by 1.
 - Smoke test with a throwaway week:
   1. Player submits a score.
   2. Admin approves it.

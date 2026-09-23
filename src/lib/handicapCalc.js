@@ -31,12 +31,12 @@ export const DISCARD_TABLE = {
   12: { high: 1, low: 1 },
 }
 
-// Server parity (recalculate_handicaps): at most 12 scores, at least 1, and
-// otherwise the league's num_weeks (NULL → 12).
+// Server parity (recalculate_handicaps): the league's num_weeks (NULL → 12),
+// at least 1.
 export function scoresUsedForLeague(numWeeks) {
   const n = numWeeks == null || numWeeks === '' ? 12 : Math.trunc(Number(numWeeks))
   if (!Number.isFinite(n)) return 12
-  return Math.min(12, Math.max(1, n))
+  return Math.max(1, n)
 }
 
 // Server parity: an event feeds handicaps unless format_config says

@@ -49,7 +49,7 @@ export default function AdminHandicap() {
       supabase.from('league_config').select('num_weeks').eq('location_id', locationId).eq('is_working', true).maybeSingle(),
     ])
 
-    // Server rule: most recent min(num_weeks, 12) rounds (at least 1).
+    // Server rule: most recent num_weeks rounds (at least 1).
     setSettings(s => ({ ...s, scoresUsed: scoresUsedForLeague(leagueCfg?.num_weeks) }))
 
     // Eligible rounds, oldest first by event date — so `scoresUsed`
