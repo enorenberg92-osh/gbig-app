@@ -1,13 +1,18 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import { useLocation } from '../context/LocationContext'
 import { loadWorkingLeague } from '../lib/leagueUtils'
 import { compareEffectiveScores } from '../lib/roundUtils'
 import { aggregateSeasonByTeam, sortStandingRows } from '../lib/standingsUtils'
 import { fetchAllRows } from '../lib/supabasePaging'
+import { pickerSeasons, seasonLabel } from '../lib/seasonUtils'
 
 // adminMode: Season shows ALL events (open + closed) so admins have full
 // visibility. Players only see closed weeks so rankings stay clean.
+//
+// Season picker: each league_config row is a season. The page defaults to
+// the working league (as before) and can switch to any other season at the
+// location — archived ones included — re-scoping every view to its events.
 export default function Standings({ session, onBack, adminMode = false }) {
   const { locationId } = useLocation()
   const [view, setView]                   = useState('week')
@@ -25,18 +30,24 @@ export default function Standings({ session, onBack, adminMode = false }) {
   const [flights, setFlights]             = useState([])
   const [flightFilter, setFlightFilter]   = useState('')
   const [teamFlightMap, setTeamFlightMap] = useState({})
+  const [seasons, setSeasons]             = useState([])     // league_config rows for the picker
+  const [currentLeagueId, setCurrentLeagueId] = useState(null) // the default (working) league
+  // Bumped on every load; a response from an older load (previous season /
+  // week) is dropped so a slow query can't overwrite the newer view.
+  const seasonSeq = useRef(0)   // loadEvents (season switch)
+  const dataSeq   = useRef(0)   // loadWeekly / loadSeason
 
-  // ── 1. On mount, fetch the event list ────────────────────────────
-  useEffect(() => { if (locationId) loadEvents() }, [locationId])
+  // ── 1. On mount, find the seasons and load the default one ──────
+  useEffect(() => { if (locationId) loadSeasons() }, [locationId])
 
-  // ── 2. Whenever the selected event or view changes, reload data ──
+  // ── 2. Whenever the selected event, view or season changes, reload ──
   useEffect(() => {
     if (view === 'week') {
       if (selectedEvent) loadWeekly(selectedEvent.id, selectedEvent.format)
     } else {
       loadSeason()
     }
-  }, [view, selectedEvent, segmentIdx])   // eslint-disable-line react-hooks/exhaustive-deps
+  }, [view, selectedEvent, segmentIdx, leagueId])   // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── 3. Re-sort in place when sort toggle changes ─────────────────
   useEffect(() => {
@@ -44,31 +55,69 @@ export default function Standings({ session, onBack, adminMode = false }) {
   }, [sortBy])                // eslint-disable-line react-hooks/exhaustive-deps
 
   // ─────────────────────────────────────────────────────────────────
-  async function loadEvents() {
+  async function loadSeasons() {
     setLoading(true)
     setError(null)
 
-    // Filter by status rather than start_date so the open week always appears
-    // in the picker even if its calendar start_date hasn't passed yet.
-    let league
-    try {
-      league = await loadWorkingLeague(supabase, locationId)
-    } catch (leagueError) {
+    // Default season = the working league. With none set (off-season), players
+    // fall back to the newest season they can browse (e.g. the last archived).
+    const [working, listRes] = await Promise.all([
+      loadWorkingLeague(supabase, locationId).then(l => ({ league: l }), e => ({ error: e })),
+      supabase.from('league_config')
+        .select('id, name, start_date, is_working, is_active, archived_at, segments')
+        .eq('location_id', locationId),
+    ])
+    // listRes errors if archived_at isn't migrated yet — the picker then just
+    // offers the working league, exactly as before.
+    const all = listRes.error ? [] : (listRes.data || [])
+    const defaultId = working.league?.id ?? null
+    const options = pickerSeasons(all, { adminMode, currentId: defaultId })
+    const league = working.league || (adminMode ? null : options[0]) || null
+    if (!league) {
       // Players can't act on "choose a working league" — show a friendlier line.
-      setError(adminMode ? leagueError.message : 'No active league season yet — check back soon!')
+      setError(adminMode ? (working.error?.message || 'Choose a working league first.') : 'No active league season yet — check back soon!')
       setLoading(false); return
     }
+    setCurrentLeagueId(defaultId)
+    setSeasons(options.some(o => o.id === league.id) ? options : [league, ...options])
+    await loadEvents(league)
+  }
+
+  function changeSeason(id) {
+    const league = seasons.find(l => l.id === id)
+    if (league && league.id !== leagueId) loadEvents(league)
+  }
+
+  // Scope the page to one season: its segments, flights and weeks.
+  async function loadEvents(league) {
+    const seq = ++seasonSeq.current
+    dataSeq.current++   // drop any in-flight rows for the previous season
+    setLoading(true)
+    setError(null)
+    // Clear the previous season's selection first so nothing reloads against it.
+    setSelectedEvent(null)
+    setEvents([])
+    setRows([])
+    setWeekMatchups([])
+    setSegmentIdx(-1)
+    setFlightFilter('')
+    setFlights([])
+    setTeamFlightMap({})
+
     setLeagueId(league.id)
     setSegments(Array.isArray(league.segments) ? league.segments : [])
     // Flights (empty unless the league uses them)
     supabase.from('flights').select('id, name, sort_order').eq('league_id', league.id).eq('location_id', locationId).order('sort_order')
-      .then(({ data: fl }) => setFlights(fl || []))
+      .then(({ data: fl }) => { if (seq === seasonSeq.current) setFlights(fl || []) })
     supabase.from('teams').select('id, flight_id').eq('league_id', league.id).eq('location_id', locationId)
       .then(({ data: tf }) => {
+        if (seq !== seasonSeq.current) return
         const map = {}
         ;(tf || []).forEach(t => { map[t.id] = t.flight_id })
         setTeamFlightMap(map)
       })
+    // Filter by status rather than start_date so the open week always appears
+    // in the picker even if its calendar start_date hasn't passed yet.
     const { data, error } = await supabase
       .from('events')
       .select('id, name, week_number, start_date, status, format')
@@ -78,6 +127,7 @@ export default function Standings({ session, onBack, adminMode = false }) {
       .in('status', ['open', 'closed'])
       .order('week_number', { ascending: false })
 
+    if (seq !== seasonSeq.current) return
     if (error) { setError(error.message); setLoading(false); return }
 
     const evts = data || []
@@ -94,6 +144,7 @@ export default function Standings({ session, onBack, adminMode = false }) {
   // ─────────────────────────────────────────────────────────────────
   async function loadWeekly(eventId, format) {
     if (!eventId) return
+    const seq = ++dataSeq.current
     setLoading(true)
     setError(null)
 
@@ -109,6 +160,7 @@ export default function Standings({ session, onBack, adminMode = false }) {
       supabase.from('matchups').select('*').eq('event_id', eventId),
     ])
 
+    if (seq !== dataSeq.current) return
     if (scoresRes.error) { setError(scoresRes.error.message); setLoading(false); return }
 
     // Resolve matchup side names for the week's matchup card.
@@ -141,6 +193,7 @@ export default function Standings({ session, onBack, adminMode = false }) {
 
     // Admins see all events; players only see closed weeks
     if (!leagueId) { setLoading(false); return }
+    const seq = ++dataSeq.current
     const { data: eligibleEvents } = adminMode
       ? await supabase.from('events').select('id, week_number, start_date').eq('location_id', locationId).eq('league_id', leagueId).in('status', ['open', 'closed'])
       : await supabase.from('events').select('id, week_number, start_date').eq('location_id', locationId).eq('league_id', leagueId).eq('status', 'closed')
@@ -149,6 +202,7 @@ export default function Standings({ session, onBack, adminMode = false }) {
     const seg = segmentIdx >= 0 ? segments[segmentIdx] : null
     const inSegment = e => !seg || (e.week_number != null && e.week_number >= seg.start_week && e.week_number <= seg.end_week)
     const ids = (eligibleEvents || []).filter(inSegment).map(e => e.id)
+    if (seq !== dataSeq.current) return
     if (ids.length === 0) { setRows([]); setLoading(false); return }
 
     const [scoresRes, playersRes, teamsRes, rosterRes, matchupsRes] = await Promise.all([
@@ -169,6 +223,7 @@ export default function Standings({ session, onBack, adminMode = false }) {
         .eq('status', 'scored'),
     ])
 
+    if (seq !== dataSeq.current) return
     if (scoresRes.error) { setError(scoresRes.error.message); setLoading(false); return }
 
     // Match-play points per team: total points + W-T-L record.
@@ -377,6 +432,22 @@ export default function Standings({ session, onBack, adminMode = false }) {
           <button style={styles.headerBack} onClick={onBack}>← Back</button>
           <div style={styles.headerTitle}>Standings</div>
           <div style={{ width: 52 }} />
+        </div>
+      )}
+
+      {/* Season picker (only when there's more than one season to show) */}
+      {seasons.length > 1 && (
+        <div style={styles.eventPicker}>
+          <select
+            style={styles.eventSelect}
+            value={leagueId || ''}
+            onChange={e => changeSeason(e.target.value)}
+            aria-label="Season"
+          >
+            {seasons.map(l => (
+              <option key={l.id} value={l.id}>{seasonLabel(l, currentLeagueId)}</option>
+            ))}
+          </select>
         </div>
       )}
 

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { Calendar, Globe, Check, X, Plus, Inbox } from 'lucide-react'
+import { Calendar, Globe, Check, X, Plus, Inbox, Archive, ArchiveRestore } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useLocation } from '../../context/LocationContext'
 import ConfirmDialog from '../ConfirmDialog'
@@ -97,6 +97,37 @@ export default function AdminLeague({ onWorkingLeagueChange }) {
     showToast(`Now working with "${league.name}"`)
     await loadLeagues()
     onWorkingLeagueChange?.()
+  }
+
+  // ── Archive / un-archive a season ─────────────────────────────────────────
+  // Archived seasons stay browsable (Standings season picker, player career
+  // stats) but can't be the working league — the DB enforces both, so the
+  // working league has to be switched first.
+  function handleArchive(league) {
+    if (league.is_working) {
+      showToast('Load a different league before archiving the working league.', 'error')
+      return
+    }
+    setDialog({
+      message:
+        `Archive "${league.name}"?\n\n` +
+        `It moves to season history: players can still browse its standings and it ` +
+        `counts toward their career stats, but it can't be loaded as the working league ` +
+        `until you un-archive it.`,
+      confirmLabel: 'Archive Season',
+      destructive: false,
+      onConfirm: () => setArchived(league, true),
+    })
+  }
+
+  async function setArchived(league, archived) {
+    const { error } = await supabase.rpc('admin_set_league_archived', {
+      p_league_id: league.id,
+      p_archived: archived,
+    })
+    if (error) { showToast('Error: ' + mutationErrorMessage(error, 'archive seasons'), 'error'); return }
+    showToast(archived ? `"${league.name}" archived` : `"${league.name}" restored from the archive`)
+    loadLeagues()
   }
 
   // ── Toggle "display on website" ───────────────────────────────────────────
@@ -420,21 +451,26 @@ export default function AdminLeague({ onWorkingLeagueChange }) {
             {leagues.map(league => {
               const isWorking = !!league.is_working
               const isActive  = !!league.is_active
+              const isArchived = !!league.archived_at
               return (
                 <div
                   key={league.id}
                   style={{
                     ...s.tableRow,
-                    background: isWorking ? 'var(--green-xlight)' : '#fff',
+                    background: isWorking ? 'var(--green-xlight)' : isArchived ? 'var(--off-white)' : '#fff',
                     borderLeft: isWorking ? '3px solid var(--green)' : '3px solid transparent',
                   }}
                 >
                   {/* League info */}
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={s.leagueName}>{league.name}</div>
+                    <div style={s.leagueName}>
+                      {league.name}
+                      {isArchived && <span style={s.archivedPill}>Archived</span>}
+                    </div>
                     <div style={s.leagueMeta}>
                       {league.num_weeks ? `${league.num_weeks} weeks` : 'No weeks set'}
                       {league.start_date ? ` · Starting ${formatDate(league.start_date)}` : ''}
+                      {isArchived ? ` · Archived ${formatLocalDate(league.archived_at, { month: 'short', day: 'numeric', year: 'numeric' })}` : ''}
                     </div>
                   </div>
 
@@ -444,6 +480,8 @@ export default function AdminLeague({ onWorkingLeagueChange }) {
                       <span style={s.workingCheck}>
                         <Check size={16} strokeWidth={3} />
                       </span>
+                    ) : isArchived ? (
+                      <span style={s.archivedNote} title="Un-archive this season to load it">—</span>
                     ) : (
                       <button style={s.loadBtn} onClick={() => handleSetWorking(league)}>
                         Load League
@@ -472,6 +510,23 @@ export default function AdminLeague({ onWorkingLeagueChange }) {
                     <Button variant="secondary" size="sm" onClick={() => startEdit(league)} style={{ background: 'var(--green-xlight)', color: 'var(--green)', borderColor: 'var(--green-xlight)' }}>
                       Edit
                     </Button>
+                    {isArchived ? (
+                      <Button
+                        variant="secondary" size="sm"
+                        onClick={() => setArchived(league, false)}
+                        aria-label="Un-archive season" title="Un-archive season"
+                        icon={<ArchiveRestore size={15} strokeWidth={2} />}
+                      />
+                    ) : (
+                      <Button
+                        variant="secondary" size="sm"
+                        onClick={() => handleArchive(league)}
+                        disabled={isWorking}
+                        aria-label="Archive season"
+                        title={isWorking ? 'Load a different league before archiving this one' : 'Archive season'}
+                        icon={<Archive size={15} strokeWidth={2} />}
+                      />
+                    )}
                     <Button variant="danger" size="sm" onClick={() => handleDelete(league)} aria-label="Delete league" icon={<X size={15} strokeWidth={2.5} />} />
                   </div>
                 </div>
@@ -748,6 +803,7 @@ export default function AdminLeague({ onWorkingLeagueChange }) {
       <div style={s.legend}>
         <span style={s.legendItem}><span style={s.legendDot} />Working with = the league you're managing in admin</span>
         <span style={s.legendItem}><span style={{ ...s.legendRadio }} />Display on website = visible to players in the app</span>
+        <span style={s.legendItem}><Archive size={12} strokeWidth={2} />Archive = finished season; players can still browse it under Standings</span>
       </div>
     </div>
   )
@@ -771,10 +827,12 @@ const s = {
   tableRow:    { display: 'flex', alignItems: 'center', padding: '14px 16px', borderBottom: '1px solid var(--gray-100)', gap: '12px', transition: 'background 0.15s' },
   colWorking:  { width: '120px', flexShrink: 0, textAlign: 'center' },
   colDisplay:  { width: '130px', flexShrink: 0, textAlign: 'center' },
-  colActions:  { width: '90px', flexShrink: 0, display: 'flex', gap: '6px', justifyContent: 'flex-end' },
+  colActions:  { width: '130px', flexShrink: 0, display: 'flex', gap: '6px', justifyContent: 'flex-end' },
 
   leagueName:  { fontSize: '14px', fontWeight: 700, color: 'var(--black)' },
   leagueMeta:  { fontSize: '12px', color: 'var(--gray-400)', marginTop: '3px' },
+  archivedPill: { display: 'inline-block', marginLeft: '8px', fontSize: '10px', fontWeight: 700, letterSpacing: '0.4px', textTransform: 'uppercase', color: 'var(--gray-600)', background: 'var(--gray-100)', border: '1px solid var(--gray-200)', padding: '1px 7px', borderRadius: '10px', verticalAlign: 'middle' },
+  archivedNote: { fontSize: '12px', color: 'var(--gray-400)' },
 
   workingCheck: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: 'var(--green)' },
   loadBtn:      { fontSize: '12px', fontWeight: 600, color: 'var(--green-dark)', background: 'var(--green-xlight)', padding: '5px 10px', borderRadius: '6px', cursor: 'pointer', border: '1px solid var(--green)', whiteSpace: 'nowrap' },

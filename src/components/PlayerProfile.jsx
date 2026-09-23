@@ -9,6 +9,8 @@ import { loadWorkingLeague } from '../lib/leagueUtils'
 import { compareRoundsChronologically } from '../lib/roundUtils'
 import { scoreColor } from '../lib/scoreUtils'
 import { calcSkins } from '../lib/skinsUtils'
+import { aggregatePlayerSeasons } from '../lib/seasonUtils'
+import { fetchAllRows } from '../lib/supabasePaging'
 import { useFeature } from '../context/FeatureContext'
 
 // ── Round detail: hole-by-hole scorecard + tracked stats + skins ─────────────
@@ -229,6 +231,7 @@ export default function PlayerProfile({ session, onBack, playerId: adminPlayerId
   const [cropFile, setCropFile] = useState(null)
   const [expandedRoundId, setExpandedRoundId] = useState(null)
   const [skinsByRound, setSkinsByRound] = useState({})   // roundId -> [holeNums won] | null
+  const [career, setCareer] = useState(null)   // { seasons: [...], career } — see aggregatePlayerSeasons
   const skinsEnabled = useFeature('skins')
   const fileInputRef = useRef(null)
 
@@ -260,6 +263,8 @@ export default function PlayerProfile({ session, onBack, playerId: adminPlayerId
         return
       }
       setPlayer(playerRow)
+      // Career / per-season lines load alongside; never blocks the profile.
+      loadCareer(playerRow.id)
 
       // 2. Resolve the active roster from memberships and fetch the verified
       // effective rounds. No working league (off-season / not configured yet)
@@ -342,6 +347,37 @@ export default function PlayerProfile({ session, onBack, playerId: adminPlayerId
     } catch (e) {
       setError('Something went wrong loading your profile.')
       setLoading(false)
+    }
+  }
+
+  // ── Seasons / career ─────────────────────────────────────────────────────────
+  // Every verified PLAYED round across all seasons at this location (penalties
+  // and sub_played marker rows excluded), grouped by league_config row.
+  async function loadCareer(playerId) {
+    try {
+      const [scoresRes, leaguesRes] = await Promise.all([
+        fetchAllRows(() => supabase.from('scores')
+          .select('id, event_id, gross_total, net_total, handicap_used, entry_type, sub_played, created_at, events!inner(id, league_id, start_date, week_number)')
+          .eq('player_id', playerId)
+          .eq('location_id', locationId)
+          .eq('status', 'verified')
+          .eq('entry_type', 'played')
+          .or('sub_played.eq.false,sub_played.is.null')
+          .order('id')),
+        supabase.from('league_config')
+          .select('id, name, start_date, is_working, archived_at')
+          .eq('location_id', locationId)
+          // archived_at arrives with the season-archive migration; without it,
+          // fall back to the plain list so seasons still show.
+          .then(res => res.error
+            ? supabase.from('league_config').select('id, name, start_date, is_working').eq('location_id', locationId)
+            : res),
+      ])
+      if (scoresRes.error) throw scoresRes.error
+      setCareer(aggregatePlayerSeasons(scoresRes.data || [], leaguesRes.data || []))
+    } catch (e) {
+      console.error('Loading season history failed:', e)
+      setCareer(null)
     }
   }
 
@@ -844,6 +880,58 @@ export default function PlayerProfile({ session, onBack, playerId: adminPlayerId
           </div>
         )}
 
+        {/* ── Seasons / career ── */}
+        {career && career.seasons.length > 0 && (
+          <div style={styles.card}>
+            <div style={styles.cardTitle}>SEASONS</div>
+            <div style={styles.careerRow}>
+              {[
+                ['Seasons',   career.career.seasons],
+                ['Rounds',    career.career.rounds],
+                ['Avg net',   career.career.avgNet ?? '—'],
+                ['Best net',  career.career.bestNet ?? '—'],
+              ].map(([label, value]) => (
+                <div key={label} style={styles.careerStat}>
+                  <div style={styles.careerNum}>{value}</div>
+                  <div style={styles.careerLabel}>{label}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+              <table style={styles.seasonTable}>
+                <thead>
+                  <tr>
+                    <th style={{ ...styles.seasonTh, textAlign: 'left' }}>Season</th>
+                    <th style={styles.seasonTh} title="Rounds played">Rnds</th>
+                    <th style={styles.seasonTh} title="Average gross">Gross</th>
+                    <th style={styles.seasonTh} title="Average net">Net</th>
+                    <th style={styles.seasonTh} title="Best net round">Best</th>
+                    <th style={styles.seasonTh} title="Handicap played off in the last round of the season">Hcp</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {career.seasons.map(sea => (
+                    <tr key={sea.leagueId ?? 'other'}>
+                      <td style={{ ...styles.seasonTd, textAlign: 'left' }}>
+                        <div style={styles.seasonName}>{sea.name}</div>
+                        {(sea.isWorking || sea.archived) && (
+                          <div style={styles.seasonTag}>{sea.isWorking ? 'Current' : 'Archived'}</div>
+                        )}
+                      </td>
+                      <td style={styles.seasonTd}>{sea.rounds}</td>
+                      <td style={styles.seasonTd}>{sea.avgGross ?? '—'}</td>
+                      <td style={{ ...styles.seasonTd, color: 'var(--green-dark)', fontWeight: 700 }}>{sea.avgNet ?? '—'}</td>
+                      <td style={styles.seasonTd}>{sea.bestNet ?? '—'}</td>
+                      <td style={styles.seasonTd}>{sea.endHandicap ?? '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div style={styles.seasonNote}>Averages per round played · Hcp = handicap in the season's last round</div>
+          </div>
+        )}
+
         {/* ── Recent rounds ── */}
         {rounds.length > 0 && (
           <div style={styles.card}>
@@ -1010,6 +1098,18 @@ const styles = {
   parRowLabel:  { fontSize: 9, color: 'var(--gray-600)', flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
   parRowBar:    { width: 40, height: 5, background: 'var(--gray-200)', borderRadius: 3, overflow: 'hidden', flexShrink: 0 },
   parRowPct:    { fontSize: 9, fontWeight: 700, color: 'var(--gray-600)', width: 22, textAlign: 'right', flexShrink: 0 },
+
+  // Seasons / career
+  careerRow:   { display: 'flex', gap: 8, margin: '12px 0' },
+  careerStat:  { flex: 1, textAlign: 'center', background: 'var(--off-white)', borderRadius: 10, padding: '10px 4px', border: '1px solid var(--gray-200)' },
+  careerNum:   { fontSize: 20, fontWeight: 800, color: 'var(--black)', lineHeight: 1 },
+  careerLabel: { fontSize: 9, fontWeight: 700, color: 'var(--gray-400)', textTransform: 'uppercase', letterSpacing: '0.5px', marginTop: 4 },
+  seasonTable: { width: '100%', borderCollapse: 'collapse' },
+  seasonTh:    { fontSize: 9, fontWeight: 700, color: 'var(--gray-400)', textTransform: 'uppercase', letterSpacing: '0.5px', padding: '6px 4px', textAlign: 'right', borderBottom: '1px solid var(--gray-200)', whiteSpace: 'nowrap' },
+  seasonTd:    { fontSize: 13, color: 'var(--black)', padding: '8px 4px', textAlign: 'right', borderBottom: '1px solid var(--gray-100)', verticalAlign: 'top' },
+  seasonName:  { fontSize: 13, fontWeight: 600, color: 'var(--black)' },
+  seasonTag:   { fontSize: 9, fontWeight: 700, color: 'var(--gray-500)', textTransform: 'uppercase', letterSpacing: '0.5px', marginTop: 2 },
+  seasonNote:  { fontSize: 10, color: 'var(--gray-400)', marginTop: 8 },
 
   // Recent rounds
   roundRow:    { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid var(--gray-100)' },

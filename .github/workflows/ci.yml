@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  app:
+    name: Unit tests + build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+
+  db:
+    name: Migrations + RLS/RPC harness (Postgres 16)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGHOST: localhost
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      DB: gbig_ci
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install psql client
+        run: |
+          command -v psql || (sudo apt-get update && sudo apt-get install -y --no-install-recommends postgresql-client)
+          psql --version
+      - name: Run DB harness
+        run: supabase/tests/db/run_all.sh
+      - name: Check client .rpc() calls against the migrated schema
+        run: python3 supabase/tests/db/check_rpc_params.py gbig_ci
+      - name: Upload harness logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: db-harness-logs
+          path: supabase/tests/db/logs/
+          retention-days: 7

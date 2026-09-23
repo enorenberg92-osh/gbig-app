@@ -1,0 +1,70 @@
+-- id variables
+RESET ROLE;
+SELECT (SELECT id FROM harness.ids WHERE k='loc_a') AS loc_a,
+  (SELECT id FROM harness.ids WHERE k='loc_b') AS loc_b,
+  (SELECT id FROM harness.ids WHERE k='league_a') AS league_a,
+  (SELECT id FROM harness.ids WHERE k='league_b') AS league_b,
+  (SELECT id FROM harness.ids WHERE k='course_a') AS course_a,
+  (SELECT id FROM harness.ids WHERE k='course_b') AS course_b,
+  (SELECT id FROM harness.ids WHERE k='p1') AS p1,
+  (SELECT id FROM harness.ids WHERE k='p2') AS p2,
+  (SELECT id FROM harness.ids WHERE k='p3') AS p3,
+  (SELECT id FROM harness.ids WHERE k='p4') AS p4,
+  (SELECT id FROM harness.ids WHERE k='p5') AS p5,
+  (SELECT id FROM harness.ids WHERE k='p6') AS p6,
+  (SELECT id FROM harness.ids WHERE k='p7') AS p7,
+  (SELECT id FROM harness.ids WHERE k='p8') AS p8,
+  (SELECT id FROM harness.ids WHERE k='p9') AS p9,
+  (SELECT id FROM harness.ids WHERE k='pb1') AS pb1,
+  (SELECT id FROM harness.ids WHERE k='pb2') AS pb2,
+  (SELECT id FROM harness.ids WHERE k='t1') AS t1,
+  (SELECT id FROM harness.ids WHERE k='t2') AS t2,
+  (SELECT id FROM harness.ids WHERE k='t3') AS t3,
+  (SELECT id FROM harness.ids WHERE k='t4') AS t4,
+  (SELECT id FROM harness.ids WHERE k='tb1') AS tb1,
+  (SELECT id FROM harness.ids WHERE k='e1') AS e1,
+  (SELECT id FROM harness.ids WHERE k='e2') AS e2,
+  (SELECT id FROM harness.ids WHERE k='e3') AS e3,
+  (SELECT id FROM harness.ids WHERE k='e4') AS e4,
+  (SELECT id FROM harness.ids WHERE k='eb1') AS eb1 \gset
+\set loc_a '''':loc_a''''
+\set loc_b '''':loc_b''''
+\set league_a '''':league_a''''
+\set league_b '''':league_b''''
+\set course_a '''':course_a''''
+\set course_b '''':course_b''''
+\set p1 '''':p1''''
+\set p2 '''':p2''''
+\set p3 '''':p3''''
+\set p4 '''':p4''''
+\set p5 '''':p5''''
+\set p6 '''':p6''''
+\set p7 '''':p7''''
+\set p8 '''':p8''''
+\set p9 '''':p9''''
+\set pb1 '''':pb1''''
+\set pb2 '''':pb2''''
+\set t1 '''':t1''''
+\set t2 '''':t2''''
+\set t3 '''':t3''''
+\set t4 '''':t4''''
+\set tb1 '''':tb1''''
+\set e1 '''':e1''''
+\set e2 '''':e2''''
+\set e3 '''':e3''''
+\set e4 '''':e4''''
+\set eb1 '''':eb1''''
+\set admin_a '''00000000-0000-0000-0000-00000000a0a0'''
+\set admin_b '''00000000-0000-0000-0000-00000000b0b0'''
+\set super   '''acd6c8a3-35e1-4892-a928-0a8996c02d10'''
+\set u1 '''00000000-0000-0000-0000-000000000001'''
+\set u2 '''00000000-0000-0000-0000-000000000002'''
+\set u3 '''00000000-0000-0000-0000-000000000003'''
+\set u5 '''00000000-0000-0000-0000-000000000005'''
+\set u7 '''00000000-0000-0000-0000-000000000007'''
+\set u4 '''00000000-0000-0000-0000-000000000004'''
+\set u6 '''00000000-0000-0000-0000-000000000006'''
+\set u8 '''00000000-0000-0000-0000-000000000008'''
+\set ub2 '''00000000-0000-0000-0000-000000000b02'''
+\set ub1 '''00000000-0000-0000-0000-000000000b01'''
+
