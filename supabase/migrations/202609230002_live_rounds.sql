@@ -245,6 +245,11 @@ DECLARE
   gross INTEGER;
   inserted_count INTEGER := 0;
   affected INTEGER;
+  -- Simulator cards are trusted (the league owner's call): they post as
+  -- verified and admins correct the rare error afterwards.
+  new_status TEXT := CASE WHEN p_source = 'sim' THEN 'verified' ELSE 'pending' END;
+  scored_players UUID[] := '{}';
+  pid UUID;
 BEGIN
   -- Same lock submit_scores / publish_week take.
   SELECT * INTO event_row FROM public.events WHERE id = p_event_id FOR UPDATE;
@@ -292,19 +297,29 @@ BEGIN
       handicap_used, sub_played, entry_type, status, location_id
     ) VALUES (
       p_event_id, rec.player_id, p_team_id, rec.holes, NULL, gross,
-      gross - rec.handicap_used, rec.handicap_used, rec.sub_played, 'played', 'pending',
+      gross - rec.handicap_used, rec.handicap_used, rec.sub_played, 'played', new_status,
       event_row.location_id
     )
     ON CONFLICT (event_id, player_id, entry_type) WHERE status <> 'rejected'
     DO NOTHING;
     GET DIAGNOSTICS affected = ROW_COUNT;
     inserted_count := inserted_count + affected;
+    IF affected > 0 AND NOT rec.sub_played THEN
+      scored_players := array_append(scored_players, rec.player_id);
+    END IF;
   END LOOP;
+
+  -- Verified rounds feed handicaps right away (sub rounds never do).
+  IF new_status = 'verified' THEN
+    FOREACH pid IN ARRAY scored_players LOOP
+      PERFORM public.recalculate_player_handicap_core(pid);
+    END LOOP;
+  END IF;
 
   IF inserted_count > 0 THEN
     PERFORM public.write_audit_event(
       event_row.location_id, 'score.submit', 'events', p_event_id, NULL,
-      jsonb_build_object('team_id', p_team_id, 'source', p_source, 'status', 'pending')
+      jsonb_build_object('team_id', p_team_id, 'source', p_source, 'status', new_status)
     );
   END IF;
 
@@ -312,7 +327,7 @@ BEGIN
     'finalized', true,
     'inserted', inserted_count,
     'already_submitted', inserted_count = 0,
-    'status', 'pending'
+    'status', new_status
   );
 END;
 $$;

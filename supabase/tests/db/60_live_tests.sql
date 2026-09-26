@@ -186,10 +186,12 @@ SELECT harness.try(format($q$SELECT (sim_ingest(%L, jsonb_build_object('player_i
   'finalize', true))->'finalize'->>'inserted')$q$, :'hash1', :p4)) AS r \gset
 SELECT harness.ok('last hole + finalize creates the team submission', :'r' = 'OK: 2', :'r');
 RESET ROLE;
-SELECT harness.ok('sim submission rows are pending with server totals',
-  (SELECT count(*) FROM public.scores WHERE event_id = :e1 AND team_id = :t2 AND status = 'pending'
+SELECT harness.ok('sim submission rows are verified (no review) with server totals',
+  (SELECT count(*) FROM public.scores WHERE event_id = :e1 AND team_id = :t2 AND status = 'verified'
       AND entry_type = 'played' AND gross_total = 36 AND net_total = 36 - handicap_used AND player_id = :p3) = 1
   AND (SELECT gross_total FROM public.scores WHERE event_id = :e1 AND player_id = :p4) = 45);
+SELECT harness.ok('sim round updates handicaps immediately',
+  EXISTS (SELECT 1 FROM public.handicap_history WHERE player_id IN (:p3, :p4)));
 SELECT harness.ok('sim live rows flagged submitted, source=sim, bay kept',
   (SELECT bool_and(submitted AND source = 'sim') FROM public.live_rounds WHERE event_id = :e1 AND team_id = :t2)
   AND (SELECT bay FROM public.live_rounds WHERE event_id = :e1 AND player_id = :p3) = '3');

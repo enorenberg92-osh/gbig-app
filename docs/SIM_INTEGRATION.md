@@ -14,12 +14,12 @@ bay PC / sim software ──POST each hole──▶ sim-ingest (edge function)
                                    live_rounds  ──realtime──▶  /league/tonight (phones + lobby TV)
                                               │
                               { finalize:true }▼
-                                   scores (status 'pending')  ──▶  admin review, as today
+                                   scores (status 'verified')  ──▶  standings + handicaps, no review
 ```
 
 - **Live cards.** `live_rounds` has one row per player per league week. `hole_scores` holds one integer per hole, and an unplayed hole is `NULL`. The app's score-entry screen and the simulator write to the same row, and the last write for a hole wins. Live cards never feed standings or handicaps.
-- **Submission.** The official record is still the pending `scores` row. The app creates it with **Submit Scores** (`submit_scores`). The simulator creates it with `finalize: true`, which inserts exactly the same rows. Admins approve or reject it in **Admin → Scores**, the same as a phone submission.
-- **Disputes.** If a player disagrees with the sim, an admin edits the pending score before approving it. An admin can also correct a live card from SQL with `select record_live_hole(event_id, player_id, hole, strokes)`, which is audited as `live.admin_record_hole`.
+- **Submission.** The official record is the `scores` row. The app creates it with **Submit Scores** (`submit_scores`), as a **pending** row an admin approves. The simulator creates it with `finalize: true`, and those rows are **verified immediately** (no review queue) and recalculate the players' handicaps at once.
+- **Disputes.** If a player disagrees with the sim, an admin edits the score in **Admin → Scores** (any week, even published ones). An admin can also correct a live card from SQL with `select record_live_hole(event_id, player_id, hole, strokes)`, which is audited as `live.admin_record_hole`.
 
 ## 1. Create an API key (location admin)
 
@@ -94,10 +94,10 @@ Send at least one of `hole`, `holes` or `finalize`. You can combine them. For ex
                   "waiting_on": [{ "player_id": "…", "name": "Sam Two", "holes_played": 7 }] } }
   ```
 
-- If everyone has every hole, one `pending` score row per teammate is inserted. The totals and handicap are computed server-side, and the event is audited as `score.submit` with `source: "sim"`. The live cards flip to submitted.
+- If everyone has every hole, one `verified` score row per teammate is inserted. The totals and handicap are computed server-side, and the event is audited as `score.submit` with `source: "sim"`. The live cards flip to submitted.
 
   ```json
-  { "finalize": { "finalized": true, "inserted": 2, "already_submitted": false, "status": "pending" } }
+  { "finalize": { "finalized": true, "inserted": 2, "already_submitted": false, "status": "verified" } }
   ```
 
 - Calling it again is harmless and returns `"already_submitted": true`.

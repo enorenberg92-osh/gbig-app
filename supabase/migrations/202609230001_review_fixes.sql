@@ -195,7 +195,7 @@ CREATE TRIGGER event_signups_capacity
 --    interleaves concurrent leagues. Now ordered by event date.
 -- c) Sub profiles clamp at -2..40 like everywhere else.
 -- (N stays the league's week count, as before.)
-CREATE OR REPLACE FUNCTION public.recalculate_player_handicap(p_player_id UUID)
+CREATE OR REPLACE FUNCTION public.recalculate_player_handicap_core(p_player_id UUID)
 RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -215,7 +215,6 @@ DECLARE
 BEGIN
   SELECT * INTO player_row FROM public.players WHERE id = p_player_id FOR UPDATE;
   IF NOT FOUND THEN RAISE EXCEPTION 'Player not found'; END IF;
-  PERFORM public.require_location_admin(player_row.location_id);
   IF COALESCE(player_row.handicap_locked, false) THEN RETURN jsonb_build_object('skipped', true, 'reason', 'locked'); END IF;
   SELECT COALESCE(num_weeks, 12) INTO score_limit FROM public.league_config
    WHERE location_id = player_row.location_id AND is_working ORDER BY id LIMIT 1;
@@ -265,6 +264,25 @@ BEGIN
     jsonb_build_object('handicap', new_handicap, 'scores_used', cardinality(used_diffs))
   );
   RETURN jsonb_build_object('updated', true, 'oldHcp', player_row.handicap, 'newHcp', new_handicap);
+END;
+$$;
+
+-- Internal (no caller check): also used by server-side paths with no signed-in
+-- admin, e.g. simulator rounds that post as verified.
+REVOKE ALL ON FUNCTION public.recalculate_player_handicap_core(UUID) FROM PUBLIC, anon, authenticated;
+
+CREATE OR REPLACE FUNCTION public.recalculate_player_handicap(p_player_id UUID)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE loc UUID;
+BEGIN
+  SELECT location_id INTO loc FROM public.players WHERE id = p_player_id;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Player not found'; END IF;
+  PERFORM public.require_location_admin(loc);
+  RETURN public.recalculate_player_handicap_core(p_player_id);
 END;
 $$;
 
