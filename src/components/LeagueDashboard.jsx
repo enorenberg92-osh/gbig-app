@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Trophy, User, Repeat2, Users, Flag, Lock, Shield, Radio } from 'lucide-react'
+import { Trophy, User, Repeat2, Users, Flag, Lock, Shield, Radio, MapPin } from 'lucide-react'
 import { Button, StatTile } from './ui'
 import { useFeature } from '../context/FeatureContext'
 import { useLocation } from '../context/LocationContext'
 import { supabase } from '../lib/supabase'
 import { isPlayingNow, isTodayAt } from '../lib/liveUtils'
 import { LiveDot, LiveDotKeyframes } from './TonightLeaderboard'
+import { bayName } from '../lib/bayUtils'
 
 export default function LeagueDashboard({
   session,
@@ -20,6 +21,7 @@ export default function LeagueDashboard({
   const subsEnabled = useFeature('subs')
   const email = session?.user?.email || 'Player'
   const tonight = useTonightActivity()
+  const checkin = useMyCheckin(!!activeRound)
 
   const tiles = [
     { Icon: Trophy,  label: 'Standings',    path: '/league/standings'   },
@@ -45,6 +47,32 @@ export default function LeagueDashboard({
           </button>
         )}
       </div>
+
+      {/* Bay check-in — first thing on league night. Hidden when the player
+          isn't rostered this week (or before the migration is applied). */}
+      {activeRound && checkin?.status === 'ok' && (
+        checkin.bay ? (
+          <div style={styles.bayOn}>
+            <MapPin size={24} strokeWidth={2.25} color="var(--green)" />
+            <div style={styles.scoresBannerText}>
+              <span style={styles.bayOnTitle}>You're on {bayName(checkin.bay.label)}</span>
+              <span style={styles.tonightSub}>{checkin.team?.name}</span>
+            </div>
+            <button style={styles.bayOnLink} onClick={() => navigate('/league/checkin')}>
+              Change / Check out
+            </button>
+          </div>
+        ) : (
+          <button className="ui-pressable" style={styles.checkinBtn} onClick={() => navigate('/league/checkin')}>
+            <MapPin size={26} strokeWidth={2.25} color="var(--green-dark)" />
+            <div style={styles.scoresBannerText}>
+              <span style={styles.checkinTitle}>Check in to a bay</span>
+              <span style={styles.checkinSub}>One tap checks in {checkin.team?.name || 'your team'}</span>
+            </div>
+            <span style={{ ...styles.scoresBannerArrow, color: 'var(--green-dark)' }}>›</span>
+          </button>
+        )
+      )}
 
       {/* My Scores — full-width featured banner */}
       {roundChecked && (
@@ -135,6 +163,28 @@ export default function LeagueDashboard({
   )
 }
 
+// The player's team and bay this week (my_checkin_status). Refreshes every
+// 30s and when the app comes back to the foreground; null on any error so
+// the banner simply hides.
+function useMyCheckin(enabled) {
+  const { locationId } = useLocation()
+  const [status, setStatus] = useState(null)
+  useEffect(() => {
+    if (!locationId || !enabled) { setStatus(null); return undefined }
+    let cancelled = false
+    const load = async () => {
+      const { data, error } = await supabase.rpc('my_checkin_status', { p_location_id: locationId })
+      if (!cancelled) setStatus(error ? null : data)
+    }
+    load()
+    const t = setInterval(load, 30000)
+    const onVisible = () => { if (document.visibilityState === 'visible') load() }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => { cancelled = true; clearInterval(t); document.removeEventListener('visibilitychange', onVisible) }
+  }, [locationId, enabled])
+  return status
+}
+
 // Lightweight count of today's live cards for the banner (refreshes every
 // minute; the leaderboard itself is realtime).
 function useTonightActivity() {
@@ -198,6 +248,23 @@ const styles = {
     borderRadius: 'var(--radius)', border: '1px solid var(--gray-200)', textAlign: 'left',
     boxSizing: 'border-box', boxShadow: 'var(--shadow)', background: 'var(--white)', cursor: 'pointer',
   },
+  checkinBtn: {
+    display: 'flex', alignItems: 'center', gap: '12px',
+    width: '100%', minHeight: '72px', padding: '14px 16px', marginBottom: '14px',
+    borderRadius: 'var(--radius)', border: 'none', textAlign: 'left',
+    boxSizing: 'border-box', boxShadow: 'var(--shadow)', background: 'var(--gold)', cursor: 'pointer',
+  },
+  checkinTitle: { fontSize: '17px', fontWeight: 800, color: 'var(--green-dark)' },
+  checkinSub:   { fontSize: '12px', color: 'var(--green-dark)', opacity: 0.8 },
+  bayOn: {
+    display: 'flex', alignItems: 'center', gap: '12px',
+    width: '100%', padding: '12px 16px', marginBottom: '14px',
+    borderRadius: 'var(--radius)', border: '2px solid var(--green)', background: 'var(--green-xlight)',
+    boxSizing: 'border-box', boxShadow: 'var(--shadow)',
+  },
+  bayOnTitle: { fontSize: '17px', fontWeight: 800, color: 'var(--green-dark)' },
+  bayOnLink:  { fontSize: '12px', fontWeight: 600, color: 'var(--green-dark)', textDecoration: 'underline', padding: '8px 0 8px 8px', cursor: 'pointer', flexShrink: 0 },
+
   tonightIcon:  { width: '26px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   tonightTitle: { fontSize: '14px', fontWeight: 700, color: 'var(--green-dark)' },
   tonightSub:   { fontSize: '12px', color: 'var(--gray-500)' },

@@ -49,7 +49,7 @@ values ('<location uuid>', 'sim',
         'gbig_sim_<first 4 hex>', 'Bay PCs');
 ```
 
-Store the key on the bay PCs like a password. It can write scores for every rostered player at that location, but it can't read any data.
+Store the key on the bay PCs like a password. It can write scores for every rostered player at that location. The only data it can read is who is checked in to a bay (section 5).
 
 ## 2. Endpoint
 
@@ -144,24 +144,81 @@ curl -sS -X POST "$URL" -H "Authorization: Bearer $KEY" -H 'Content-Type: applic
 The simulator needs a `player_id` or `player_email` for each golfer. These are the options, from least to most work:
 
 1. **Type or pick the email** in the sim's player setup. This works today.
-2. **QR check-in (next step, not built yet).** A printed QR code at each bay encodes `https://<app host>/league/checkin?bay=3`. A player scans it with their phone. They're already signed in to the league app, so the page knows who they are, and it records a `bay_checkins` row (location, bay, player_id, event_id, checked_in_at) for tonight. The sim then asks `GET sim-ingest?bay=3` (same API key) for the players checked in to that bay and posts their holes with those ids. Nobody types anything. The planned pieces are a `bay_checkins` table, a `checkin_to_bay(p_bay)` player RPC that uses the same roster and open-week checks as `record_live_hole`, a small `/league/checkin` page, and a `GET` branch in this function. Check-ins expire at midnight in the location's timezone.
+2. **Bay check-in (built).** Players check their team in to a bay from their phone, and the sim reads who is on its bay. See section 5.
 3. **Sim-native login.** If the sim software has its own player accounts, store the league `player_id` on them once.
 
-## 5. Leaderboard
+## 5. Bay check-in
+
+League nights run in waves. One player per team taps **Check in** in the app (or scans the QR code on the bay) and their whole team is on that bay. Staff press **Clear all bays** in **Admin → Bays** when the wave ends. Nothing is pre-assigned. A bay holds whatever teams checked in to it: one team, a two-team matchup, or more.
+
+The simulator uses the same API key and endpoint as hole ingest.
+
+### Who is on my bay
+
+```bash
+# POST form
+curl -sS -X POST "$URL" -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+  -d '{"action":"bay","bay":"3"}'
+
+# GET form (same result)
+curl -sS "$URL?bay=3" -H "Authorization: Bearer $KEY"
+```
+
+```json
+{ "ok": true, "bay": "3",
+  "occupants": [
+    { "checkin_id": "…", "team_id": "…", "team_name": "Team 1", "event_id": "…",
+      "checked_in_at": "2026-09-28T23:02:11Z", "finished": false,
+      "players": [
+        { "player_id": "…", "name": "Pat One", "handicap": 5, "sub_name": null,
+          "holes_played": 4, "submitted": false },
+        { "player_id": "…", "name": "Sam Two", "handicap": 12, "sub_name": "Chris Sub",
+          "holes_played": 4, "submitted": false } ] } ] }
+```
+
+- `bay` is the bay's label as set in **Admin → Bays** (`"1"`…`"N"` unless renamed). Matching ignores case.
+- `players` is the team's roster for the week. When an approved sub is playing, `sub_name` names them. The slot keeps the rostered `player_id`, so post that sub's holes with that `player_id`, the same way the app does.
+- `handicap` is the handicap the round will be scored at (the sub's handicap when a sub plays).
+- `holes_played` and `submitted` show progress. A team stays on the bay after `finalize` because groups often play extra holes.
+- Only check-ins for the open week that are under 12 hours old are returned. A bay nobody cleared last night comes back empty today.
+
+**Suggested loop:** poll `{"action":"bay"}` every 5–10 seconds while the bay is idle, or when a golfer taps "Load league players". Show the names, then post each hole with `player_id` (section 2). An empty `occupants` means nobody has checked in yet.
+
+### Clear the bay at the end
+
+```bash
+curl -sS -X POST "$URL" -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+  -d '{"action":"clear_bay","bay":"3"}'
+# → { "ok": true, "bay": "3", "cleared": 2 }
+```
+
+This is optional. Staff usually clear every bay at once between waves. Checking in a new team also takes any **finished** team off that bay automatically (every teammate's round submitted). Teams still playing are never removed that way.
+
+| status | when |
+|---|---|
+| 200 | `{ ok: true, bay, occupants }` or `{ ok: true, bay, cleared }` |
+| 401 | Key missing, wrong, or revoked. |
+| 422 | `bay` missing, unknown or switched-off bay, or unknown `action`. |
+
+Requests with no `action` (or `"action":"hole"`) are the hole ingest from section 2, unchanged.
+
+## 6. Leaderboard
 
 `/league/tonight` in the app shows everyone with a live card updated today in the location's timezone, plus anyone whose score was entered today without one. It shows thru, gross, net to par over the holes played (handicap strokes are allocated by the course stroke index, the same way match play does it), and a status of Live, Submitted, or Final. It updates in realtime from `live_rounds`, with a 30-second poll as backup.
 
 For the lobby TV, sign in once with any league account and open `/league/tonight?tv=1`. That gives big type and a clock, and it alternates between Players and Teams every 20 seconds and pages through long lists. Add `&view=teams` to stay on Teams.
 
-## 6. Deploy checklist
+## 7. Deploy checklist
 
 1. Run `supabase/migrations/202609230002_live_rounds.sql` in the SQL editor. It is idempotent. It adds `live_rounds` to the `supabase_realtime` publication. Confirm under **Database → Publications** that `live_rounds` is listed.
 2. `supabase functions deploy sim-ingest --project-ref <ref> --no-verify-jwt`. No extra secrets are needed, because it uses the built-in `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`.
 3. Create a key (section 1) and try the curl examples against an open week with a test player.
+4. Bay check-in: run `supabase/migrations/202609230006_bay_checkin.sql`, redeploy `sim-ingest` (step 2), confirm `bay_checkins` is listed under **Database → Publications**, then set the number of bays in **Admin → Bays**.
 
-## 7. Security notes
+## 8. Security notes
 
 - The API key is hashed with SHA-256 before it leaves the edge function. The plaintext is never stored and never reaches Postgres logs.
-- `sim_ingest` and its helpers can't be executed by `anon` or `authenticated`. Only the service role can call them, which means only this function.
+- `sim_ingest`, `sim_bay` and their helpers can't be executed by `anon` or `authenticated`. Only the service role can call them, which means only this function.
+- A sim key can read the names, handicaps and progress of the players checked in to its location's bays, and nothing else.
 - The key only resolves to its own location. A player id from another location returns "Player not found".
 - The function has no rate limit. Keys are per location and revocable. If a key leaks, revoke it and rotate.

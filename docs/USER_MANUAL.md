@@ -94,6 +94,11 @@ Rules to know:
 - You can't submit twice — a second attempt says your team already submitted. If you made a mistake, tell your admin; they can fix any score.
 - You can only submit for **your own team**, and only while the round is **open**.
 
+### 4.2a Bay Check-In (league night)
+When the week is open, tap **Check in to a bay** on the League home screen and tap your bay — one tap checks in your **whole team**. Or scan the QR code on the bay and tap the big button. If you usually share a bay with another team, the app offers **"Also check in Team B?"** — one more tap. **Change / Check out** switches bays or leaves. The simulator reads who's on its bay, so nobody types names, and your scores post hole by hole.
+
+> The QR code opens your phone's browser. On iPhone the installed app and Safari keep separate sign-ins, so if you use the installed app, the in-app **Check in** button is fastest.
+
 ### 4.3 Standings
 
 - **This Week / Season** toggle — one event or cumulative.
@@ -170,6 +175,14 @@ Pick any week from the dropdown. When player-submitted scores are waiting, a **R
 Handicaps recalculate automatically after every save/approval. Rejected scores free the team to resubmit.
 
 **Sub weeks:** when an approved sub played, the score you enter is tagged automatically — it counts for the team but is excluded from the absent player's handicap. If the sub has their own profile, they also get a personal copy of the round.
+
+### 5.2a Bays Section (league night turnover)
+Admin → **Bays** shows every bay live: teams, players, and "Thru N".
+- **Between waves:** press **Clear all bays**; the next wave checks themselves in. **Clear** empties one bay; ✕ removes one team.
+- **Safety net:** when a new team checks into a bay, any team already there that has **finished** (all rounds submitted) is removed automatically. Teams still playing are never removed. Check-ins older than 12 hours drop off on their own.
+- **Walk-ins / no phone:** pick the team's bay under **Teams tonight**.
+- **Setup (once):** set the number of bays (rename them if you like), then **Print QR codes** — one page per bay to tape up.
+- Simulator rounds post as final scores (no review queue) and update handicaps immediately; fix the rare error in Scores.
 
 ### 5.3 Fixing Past Weeks
 

@@ -2,12 +2,13 @@ import React, { useState, useEffect } from 'react'
 import { Routes, Route, Navigate, useLocation as useRouterLocation, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard, Flag, Medal, Users, Trophy, Activity,
-  Calendar, Repeat2, Map, Target, Bell, CalendarPlus, UserPlus,
+  Calendar, Repeat2, Map, Target, Bell, CalendarPlus, UserPlus, MapPin,
 } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useLocation } from '../../context/LocationContext'
 import AdminDashboard from './AdminDashboard'
 import AdminScores    from './AdminScores'
+import AdminBays      from './AdminBays'
 import AdminPlayers   from './AdminPlayers'
 import AdminSchedule  from './AdminSchedule'
 import AdminCourses   from './AdminCourses'
@@ -30,6 +31,7 @@ import { useFeature } from '../../context/FeatureContext'
 const SECTIONS = [
   { id: 'dashboard',  label: 'Overview',     Icon: LayoutDashboard },
   { id: 'scores',     label: 'Scores',       Icon: Flag },
+  { id: 'bays',       label: 'Bays',         Icon: MapPin },
   { id: 'standings',  label: 'Standings',    Icon: Medal },
   { id: 'players',    label: 'Players',      Icon: Users },
   { id: 'signups',    label: 'Sign-ups',     Icon: UserPlus },
@@ -183,6 +185,7 @@ export default function AdminPanel({ session, onBack }) {
       <Route index             element={<AdminDashboard onWeekClosed={handleWeekClosed} />} />
       <Route path="dashboard"  element={<AdminDashboard onWeekClosed={handleWeekClosed} />} />
       <Route path="scores"     element={<AdminScores    activeEventId={activeEventId} onEventChange={handleEventChange} />} />
+      <Route path="bays"       element={<AdminBays />} />
       <Route path="standings"  element={<AdminStandings session={session} />} />
       <Route path="players/*"  element={<AdminPlayers />} />
       <Route path="league"     element={<AdminLeague onWorkingLeagueChange={loadActiveEvent} />} />

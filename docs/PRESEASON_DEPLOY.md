@@ -13,6 +13,7 @@ In the SQL editor, run each file in order. Each runs as one transaction and is s
 3. `supabase/migrations/202609230003_score_reminders.sql`: the weekly "Scores due" reminder.
 4. `supabase/migrations/202609230004_season_archive.sql`: season archive.
 5. `supabase/migrations/202609230005_signup_intake.sql`: website sign-up intake.
+6. `supabase/migrations/202609230006_bay_checkin.sql`: bay check-in. Then confirm Database → Publications lists `live_rounds` and `bay_checkins` (realtime).
 
 ## 3. Edge functions
 ```bash
@@ -54,7 +55,7 @@ Merge the branch and let Vercel deploy. The new `middleware.js` serves each loca
   - Site URL = the main domain.
   - Redirect URLs: add `https://gbig-app.vercel.app/**`, `https://appleton-app.vercel.app/**`, and every custom domain. A missing domain sends reset links to the wrong location.
 - **Email Templates → Reset Password:** use location-neutral wording. Keep `{{ .ConfirmationURL }}`.
-- **SMTP:** the built-in email only sends about 2–4 emails per hour. Set up custom SMTP (Resend or SendGrid) before the season, then raise the email rate limit.
+- **SMTP:** the built-in email only sends about 2–4 emails per hour. Set up custom SMTP before the season, then raise the email rate limit. If your Mailchimp account has **Mailchimp Transactional** (the Mandrill add-on), use host `smtp.mandrillapp.com`, port 587, any username, and a Transactional API key as the password, with a verified sending domain. Regular Mailchimp (marketing) can't send these emails; if Transactional isn't on your plan, Resend's free tier works.
 - **Sign In / Providers:** turn **off** "Allow new users to sign up" (admins create accounts), and keep "Confirm email" on.
 
 ## 7. Security follow-ups
@@ -78,6 +79,7 @@ Send a test entry. No Webhooks addon on your plan? Zapier or Make "POST to URL" 
 - Admins: turn on notifications (Alerts tab) on your phone, so you get sign-up pings.
 - Check Admin → Alerts → Weekly Scores Reminder (default Friday 9 AM, teams that haven't submitted).
 - Archive last season's league (Admin → Leagues) so it shows in the Standings history.
+- Admin → Bays: set the number of bays, then **Print QR codes** and tape one on each bay.
 - Enable GitHub Actions on the repo. The CI workflow runs the unit tests, the build, and the database suite on every push.
 - Smoke test with a throwaway week:
   1. A player enters holes; the Tonight leaderboard updates.

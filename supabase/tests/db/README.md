@@ -49,6 +49,7 @@ Start with `\ir 29_ids.psql`, which loads the seeded ids as psql variables: `loc
 | `40_legacy_tests.sql` | Publishes the migrated legacy open week, then runs recalc and the player RPCs. |
 | `50_fix_tests.sql` | Covers `202609230001_review_fixes.sql`. |
 | `60_archive_tests.sql` | Covers `202609230004_season_archive.sql` (archive/un-archive RPC, archived ≠ working, season reads). |
+| `61_checkin_tests.sql` | Covers `202609230006_bay_checkin.sql` (team check-in/move/checkout, finished-team auto-clear, partner suggestions, admin clear/clear-all/set bays, stale expiry, `sim_bay`). |
 | `check_rpc_params.py` | Checks each `.rpc('name', { p_… })` call in `src/` and `supabase/functions/` against the argument names in `pg_proc`. It exits 1 on any mismatch. |
 
 ## Invented base-schema items
