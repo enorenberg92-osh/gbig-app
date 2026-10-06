@@ -462,7 +462,7 @@ export default function AdminPlayers() {
           </button>
         </div>
         <div style={{ flex: 1, overflowY: 'auto' }}>
-        <AdminImport leagueId={workingLeague?.id || null} />
+        <AdminImport leagueId={workingLeague?.id || null} leagueName={workingLeague?.name} />
         </div>
       </div>
     )

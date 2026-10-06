@@ -73,12 +73,13 @@ Deno.serve(async (req) => {
 
     const { data: targetPlayer, error: targetErr } = await admin
       .from('players')
-      .select('id, location_id')
+      .select('id, location_id, email')
       .eq('id', player_id)
       .maybeSingle()
 
     if (targetErr) throw targetErr
     if (!targetPlayer) return json({ error: 'Player not found' }, 404)
+    if ((targetPlayer.email || '').trim().toLowerCase() !== clean) return json({ error:'Update the roster email first, then create app access.' },400)
 
     // ── 3. Verify caller is an admin for THAT location ─────────────────────
     // Super-admins are allowed to hit this from any location; location admins
@@ -141,15 +142,15 @@ Deno.serve(async (req) => {
     // If this UPDATE fails AFTER we just created a fresh auth user, roll it
     // back by deleting the auth user. Otherwise we leak orphans (which is the
     // exact bug that stranded Jordan's account on 2026-04-20).
-    const { error: linkErr } = await admin
-      .from('players')
-      .update({ user_id: authUserId, email: clean })
-      .eq('id', player_id)
+    const { error: linkErr } = await admin.rpc('service_link_player_account', {
+      p_player_id:player_id, p_user_id:authUserId, p_email:clean,
+    })
 
     if (linkErr) {
       if (createdNewAuthUser) {
         console.warn('[create-player-account] link failed, rolling back auth user', authUserId)
-        await admin.auth.admin.deleteUser(authUserId).catch((e) =>
+        const {count,error:countError}=await admin.from('players').select('id',{count:'exact',head:true}).eq('user_id',authUserId)
+        if(!countError && count===0)await admin.auth.admin.deleteUser(authUserId).catch((e) =>
           console.warn('[create-player-account] rollback deleteUser failed:', String(e))
         )
       }
