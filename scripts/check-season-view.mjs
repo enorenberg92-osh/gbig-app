@@ -14,7 +14,7 @@ for(const match of html.matchAll(/<([a-z]+)[^>]*\bid="([^"]+)"[^>]*>/g))nodes.se
 const context={document:{getElementById:id=>nodes.get(id),createElement:tag=>new Element(tag)},window:{addEventListener(){},openai:{widgetState:null,setWidgetState:()=>Promise.resolve()}}};
 vm.runInNewContext(html.match(/<script>([\s\S]*)<\/script>/)[1],context);
 const row=(name,i)=>nodes.get(`season-${name}-body`).children[i].children.map(c=>c.textContent);
-assert.deepEqual(row('total',0).slice(0,2),[1,'Team 060']);
+assert.deepEqual(row('total',0).slice(0,2),[1,'Team 015']);
 assert.equal(nodes.get('season-total-page').textContent,'1–25 of 150');
 for(let i=0;i<5;i++)nodes.get('season-total-next').listeners.click();
 assert.equal(nodes.get('season-total-page').textContent,'126–150 of 150');

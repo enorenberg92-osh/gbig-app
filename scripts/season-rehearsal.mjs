@@ -107,7 +107,8 @@ try{
     skins.push({hole:(week%2?1:10)+h,low,tied:lowPlayers.length,winner:winner? v.players.find(p=>id(p.id)===winner)?.name:null,reason:winner?'Unique lowest gross score':'Tied lowest score — no skin',lowPlayers:lowPlayers.map(p=>v.players.find(vp=>id(vp.id)===p.player)?.name)})
   }
   const weekly=aggregateSeason(weekScores,teams,roster.filter(r=>r.event_id===eventId)).sort((a,b)=>a.teamNet-b.teamNet)
-  const ranked=values=>values.map((r,i)=>({team:r.teamName,teamId:r.teamId,rank:values.findIndex(x=>x.teamNet===r.teamNet)+1,total:r.teamNet,gross:r.teamGross,rounds:r.rounds,average:r.avgNet}))
+  // Match the app's displayed order: lowest net, then team name for equal totals.
+  const ranked=values=>[...values].sort((a,b)=>a.teamNet-b.teamNet||a.teamName.localeCompare(b.teamName)).map((r,i)=>({team:r.teamName,teamId:r.teamId,rank:i+1,total:r.teamNet,gross:r.teamGross,rounds:r.rounds,average:r.avgNet}))
   snapshots.push({venue:v.name,week,startHole:week%2?1:10,rounds:weekScores.map(s=>({player:v.players.find(p=>id(p.id)===s.player_id)?.name,team:v.teams.find(t=>id(t.id)===s.team_id)?.name,type:s.entry_type,subPlayed:s.sub_played,gross:s.gross_total,handicap:s.handicap_used,net:s.net_total,expectedNet:expected.get(`${s.event_id}:${s.player_id}`).net_total,holes:s.hole_scores})),skins,weeklyStandings:ranked(weekly),standings:ranked(result),handicaps:weekState.get(`${v.n}:${week}`)})
  }
  // Switch working league to winter; recent history must include winter Week 1.

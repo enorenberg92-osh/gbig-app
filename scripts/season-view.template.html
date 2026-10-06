@@ -14,7 +14,7 @@
     <button class="nav-link" id="season-handicaps-tab" role="tab" type="button" aria-controls="season-handicaps-panel" aria-selected="false">Handicaps</button>
   </div>
   <div role="tabpanel" id="season-total-panel" aria-labelledby="season-total-tab">
-    <div class="table-responsive"><table class="table table-sm"><caption id="season-total-caption"></caption><thead><tr><th>Rank</th><th>Team</th><th class="text-end">Weeks</th><th class="text-end">Gross</th><th class="text-end">Net</th><th class="text-end">Avg net</th></tr></thead><tbody id="season-total-body"></tbody></table></div>
+    <div class="table-responsive"><table class="table table-sm"><caption id="season-total-caption"></caption><thead><tr><th>Position</th><th>Team</th><th class="text-end">Weeks</th><th class="text-end">Gross</th><th class="text-end">Net</th><th class="text-end">Avg net</th></tr></thead><tbody id="season-total-body"></tbody></table></div>
     <div class="viz-row"><button class="btn" id="season-total-prev" type="button">Previous</button><span id="season-total-page" aria-live="polite"></span><button class="btn" id="season-total-next" type="button">Next</button></div>
   </div>
   <div role="tabpanel" id="season-weekly-panel" aria-labelledby="season-weekly-tab" hidden>
@@ -58,7 +58,7 @@
     const all=report.snapshots.filter(s=>s.venue===venue.value),penalties=snapshot.rounds.filter(r=>r[2]).length,skins=all.flatMap(s=>s.skins);
     root.querySelector('#season-summary').textContent=`${report.teams} teams · ${report.players} synthetic golfers · ${report.weeks} rounds · ${report.checks.toLocaleString()} checks passed`;
     root.querySelector('#season-status').textContent=`Week ${snapshot.week} · ${snapshot.rounds.length} results · ${penalties} missed-round penalties · Holes ${snapshot.startHole}–${snapshot.startHole+8}`;
-    root.querySelector('#season-total-caption').textContent=`Cumulative net through Week ${snapshot.week} · Lower wins · Equal totals share rank · Includes corrections`;
+    root.querySelector('#season-total-caption').textContent=`Cumulative net through Week ${snapshot.week} · Lower net first · Equal totals display by team name, as in the app · Includes corrections`;
     paged('total',snapshot.standings,(tr,s)=>{cell(tr,s[1]);cell(tr,report.teamNames[s[0]]);cell(tr,s[4],true);cell(tr,s[3],true);cell(tr,s[2],true);cell(tr,s[5].toFixed(1),true)});
     root.querySelector('#season-weekly-caption').textContent=`Week ${snapshot.week} · Team totals include missed-round penalties`;
     paged('weekly',snapshot.weekly,(tr,s)=>{cell(tr,s[1]);cell(tr,report.teamNames[s[0]]);cell(tr,s[3],true);cell(tr,s[2],true)});
