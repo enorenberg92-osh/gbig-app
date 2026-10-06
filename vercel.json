@@ -1,5 +1,39 @@
 {
-  "rewrites": [
-    { "source": "/(.*)", "destination": "/" }
+  "routes": [
+    {
+      "src": "/(?:index\\.html)?",
+      "has": [{ "type": "host", "value": "appleton(?:-app)?(?:-[a-z0-9-]+)?\\.vercel\\.app" }],
+      "dest": "/appleton.html",
+      "headers": { "Cache-Control": "no-cache, max-age=0, must-revalidate" }
+    },
+    {
+      "src": "/apple-touch-icon(?:-180x180)?(?:-precomposed)?\\.png",
+      "has": [{ "type": "host", "value": "appleton(?:-app)?(?:-[a-z0-9-]+)?\\.vercel\\.app" }],
+      "dest": "/branding/appleton-icon-apple-20261006.png"
+    },
+    {
+      "src": "/icon-(192|512)\\.png",
+      "has": [{ "type": "host", "value": "appleton(?:-app)?(?:-[a-z0-9-]+)?\\.vercel\\.app" }],
+      "dest": "/branding/appleton-icon-$1-20261006.png"
+    },
+    {
+      "src": "/icon-512-maskable\\.png",
+      "has": [{ "type": "host", "value": "appleton(?:-app)?(?:-[a-z0-9-]+)?\\.vercel\\.app" }],
+      "dest": "/branding/appleton-icon-maskable-20261006.png"
+    },
+    {
+      "src": "/favicon(?:-32\\.png|\\.svg|\\.ico)",
+      "has": [{ "type": "host", "value": "appleton(?:-app)?(?:-[a-z0-9-]+)?\\.vercel\\.app" }],
+      "dest": "/branding/appleton-icon-192-20261006.png"
+    },
+    { "src": "/manifest\\.json", "dest": "/api/manifest" },
+    { "handle": "filesystem" },
+    {
+      "src": "/(.*)",
+      "has": [{ "type": "host", "value": "appleton(?:-app)?(?:-[a-z0-9-]+)?\\.vercel\\.app" }],
+      "dest": "/appleton.html",
+      "headers": { "Cache-Control": "no-cache, max-age=0, must-revalidate" }
+    },
+    { "src": "/(.*)", "dest": "/index.html" }
   ]
 }

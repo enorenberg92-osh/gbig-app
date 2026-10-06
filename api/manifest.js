@@ -10,6 +10,7 @@ const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY
   || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im10dXptYXNpY3BjeGN2dHNsZXZtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUxNzc1MDksImV4cCI6MjA5MDc1MzUwOX0.B6dlwPay4Lgv6t5C1y5xwxwTKzQjnWVJqWav4AAtCN0'
 
 import { VENUES, hostSlug } from '../src/lib/locationIdentity.js'
+import { installIconPath } from '../src/lib/installBranding.js'
 
 export default async function handler(req, res) {
   // Same slug rule as the client boot resolver: first host label, "-app"
@@ -38,9 +39,9 @@ export default async function handler(req, res) {
     theme_color: primary_color,
     orientation: 'portrait',
     icons: [
-      { src: slug ? `/branding/${slug}-icon-192.png` : '/icon-192.png', sizes:'192x192',type:'image/png',purpose:'any' },
-      { src: slug ? `/branding/${slug}-icon-512.png` : '/icon-512.png', sizes:'512x512',type:'image/png',purpose:'any' },
-      { src: slug ? `/branding/${slug}-icon-maskable.png` : '/icon-512-maskable.png', sizes:'512x512',type:'image/png',purpose:'maskable' },
+      { src: slug ? installIconPath(slug, '192') : '/icon-192.png', sizes:'192x192',type:'image/png',purpose:'any' },
+      { src: slug ? installIconPath(slug, '512') : '/icon-512.png', sizes:'512x512',type:'image/png',purpose:'any' },
+      { src: slug ? installIconPath(slug, 'maskable') : '/icon-512-maskable.png', sizes:'512x512',type:'image/png',purpose:'maskable' },
     ],
   })
 }
