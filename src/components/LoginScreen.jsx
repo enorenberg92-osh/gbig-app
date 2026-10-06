@@ -4,7 +4,7 @@ import { useLocation } from '../context/LocationContext'
 import { useBrand } from '../context/ThemeProvider'
 
 export default function LoginScreen() {
-  const { appName } = useLocation()
+  const { appName, locationId } = useLocation()
   const { logoUrl } = useBrand()
   const [email, setEmail]     = useState('')
   const [password, setPassword] = useState('')
@@ -29,12 +29,10 @@ export default function LoginScreen() {
 
     // Link player record to this auth account if not already linked
     if (data?.user) {
-      await supabase
-        .from('players')
-        .update({ user_id: data.user.id })
-        .eq('email', email.trim().toLowerCase())
-        .is('user_id', null)
-        .select()
+      const {data:matches}=await supabase.from('players').select('id,user_id')
+        .eq('location_id',locationId).eq('email',email.trim().toLowerCase()).limit(2)
+      if(matches?.length===1&&!matches[0].user_id)await supabase.from('players')
+        .update({user_id:data.user.id}).eq('id',matches[0].id).eq('location_id',locationId).is('user_id',null)
     }
 
     // App.jsx auth listener handles the redirect automatically
