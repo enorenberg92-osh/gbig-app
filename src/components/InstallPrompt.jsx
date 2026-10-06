@@ -188,7 +188,7 @@ function IOSInstallModal({ onClose, onDismiss }) {
         <div style={modalStyles.handle} />
 
         <div style={modalStyles.headerWrap}>
-          <h3 id="install-modal-title" style={modalStyles.title}>Install GBIG</h3>
+          <h3 id="install-modal-title" style={modalStyles.title}>Install app</h3>
           <p style={modalStyles.subtitle}>
             Add the app to your Home Screen for a full-screen experience and faster access.
           </p>
@@ -240,7 +240,7 @@ function IOSInstallModal({ onClose, onDismiss }) {
                 Tap <strong>Add</strong> in the top-right
               </div>
               <div style={modalStyles.stepHint}>
-                The GBIG icon will appear on your Home Screen.
+                The app icon will appear on your Home Screen.
               </div>
             </div>
             <span style={modalStyles.stepIcon} aria-hidden="true">

@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useLocation } from './LocationContext'
+import { installIconPath } from '../lib/installBranding'
 
 // ── Brand assets context ───────────────────────────────────────────────────
 // Logo URLs live in the `locations` table so onboarding a new location is
@@ -151,11 +152,11 @@ export function ThemeProvider({ children }) {
           if (!el && create) { el = document.createElement('link'); create(el); document.head.appendChild(el) }
           if (el) el.href = href
         }
-        setLink('link[rel="apple-touch-icon"]', `/branding/${data.slug}-icon-apple.png`)
-        setLink('link[rel="icon"][type="image/png"]', `/branding/${data.slug}-icon-192.png`)
+        setLink('link[rel="apple-touch-icon"]', installIconPath(data.slug, 'apple'))
+        setLink('link[rel="icon"][type="image/png"]', installIconPath(data.slug, '192'))
         // The SVG favicon outranks PNG in Chrome; retarget it too.
         const svgIcon = document.querySelector('link[rel="icon"][type="image/svg+xml"]')
-        if (svgIcon) { svgIcon.type = 'image/png'; svgIcon.href = `/branding/${data.slug}-icon-192.png` }
+        if (svgIcon) { svgIcon.type = 'image/png'; svgIcon.href = installIconPath(data.slug, '192') }
       }
       if (primary && /^#[0-9a-f]{6}$/i.test(primary)) {
         const meta = document.querySelector('meta[name="theme-color"]')

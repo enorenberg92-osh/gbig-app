@@ -6,6 +6,6 @@
  if(!names[slug])return
  document.title=names[slug]
  document.querySelector('meta[name="apple-mobile-web-app-title"]').content=names[slug]
- document.querySelector('link[rel="apple-touch-icon"]').href=`/branding/${slug}-icon-apple.png`
- document.querySelectorAll('link[rel="icon"]').forEach(el=>{el.type='image/png';el.href=`/branding/${slug}-icon-192.png`})
+ document.querySelector('link[rel="apple-touch-icon"]').href=`/branding/${slug}-icon-apple-20261006.png`
+ document.querySelectorAll('link[rel="icon"]').forEach(el=>{el.type='image/png';el.href=`/branding/${slug}-icon-192-20261006.png`})
 })()
