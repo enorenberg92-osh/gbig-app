@@ -1,7 +1,7 @@
 // Set install metadata before asynchronous app boot, even during a DB outage.
 (() => {
  const hostname=location.hostname.toLowerCase()
- const slug=hostname.match(/^(gbig|appleton)-app(?:-[a-z0-9-]+)?\.vercel\.app$/)?.[1] || hostname.split('.')[0].replace(/-app$/,'')
+ const slug=hostname.match(/^(gbig|appleton)(?:-app)?(?:-[a-z0-9-]+)?\.vercel\.app$/)?.[1] || hostname.split('.')[0].replace(/-app$/,'')
  const names={gbig:'Green Bay Indoor Golf',appleton:'Appleton Indoor Golf'}
  if(!names[slug])return
  document.title=names[slug]

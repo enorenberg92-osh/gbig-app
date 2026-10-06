@@ -5,7 +5,7 @@ export const VENUES = {
 export function hostSlug(host) {
   const hostname=String(host || '').toLowerCase().split(':')[0]
   if (hostname==='localhost' || hostname==='127.0.0.1' || hostname==='') return null
-  const deployment=hostname.match(/^(gbig|appleton)-app(?:-[a-z0-9-]+)?\.vercel\.app$/)
+  const deployment=hostname.match(/^(gbig|appleton)(?:-app)?(?:-[a-z0-9-]+)?\.vercel\.app$/)
   if(deployment) return deployment[1]
   return hostname.split('.')[0].replace(/-app$/, '')
 }

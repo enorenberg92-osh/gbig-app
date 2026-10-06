@@ -41,6 +41,10 @@ The owner unpaused Supabase; the project is now ACTIVE_HEALTHY and read-only API
 
 The saved Vercel CLI credential returned HTTP 403. No production deployment or SQL migration has been applied by this pass. Current phone/browser visual verification remains unavailable; the installed phone's cached icon/loading identity is not yet confirmed fixed.
 
+The reviewed branch is available in GitHub draft PR #1. Vercel built a Preview deployment successfully through the GitHub integration. Direct requests stop at Vercel Authentication (HTTP 302); the app page and manifest cannot be verified through that protected preview with the rejected CLI credential. Actual deployment hostnames omit the `-app` segment, so venue detection covers both forms.
+
+The rehearsal report uses shared competition ranks for equal net totals. The current app displays sequential positions with team-name ordering on equal totals; net and gross totals reconcile independently of that display convention. A formal league tie-break rule has not been supplied, so no ranking policy change is included.
+
 ## Release sequence
 
 1. Obtain working hosting access; Supabase is already healthy and audited read-only.
