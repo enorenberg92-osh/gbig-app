@@ -6,6 +6,7 @@ import ConfirmDialog from '../ConfirmDialog'
 import { Button, Toast, EmptyState } from '../ui'
 import { formatLocalDate, isFutureDate } from '../../lib/dateUtils'
 import { loadWorkingLeague } from '../../lib/leagueUtils'
+import { displayHole } from '../../lib/holeUtils'
 import { mutationErrorMessage } from '../../lib/rpcErrors'
 
 const EMPTY_FORM = {
@@ -130,13 +131,13 @@ export default function AdminSchedule() {
     const [{ data: evtData }, { data: crsData }, { data: teamData }, { data: muData }, { data: playerData }] = await Promise.all([
       supabase
         .from('events')
-        .select('*, courses(id, name)')
+        .select('*, courses(id, name, num_holes, start_hole)')
         .eq('location_id', locationId)
         .eq('league_id', leagueData.id)
         .order('week_number', { ascending: true, nullsFirst: false }),
       supabase
         .from('courses')
-        .select('id, name')
+        .select('id, name, num_holes, start_hole')
         .eq('location_id', locationId)
         .order('name'),
       supabase
@@ -639,8 +640,8 @@ export default function AdminSchedule() {
                     onChange={e => setForm(f => ({ ...f, hole_event_hole: e.target.value }))}
                   >
                     <option value="">—</option>
-                    {[1,2,3,4,5,6,7,8,9].map(n => (
-                      <option key={n} value={n}>{n}</option>
+                    {Array.from({ length: courses.find(c => c.id === form.course_id)?.num_holes || 9 }, (_, i) => i + 1).map(n => (
+                      <option key={n} value={n}>{displayHole(n - 1, courses.find(c => c.id === form.course_id))}</option>
                     ))}
                   </select>
                 </div>
@@ -771,7 +772,7 @@ export default function AdminSchedule() {
                   {!isBye && evt.hole_event_name && (
                     <div style={styles.holeEventTag}>
                       <Target size={12} strokeWidth={2.25} style={{ verticalAlign: '-2px', marginRight: 6 }} />
-                      Hole {evt.hole_event_hole}: {evt.hole_event_name}
+                      Hole {displayHole(evt.hole_event_hole - 1, evt.courses)}: {evt.hole_event_name}
                     </div>
                   )}
                   {!isBye && (evt.format === 'match_team' || evt.format === 'match_individual') && (

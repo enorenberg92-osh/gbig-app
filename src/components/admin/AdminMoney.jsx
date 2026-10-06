@@ -4,7 +4,8 @@ import { supabase } from '../../lib/supabase'
 import { useLocation } from '../../context/LocationContext'
 import { loadWorkingLeague } from '../../lib/leagueUtils'
 import { mutationErrorMessage } from '../../lib/rpcErrors'
-import { calcSkins } from '../../lib/skinsUtils'
+import { loadSkinsRound } from '../../lib/loadSkinsRound'
+import { fetchAllRows } from '../../lib/fetchAllRows'
 import { Button, Toast, EmptyState } from '../ui'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -24,6 +25,7 @@ export default function AdminMoney() {
   const [teams, setTeams]     = useState([])
   const [events, setEvents]   = useState([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(null)
   const [toast, setToast]     = useState(null)
 
   const [form, setForm] = useState(EMPTY_ENTRY)
@@ -33,20 +35,27 @@ export default function AdminMoney() {
   const [skinValue, setSkinValue]         = useState('5')
   const [pointValue, setPointValue]       = useState('2')
   const [suggestions, setSuggestions]     = useState(null) // [{...entry, include}]
+  const [suggesting, setSuggesting] = useState(false)
+  const [addingSuggestions, setAddingSuggestions] = useState(false)
 
   useEffect(() => { if (locationId) load() }, [locationId])
+  useEffect(() => { setSuggestions(null) }, [suggestEvent, skinValue, pointValue])
 
   async function load() {
+    setLoading(true)
+    setLoadError(null)
     let lg
     try { lg = await loadWorkingLeague(supabase, locationId) }
-    catch (e) { showToast(e.message, 'error'); setLoading(false); return }
+    catch (e) { setLoadError(e.message); setLoading(false); return }
     setLeague(lg)
     const [led, pl, tm, ev] = await Promise.all([
-      supabase.from('ledger').select('*').eq('location_id', locationId).eq('league_id', lg.id).order('created_at', { ascending: false }),
+      fetchAllRows(() => supabase.from('ledger').select('*').eq('location_id', locationId).eq('league_id', lg.id).order('created_at', { ascending: false }).order('id')),
       supabase.from('players').select('id, name, in_skins').eq('location_id', locationId).order('name'),
       supabase.from('teams').select('id, name').eq('location_id', locationId).eq('league_id', lg.id).order('created_at'),
       supabase.from('events').select('id, name, week_number, status, course_id').eq('location_id', locationId).eq('league_id', lg.id).neq('is_bye', true).order('week_number'),
     ])
+    const failed = [led, pl, tm, ev].find(r => r.error)
+    if (failed) { setLoadError(failed.error.message); setLoading(false); return }
     setEntries(led.data || [])
     setPlayers(pl.data || [])
     setTeams(tm.data || [])
@@ -97,27 +106,16 @@ export default function AdminMoney() {
   // ── Weekly auto-suggest: skins winners + match points from results ─────────
   async function buildSuggestions() {
     if (!suggestEvent) return
+    setSuggestions(null)
+    setSuggesting(true)
+    try {
     const evt = events.find(e => e.id === suggestEvent)
     const perSkin = parseFloat(skinValue) || 0
     const perPoint = parseFloat(pointValue) || 0
     const out = []
 
     if (perSkin > 0) {
-      const [{ data: evtScores }, { data: courseRow }] = await Promise.all([
-        supabase.from('scores').select('player_id, hole_scores')
-          .eq('event_id', suggestEvent).eq('location_id', locationId)
-          .eq('entry_type', 'played').eq('status', 'verified'),
-        evt.course_id
-          ? supabase.from('courses').select('num_holes').eq('id', evt.course_id).eq('location_id', locationId).single()
-          : Promise.resolve({ data: null }),
-      ])
-      const inSkins = new Set(players.filter(p => p.in_skins).map(p => p.id))
-      const scoreMap = {}
-      ;(evtScores || []).forEach(s => {
-        if (inSkins.has(s.player_id) && Array.isArray(s.hole_scores)) scoreMap[s.player_id] = s.hole_scores
-      })
-      const numHoles = courseRow?.num_holes || 9
-      const skins = calcSkins(scoreMap, numHoles)
+      const { skins } = await loadSkinsRound(supabase, suggestEvent, locationId)
       const skinCount = {}
       Object.values(skins).forEach(pid => { if (pid) skinCount[pid] = (skinCount[pid] || 0) + 1 })
       Object.entries(skinCount).forEach(([pid, n]) => {
@@ -130,9 +128,10 @@ export default function AdminMoney() {
     }
 
     if (perPoint > 0) {
-      const { data: mus } = await supabase.from('matchups')
+      const { data: mus, error } = await supabase.from('matchups')
         .select('home_team_id, away_team_id, points_home, points_away, status')
         .eq('event_id', suggestEvent).eq('location_id', locationId).eq('status', 'scored')
+      if (error) throw error
       ;(mus || []).forEach(m => {
         if (!m.home_team_id) return
         if (Number(m.points_home) > 0) out.push({
@@ -150,13 +149,19 @@ export default function AdminMoney() {
 
     setSuggestions(out)
     if (!out.length) showToast('Nothing to suggest for that week.', 'error')
+    } catch (error) { showToast(error.message || 'Weekly suggestions could not be loaded.', 'error') }
+    finally { setSuggesting(false) }
   }
 
   async function confirmSuggestions() {
+    if (addingSuggestions) return
     const list = suggestions.filter(s => s.include).map(({ include, ...rest }) => rest)
     if (!list.length) { setSuggestions(null); return }
-    const ok = await addEntries(list)
-    if (ok) { showToast(`Added ${list.length} entr${list.length === 1 ? 'y' : 'ies'}.`); setSuggestions(null) }
+    setAddingSuggestions(true)
+    try {
+      const ok = await addEntries(list)
+      if (ok) { showToast(`Added ${list.length} entr${list.length === 1 ? 'y' : 'ies'}.`); setSuggestions(null) }
+    } finally { setAddingSuggestions(false) }
   }
 
   // ── Who's owed: net balance per player/team ─────────────────────────────────
@@ -174,6 +179,7 @@ export default function AdminMoney() {
     .sort((a, b) => b.amt - a.amt)
 
   if (loading) return <div style={st.loading}>Loading…</div>
+  if (loadError) return <div style={st.container}><p role="alert">Money records could not be loaded: {loadError}</p><Button onClick={load}>Retry</Button></div>
 
   return (
     <div style={st.container}>
@@ -211,7 +217,7 @@ export default function AdminMoney() {
             <input type="number" min="0" style={st.input} value={pointValue} onChange={e => setPointValue(e.target.value)} />
           </div>
         </div>
-        <Button variant="secondary" size="sm" onClick={buildSuggestions} disabled={!suggestEvent}>
+        <Button variant="secondary" size="sm" onClick={buildSuggestions} disabled={!suggestEvent || suggesting || addingSuggestions} loading={suggesting}>
           Build suggestions
         </Button>
         {suggestions && suggestions.length > 0 && (
@@ -226,7 +232,7 @@ export default function AdminMoney() {
                 <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--green-dark)' }}>${Number(s.amount).toFixed(2)}</span>
               </label>
             ))}
-            <Button variant="primary" size="sm" onClick={confirmSuggestions}>
+            <Button variant="primary" size="sm" onClick={confirmSuggestions} loading={addingSuggestions} disabled={addingSuggestions}>
               Add {suggestions.filter(s => s.include).length} to ledger
             </Button>
           </>

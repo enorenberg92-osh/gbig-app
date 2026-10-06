@@ -1,3 +1,10 @@
+import { rosterScores } from './scoreSelection.js'
+
+export function skinScoreRows(scores, players, roster) {
+  const eligible = new Set(players.filter(p => p.in_skins).map(p => p.id))
+  return rosterScores(scores, roster).filter(s => s.entry_type === 'played' && eligible.has(s.player_id) && Array.isArray(s.hole_scores))
+}
+
 // Skins: for each hole, the lowest score wins iff exactly one player shot it.
 // No carryovers — each hole independent. playerScoreMap: { playerId: [h1..hN] }.
 // Returns { holeNumber(1-indexed): winnerPlayerId | null }.

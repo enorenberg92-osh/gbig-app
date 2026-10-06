@@ -1,706 +1,176 @@
-import React, { useState, useEffect } from 'react'
-import {
-  Users, Handshake, Calendar, Zap,
-  CheckCircle2, Square, Check, Clipboard, Mail, Lock,
-} from 'lucide-react'
+import React, { useEffect, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
+import { CheckCircle2, RefreshCw, Lock, Clipboard, Mail } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useLocation } from '../../context/LocationContext'
-import { formatLocalDate } from '../../lib/dateUtils'
+import { useFeature } from '../../context/FeatureContext'
 import { loadWorkingLeague } from '../../lib/leagueUtils'
+import { hasCompleteCoursePars } from '../../lib/holeUtils'
+import { closeoutStatus, closeoutSkins, closeoutResults, penaltyNet, recapText } from '../../lib/closeoutUtils'
 import { mutationErrorMessage } from '../../lib/rpcErrors'
 import ConfirmDialog from '../ConfirmDialog'
 import { Button } from '../ui'
-import { useFeature } from '../../context/FeatureContext'
+import './closeout.css'
 
-const STEPS = [
-  { id: 'scores',  label: 'Review scores', num: 1 },
-  { id: 'skins',   label: 'Skins',         num: 2 },
-  { id: 'results', label: 'Results',        num: 3 },
-  { id: 'email',   label: 'Weekly email',  num: 4 },
-  { id: 'publish', label: 'Lock & publish', num: 5 },
-]
-
-function generateEmail(evt, scores, teams, players, skins, appName = 'Golf League App') {
-  const evtName = evt.name || evt.title || `Event ${evt.week_number || ''}`
-  const date = evt.start_date
-    ? formatLocalDate(evt.start_date, { weekday: 'long', month: 'long', day: 'numeric' })
-    : ''
-
-  // Build player→team map (scores may only have player_id, not team_id)
-  const plrTeamMap = {}
-  teams.forEach(t => {
-    if (t.player1_id) plrTeamMap[t.player1_id] = t
-    if (t.player2_id) plrTeamMap[t.player2_id] = t
-  })
-  const byTeam = {}
-  scores.forEach(s => {
-    if (s.status !== 'verified') return
-    const team = s.team_id ? teams.find(t => t.id === s.team_id) : plrTeamMap[s.player_id]
-    if (!team) return
-    if (!byTeam[team.id]) byTeam[team.id] = { team, gross: 0, net: 0 }
-    byTeam[team.id].gross += s.gross_total || 0
-    byTeam[team.id].net   += s.net_total   || 0
-  })
-  const sorted = Object.values(byTeam).sort((a, b) => a.net - b.net)
-  const top3 = sorted.slice(0, 3).map((r, i) =>
-    `  ${i + 1}. ${r.team.name || 'Unknown'} — Net ${r.net} / Gross ${r.gross}`
-  ).join('\n')
-
-  const skinLines = skins.length > 0
-    ? skins.map(sk => `  Hole ${sk.hole}: ${sk.playerName}`).join('\n')
-    : '  No skins this week'
-
-  return `Hi everyone,
-
-Great playing this week! Here's your recap for ${evtName}${date ? ` — ${date}` : ''}.
-
-TOP FINISHERS
-${top3 || '  Results pending'}
-
-SKINS WINNERS
-${skinLines}
-
-See the full standings and your player profile in the ${appName}.
-
-See you next week!
-— ${appName}`
+async function checked(query) {
+  const result = await query
+  if (result.error) throw result.error
+  return result.data
 }
 
 export default function AdminDashboard({ onWeekClosed = () => {} }) {
   const { locationId, appName } = useLocation()
   const skinsEnabled = useFeature('skins')
-  const visibleSteps = STEPS.filter(step => step.id !== 'skins' || skinsEnabled)
-  const [stats, setStats]           = useState({ players: 0, events: 0, teams: 0 })
-  const [openEvent, setOpenEvent]   = useState(null)
-  const [scores, setScores]         = useState([])
-  const [teams, setTeams]           = useState([])
-  const [players, setPlayers]       = useState([])
-  const [rosterRows, setRosterRows] = useState([])
-  const [skins, setSkins]           = useState([])
-  const [activeStep, setActiveStep] = useState('scores')
-  const [emailBody, setEmailBody]   = useState('')
-  const [publishing, setPublishing] = useState(false)
-  const [published, setPublished]   = useState(false)
-  // Close-week penalty — on by default so a missing player is never
-  // silently omitted from the season totals. Admin can untick if
-  // they want to handle it manually.
-  const applyPenalty = true
-  const [copied, setCopied]         = useState(false)
-  const [loading, setLoading]       = useState(true)
-  const [dialog, setDialog]         = useState(null)
-  // track which steps have been manually acknowledged
-  const [acked, setAcked] = useState({ scores: false, skins: false, results: false, email: false })
+  const [snapshot, setSnapshot] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+  const [reviewed, setReviewed] = useState(false)
+  const [penaltiesAccepted, setPenaltiesAccepted] = useState(false)
+  const [confirm, setConfirm] = useState(false)
+  const [email, setEmail] = useState('')
+  const [step, setStep] = useState('review')
+  const sequence = useRef(0)
 
-  useEffect(() => { if (locationId) load() }, [locationId])
+  useEffect(() => {
+    load()
+    return () => { sequence.current++ }
+  }, [locationId])
 
-  async function load() {
-    setLoading(true)
-    let league
-    try {
-      league = await loadWorkingLeague(supabase, locationId)
-    } catch (leagueError) {
-      alert(leagueError.message)
-      setLoading(false)
-      return
+  async function readSnapshot(eventId) {
+    const league = await loadWorkingLeague(supabase, locationId)
+    let event
+    if (eventId) {
+      event = await checked(supabase.from('events').select('*').eq('id', eventId).eq('location_id', locationId).eq('league_id', league.id).single())
+    } else {
+      event = await checked(supabase.from('events').select('*').eq('location_id', locationId).eq('league_id', league.id).eq('status', 'open').order('week_number').limit(1).maybeSingle())
+      if (!event) event = await checked(supabase.from('events').select('*').eq('location_id', locationId).eq('league_id', league.id).eq('status', 'closed').order('week_number', { ascending: false }).limit(1).maybeSingle())
     }
-    const [
-      { count: playerCount },
-      { count: eventCount },
-      { count: teamCount },
-      { data: openEvts },
-      { data: tms },
-      { data: plrs },
-    ] = await Promise.all([
-      supabase.from('players').select('*', { count: 'exact', head: true }).eq('location_id', locationId),
-      supabase.from('events').select('*', { count: 'exact', head: true }).eq('location_id', locationId).eq('league_id', league.id),
-      supabase.from('teams').select('*', { count: 'exact', head: true }).eq('location_id', locationId).eq('league_id', league.id),
-      supabase.from('events').select('*').eq('location_id', locationId).eq('league_id', league.id).eq('status', 'open').order('week_number', { ascending: true }).limit(1),
-      supabase.from('teams').select('id, name').eq('location_id', locationId).eq('league_id', league.id),
-      supabase.from('players').select('id, name, first_name, last_name, email, in_skins, handicap').eq('location_id', locationId),
+    if (!event) return null
+    const [scores, roster, teams, players, course, matchups] = await Promise.all([
+      checked(supabase.from('scores').select('id, player_id, team_id, status, entry_type, net_total, gross_total, hole_scores, format_points, created_at').eq('event_id', event.id).eq('location_id', locationId)),
+      checked(supabase.from('roster_at').select('player_id, team_id').eq('event_id', event.id)),
+      checked(supabase.from('teams').select('id, name').eq('league_id', league.id).eq('location_id', locationId)),
+      checked(supabase.from('players').select('id, name, email, handicap, in_skins').eq('location_id', locationId)),
+      event.course_id ? checked(supabase.from('courses').select('id, name, num_holes, total_par, hole_pars, start_hole').eq('id', event.course_id).eq('location_id', locationId).single()) : null,
+      checked(supabase.from('matchups').select('*').eq('event_id', event.id)),
     ])
+    return { event, league, scores, roster, teams, players, course, matchups, skinsEnabled }
+  }
 
-    setStats({ players: playerCount || 0, events: eventCount || 0, teams: teamCount || 0 })
-    setTeams(tms || [])
-    setPlayers(plrs || [])
-    setRosterRows([])
-
-    const evt = openEvts?.[0] || null
-    setOpenEvent(evt)
-    setPublished(false)
-    setAcked({ scores: false, skins: false, results: false, email: false })
-
-    if (evt) {
-      // Load scores + course info for skins calculation
-      const [{ data: scrs }, evtDetail, { data: eventRoster }] = await Promise.all([
-        supabase.from('scores').select('*').eq('event_id', evt.id).eq('location_id', locationId).neq('status', 'rejected'),
-        supabase.from('events').select('*, courses(id, name, num_holes, hole_pars)').eq('id', evt.id).eq('location_id', locationId).eq('league_id', league.id).single(),
-        supabase.from('roster_at').select('team_id, player_id').eq('event_id', evt.id),
-      ])
-      const s = scrs || []
-      setScores(s)
-      setRosterRows(eventRoster || [])
-
-      // ── Calculate skins from hole_scores (same logic as AdminSkins tab) ──
-      // Penalty rows carry no hole_scores so the per-hole loop below skips them
-      // naturally — but filter explicitly by entry_type so the intent is
-      // unambiguous and the set size is tight.
-      const skinsPlayerIds = new Set((plrs || []).filter(p => p.in_skins).map(p => p.id))
-      const skinsScores    = s.filter(sc =>
-        skinsPlayerIds.has(sc.player_id) &&
-        (!sc.entry_type || sc.entry_type === 'played') &&
-        sc.status === 'verified'
-      )
-      const holePars       = evtDetail?.data?.courses?.hole_pars || null
-      const holeCount      = evtDetail?.data?.courses?.num_holes || 0
-
-      const computed = []
-      for (let h = 0; h < holeCount; h++) {
-        const entries = skinsScores
-          .filter(sc => Array.isArray(sc.hole_scores) && sc.hole_scores[h] != null)
-          .map(sc => ({ playerId: sc.player_id, score: sc.hole_scores[h] }))
-        if (entries.length === 0) continue
-        const min     = Math.min(...entries.map(e => e.score))
-        const winners = entries.filter(e => e.score === min)
-        if (winners.length === 1) {
-          const player = (plrs || []).find(p => p.id === winners[0].playerId)
-          const name   = player ? (player.first_name ? `${player.first_name} ${player.last_name || ''}`.trim() : player.name) : 'Unknown'
-          const par    = holePars ? holePars[h] : null
-          computed.push({ hole: h + 1, playerName: name, playerId: winners[0].playerId, score: min, par })
-        }
-      }
-      setSkins(computed)
-      setEmailBody(generateEmail(evt, s, tms || [], plrs || [], computed, appName))
+  async function load(eventId) {
+    const request = ++sequence.current
+    setLoading(true)
+    setError('')
+    try {
+      const next = await readSnapshot(eventId)
+      if (request !== sequence.current) return
+      setSnapshot(next)
+      setReviewed(false)
+      setPenaltiesAccepted(false)
+      setEmail(next ? recapText(next, appName) : '')
+      setStep(next?.event.status === 'closed' ? 'recap' : 'review')
+    } catch (err) {
+      if (request === sequence.current) setError(mutationErrorMessage(err, 'load closeout details'))
+    } finally {
+      if (request === sequence.current) setLoading(false)
     }
-
-    setLoading(false)
   }
 
-  function handlePublish() {
-    if (!openEvent) return
-    setDialog({
-      message: 'Close out this event? Scores will be locked and season standings updated.',
-      confirmLabel: 'Lock & Publish',
-      destructive: false,
-      onConfirm: () => doPublish(),
-    })
+  async function publish() {
+    if (busy) return
+    setConfirm(false)
+    setBusy(true)
+    setError('')
+    let published = false
+    try {
+      const result = await checked(supabase.rpc('publish_week', { p_event_id: snapshot.event.id }))
+      published = true
+      onWeekClosed(result?.next_event_id || null)
+      // Keep the completed event in view; never compose a recap for next week.
+      const final = await readSnapshot(snapshot.event.id)
+      if (final.event.status !== 'closed') throw new Error('Publication status could not be confirmed. Refresh before trying again.')
+      setSnapshot(final)
+      setEmail(recapText(final, appName))
+      setStep('recap')
+      setNotice('Event closed. The recap below uses finalized results.')
+    } catch (err) {
+      setError(published
+        ? 'The event was published, but its recap could not be loaded. Refresh this event to retrieve it; do not publish again.'
+        : mutationErrorMessage(err, 'publish this week'))
+      if (published) setSnapshot(previous => ({ ...previous, event: { ...previous.event, status: 'closed' } }))
+    } finally { setBusy(false) }
   }
 
-  async function doPublish() {
-    setPublishing(true)
-    const { data, error } = await supabase.rpc('publish_week', { p_event_id: openEvent.id })
-    if (error) {
-      alert('Error: ' + mutationErrorMessage(error, 'publish this week'))
-      setPublishing(false)
-      return
-    }
-
-    setPublishing(false)
-    setPublished(true)
-    onWeekClosed(data?.next_event_id || null)  // tell AdminPanel the new active event
+  async function copyRecap() {
+    try { await navigator.clipboard.writeText(email); setNotice('Recap copied. It has not been emailed.') }
+    catch { setNotice('Copy was blocked. Select the recap text and copy it manually.') }
   }
 
-  function ack(step, next) {
-    setAcked(prev => ({ ...prev, [step]: true }))
-    if (next) setActiveStep(next)
-  }
+  if (loading) return <div className="closeout"><p role="status">Loading closeout details…</p></div>
+  // A failed refresh must never leave stale data actionable.
+  if (error && !snapshot) return <div className="closeout"><p role="alert">{error}</p><Button onClick={() => load()}>Try again</Button></div>
+  if (!snapshot) return <div className="closeout"><h2>No round to close</h2><p>Open a round in Schedule when you’re ready to begin.</p><Link to="/league/admin/schedule">Go to Schedule</Link></div>
 
-  function copyEmail() {
-    navigator.clipboard.writeText(emailBody)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2500)
-    setAcked(prev => ({ ...prev, email: true }))
-  }
+  const { event, course, players, scores, roster, teams, matchups } = snapshot
+  const status = closeoutStatus(roster, scores)
+  const closed = event.status === 'closed'
+  const courseValid = hasCompleteCoursePars(course) && course.total_par === course.hole_pars.reduce((a,b) => a+b,0)
+  const hasPending = status.pending.length > 0
+  const canPublish = !closed && !error && status.rosterValid && courseValid && !hasPending && reviewed && (!status.missing.length || penaltiesAccepted)
+  const name = id => players.find(p => p.id === id)?.name || 'Unknown player'
+  const results = closeoutResults(event, scores, roster, teams, players, matchups)
+  const skins = closeoutSkins(scores, players, course, roster)
+  const rosterIds = new Set(roster.map(row => row.player_id))
+  const recipients = [...new Set(players.filter(p => rosterIds.has(p.id) && p.email).map(p => p.email.trim().toLowerCase()))]
 
-  if (loading) return <div style={s.loading}>Loading…</div>
-
-  // ── derived state ──────────────────────────────────────────────────────────
-  // Build player → team map from the dated event roster.
-  const playerTeamMap = {}
-  rosterRows.forEach(row => {
-    const team = teams.find(candidate => candidate.id === row.team_id)
-    if (team) playerTeamMap[row.player_id] = team
-  })
-
-  // Group scores by team, using team_id if present, otherwise player_id lookup
-  const scoresByTeam = {}
-  scores.forEach(s => {
-    if (s.status !== 'verified') return
-    const team = s.team_id ? teams.find(t => t.id === s.team_id) : playerTeamMap[s.player_id]
-    if (!team) return
-    if (!scoresByTeam[team.id]) scoresByTeam[team.id] = { team, scores: [] }
-    scoresByTeam[team.id].scores.push(s)
-  })
-
-  // Build leaderboard: one row per team, combined gross + net
-  const leaderboard = Object.values(scoresByTeam).map(({ team, scores: ts }) => ({
-    team,
-    totalGross: ts.reduce((a, s) => a + (s.gross_total || 0), 0),
-    totalNet:   ts.reduce((a, s) => a + (s.net_total   || 0), 0),
-  })).sort((a, b) => a.totalNet - b.totalNet)
-
-  // ── Missed-week penalty: who needs one? ────────────────────────────────
-  const rosteredPlayerIds = new Set(rosterRows.map(row => row.player_id))
-  const rosteredPlayers = players.filter(pl => rosteredPlayerIds.has(pl.id))
-  // A 'played' entry counts as submitted. Treat missing entry_type as
-  // 'played' for backward compat with pre-migration data.
-  const submittedPlayerIds = new Set(
-    scores
-      .filter(sc => (!sc.entry_type || sc.entry_type === 'played') && sc.status === 'verified')
-      .map(sc => sc.player_id)
-  )
-  const missingPlayers = rosteredPlayers.filter(pl => !submittedPlayerIds.has(pl.id))
-
-  const expectedScores  = teams.length
-  const submittedScores = Object.keys(scoresByTeam).length   // count teams, not rows
-  const scoresOk  = submittedScores >= expectedScores && expectedScores > 0
-  const skinsOk   = !skinsEnabled || skins.length > 0
-  const emailOk   = emailBody.trim().length > 10
-
-  const stepDone = {
-    scores:  scoresOk  || acked.scores,
-    skins:   skinsOk   || acked.skins,
-    results: acked.results,
-    email:   emailOk   && acked.email,
-    publish: published,
-  }
-
-  const emailPlayerList = players.filter(p => p.email).map(p => p.email).join(',')
-  const emailSubject    = encodeURIComponent(`${openEvent?.name || 'League Update'} — Results`)
-  const emailBodyEncoded = encodeURIComponent(emailBody)
-
-  const eventLabel = openEvent
-    ? (openEvent.name || openEvent.title || `Event ${openEvent.week_number || ''}`)
-    : ''
-
-  const eventSub = openEvent ? [
-    openEvent.week_number ? `Week ${openEvent.week_number}` : null,
-    openEvent.start_date
-      ? `Week of ${formatLocalDate(openEvent.start_date, { month: 'short', day: 'numeric', year: 'numeric' })}`
-      : null,
-  ].filter(Boolean).join(' · ') : ''
-
-  return (
-    <div style={s.page}>
-      {dialog && (
-        <ConfirmDialog
-          {...dialog}
-          onConfirm={() => { dialog.onConfirm(); setDialog(null) }}
-          onCancel={() => setDialog(null)}
-        />
-      )}
-
-      {/* ── Stat strip ─────────────────────────────────────────────────────── */}
-      <div style={s.statGrid}>
-        {[
-          { label: 'Players',       value: stats.players, Icon: Users },
-          { label: 'Teams',         value: stats.teams,   Icon: Handshake },
-          { label: 'Total Events',  value: stats.events,  Icon: Calendar },
-          { label: 'Active Round',  value: openEvent ? 1 : 0, Icon: Zap },
-        ].map(({ label, value, Icon }) => (
-          <div key={label} style={s.statCard}>
-            <span style={s.statIcon}>
-              <Icon size={20} strokeWidth={2} color="var(--green)" />
-            </span>
-            <span style={s.statValue}>{value}</span>
-            <span style={s.statLabel}>{label}</span>
-          </div>
-        ))}
-      </div>
-
-      {/* ── No active event ─────────────────────────────────────────────────── */}
-      {!openEvent ? (
-        <div style={s.noEvent}>
-          <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '10px' }}>
-            <CheckCircle2 size={44} strokeWidth={1.75} color="var(--green)" />
-          </div>
-          <div style={s.noEventTitle}>No active event</div>
-          <div style={s.noEventSub}>All events are closed. Create a new event in the Schedule tab to start tracking scores.</div>
-        </div>
-      ) : (
-
-      /* ── Closeout card ─────────────────────────────────────────────────── */
-      <div style={s.card}>
-
-        {/* Event header */}
-        <div style={s.closeoutHeader}>
-          <div>
-            <div style={s.closeoutTitle}>{eventLabel} — Close out</div>
-            {eventSub && <div style={s.closeoutSub}>{eventSub}</div>}
-          </div>
-          <span style={s.openBadge}>Open</span>
-        </div>
-
-        {/* Step tab bar */}
-        <div style={s.stepBar}>
-          {visibleSteps.map(({ id, label, num }) => {
-            const done   = stepDone[id]
-            const active = activeStep === id
-            return (
-              <button
-                key={id}
-                style={{
-                  ...s.stepTab,
-                  color:        active ? 'var(--green-dark)' : done ? 'var(--green)' : 'var(--gray-400)',
-                  fontWeight:   active ? 700 : 500,
-                  borderBottom: active ? '2.5px solid var(--green)' : '2.5px solid transparent',
-                  background:   active ? '#fff' : 'transparent',
-                }}
-                onClick={() => setActiveStep(id)}
-              >
-                <span style={{
-                  ...s.stepNum,
-                  background: done ? 'var(--green)' : active ? 'var(--green-dark)' : '#ccc',
-                }}>
-                  {done ? <Check size={13} strokeWidth={3} color="#fff" /> : num}
-                </span>
-                <span style={s.stepLabel}>{label}</span>
-              </button>
-            )
-          })}
-        </div>
-
-        {/* ── Step content ──────────────────────────────────────────────────── */}
-        <div style={s.stepContent}>
-
-          {/* STEP 1 — Scores */}
-          {activeStep === 'scores' && (
-            <div>
-              <h3 style={s.stepTitle}>Review Scores</h3>
-              <div style={s.progressRow}>
-                <div style={s.progressTrack}>
-                  <div style={{
-                    ...s.progressFill,
-                    width: `${Math.min(100, (submittedScores / Math.max(1, expectedScores)) * 100)}%`,
-                    background: scoresOk ? 'var(--green)' : '#f6c90e',
-                  }} />
-                </div>
-                <span style={s.progressLabel}>
-                  {submittedScores} of {expectedScores} teams submitted
-                </span>
-              </div>
-
-              {leaderboard.length === 0
-                ? <p style={s.empty}>No scores entered yet for this event.</p>
-                : leaderboard.map((row, i) => (
-                    <div key={row.team.id} style={s.scoreRow}>
-                      <span style={s.scoreRank}>{i + 1}</span>
-                      <span style={s.scoreTeam}>{row.team.name || 'Unknown Team'}</span>
-                      <span style={s.scoreNet}>Net {row.totalNet}</span>
-                      <span style={s.scoreGross}>Gross {row.totalGross}</span>
-                    </div>
-                  ))
-              }
-              <div style={s.stepActions}>
-                <button style={s.nextBtn} onClick={() => ack('scores', skinsEnabled ? 'skins' : 'results')}>
-                  {scoresOk
-                    ? <><Check size={15} strokeWidth={2.5} style={{ verticalAlign: '-3px', marginRight: 6 }} />Scores look good — Next: Skins</>
-                    : 'Mark reviewed & continue →'}
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* STEP 2 — Skins */}
-          {skinsEnabled && activeStep === 'skins' && (
-            <div>
-              <h3 style={s.stepTitle}>Skins</h3>
-              {skins.length === 0 ? (
-                <div style={s.infoBox}>
-                  No skins winners found yet. Skins are calculated automatically once players submit their hole-by-hole scores. Check back after scores are in.
-                </div>
-              ) : (
-                <>
-                  <p style={s.stepDesc}>
-                    Skins calculated — {skins.length} winner{skins.length !== 1 ? 's' : ''} identified
-                  </p>
-                  {skins.map((sk, i) => (
-                    <div key={i} style={s.skinRow}>
-                      <span style={s.skinHole}>Hole {sk.hole}</span>
-                      <span style={s.skinTeam}>{sk.playerName}</span>
-                      <span style={s.skinAmt}>
-                        {sk.score}{sk.par != null ? ` · par ${sk.par}` : ''}
-                      </span>
-                    </div>
-                  ))}
-                </>
-              )}
-              <div style={s.stepActions}>
-                <button style={s.nextBtn} onClick={() => ack('skins', 'results')}>
-                  {skinsOk ? 'Skins confirmed — Next: Results →' : 'Skip skins & continue →'}
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* STEP 3 — Results */}
-          {activeStep === 'results' && (
-            <div>
-              <h3 style={s.stepTitle}>Results Preview</h3>
-              <p style={s.stepDesc}>Verify the leaderboard before publishing.</p>
-              {leaderboard.length === 0
-                ? <p style={s.empty}>No scores to preview.</p>
-                : leaderboard.slice(0, 5).map((row, i) => {
-                    const medals = ['🥇','🥈','🥉']
-                    return (
-                      <div key={row.team.id} style={s.resultRow}>
-                        <span style={s.resultMedal}>{medals[i] || `${i+1}.`}</span>
-                        <span style={s.resultTeam}>{row.team.name || 'Unknown Team'}</span>
-                        <div style={s.resultRight}>
-                          <span style={s.resultNet}>Net {row.totalNet}</span>
-                          <span style={s.resultGross}>/ Gross {row.totalGross}</span>
-                        </div>
-                      </div>
-                    )
-                  })
-              }
-              <div style={s.stepActions}>
-                <button style={s.nextBtn} onClick={() => ack('results', 'email')}>
-                  Results verified — Next: Weekly Email →
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* STEP 4 — Weekly Email */}
-          {activeStep === 'email' && (
-            <div>
-              <h3 style={s.stepTitle}>Weekly Email</h3>
-              <p style={s.stepDesc}>
-                Edit the recap below, then copy it or open it in your mail app.
-              </p>
-              <textarea
-                style={s.emailArea}
-                value={emailBody}
-                onChange={e => setEmailBody(e.target.value)}
-                rows={16}
-              />
-              <div style={s.emailBtns}>
-                <button style={s.copyBtn} onClick={copyEmail}>
-                  {copied
-                    ? <><Check size={15} strokeWidth={2.5} style={{ verticalAlign: '-3px', marginRight: 6 }} />Copied!</>
-                    : <><Clipboard size={15} strokeWidth={2} style={{ verticalAlign: '-3px', marginRight: 6 }} />Copy to Clipboard</>}
-                </button>
-                <a
-                  style={s.mailtoBtn}
-                  href={`mailto:?bcc=${emailPlayerList}&subject=${emailSubject}&body=${emailBodyEncoded}`}
-                  onClick={() => setAcked(prev => ({ ...prev, email: true }))}
-                >
-                  <Mail size={15} strokeWidth={2} style={{ verticalAlign: '-3px', marginRight: 6 }} />Open in Mail App
-                </a>
-              </div>
-              <p style={s.emailNote}>
-                {players.filter(p => p.email).length} of {players.length} players have email addresses on file.
-              </p>
-              <div style={s.stepActions}>
-                <button style={s.nextBtn} onClick={() => ack('email', 'publish')}>
-                  Email ready — Next: Lock &amp; Publish →
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* STEP 5 — Lock & Publish */}
-          {activeStep === 'publish' && (
-            <div>
-              <h3 style={s.stepTitle}>Lock &amp; Publish — {eventLabel}</h3>
-              <p style={s.stepDesc}>This is the final step. Review the checklist below before publishing.</p>
-
-              <div style={s.checklist}>
-                {[
-                  { done: stepDone.scores,  text: `${submittedScores} of ${expectedScores} scores submitted${submittedScores > expectedScores ? ` (${submittedScores - expectedScores} entered manually)` : ''}` },
-                  { done: stepDone.skins,   text: skins.length > 0 ? `Skins calculated — ${skins.length} winner${skins.length !== 1 ? 's' : ''} identified` : 'Skins step reviewed' },
-                  { done: stepDone.results, text: 'Results previewed — standings verified' },
-                  { done: stepDone.email,   text: 'Weekly email composed and ready to send' },
-                ].map(({ done, text }) => (
-                  <div key={text} style={s.checkRow}>
-                    <span style={s.checkIcon}>
-                      {done
-                        ? <CheckCircle2 size={20} strokeWidth={2} color="var(--green)" />
-                        : <Square size={20} strokeWidth={1.75} color="var(--gray-400)" />}
-                    </span>
-                    <span style={{ ...s.checkText, color: done ? 'var(--black)' : 'var(--gray-400)' }}>{text}</span>
-                  </div>
-                ))}
-              </div>
-
-              <div style={s.publishInfo}>
-                Publishing will: unlock results for all players, reveal skins winners in the app,
-                recalculate all handicaps, and update season standings.
-              </div>
-
-              {/* Missed-week penalty toggle + live preview ────────────────── */}
-              {!published && (
-                <div style={s.penaltyCard}>
-                  <label style={s.penaltyToggle}>
-                    <input
-                      type="checkbox"
-                      checked={applyPenalty}
-                      disabled
-                      style={s.penaltyCheckbox}
-                    />
-                    <div style={s.penaltyTextWrap}>
-                      <span style={s.penaltyTitle}>Apply missed-week penalty</span>
-                      <span style={s.penaltyDesc}>
-                        Players with no submitted score get a net of handicap + 7.
-                        Penalty rows count toward standings but are excluded from
-                        handicap and skins.
-                      </span>
-                    </div>
-                  </label>
-
-                  {missingPlayers.length === 0 ? (
-                    <div style={s.penaltyEmpty}>
-                      All rostered players submitted a score — no penalties needed.
-                    </div>
-                  ) : applyPenalty ? (
-                    <div style={s.penaltyList}>
-                      <div style={s.penaltyListHeader}>
-                        {missingPlayers.length} player{missingPlayers.length === 1 ? '' : 's'} will receive a penalty:
-                      </div>
-                      {missingPlayers.map(pl => {
-                        const name = pl.first_name
-                          ? `${pl.first_name} ${pl.last_name || ''}`.trim()
-                          : (pl.name || 'Unknown')
-                        const net = (pl.handicap ?? 0) + 7
-                        return (
-                          <div key={pl.id} style={s.penaltyRow}>
-                            <span style={s.penaltyName}>{name}</span>
-                            <span style={s.penaltyScore}>Net {net}</span>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  ) : (
-                    <div style={s.penaltyWarning}>
-                      {missingPlayers.length} rostered player{missingPlayers.length === 1 ? '' : 's'} did not submit a score and will be omitted from standings.
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {published ? (
-                <div style={s.successBanner}>
-                  🎉 Event published! Season standings have been updated.
-                </div>
-              ) : (
-                <Button
-                  variant="primary"
-                  size="lg"
-                  fullWidth
-                  icon={<Lock size={16} strokeWidth={2.25} />}
-                  loading={publishing}
-                  loadingText="Publishing…"
-                  onClick={handlePublish}
-                  style={{ boxShadow: '0 3px 10px rgba(45,106,79,0.4)' }}
-                >
-                  Lock &amp; Publish Event
-                </Button>
-              )}
-            </div>
-          )}
-
-        </div>{/* end stepContent */}
-      </div>
-      /* end closeout card */
-      )}
+  return <div className="closeout" aria-busy={busy}>
+    <header className="closeout-header">
+      <div><p>{snapshot.league.name} · {course?.name || 'Course not set'}</p><h2>{event.name || `Week ${event.week_number}`}</h2></div>
+      <span className="closeout-status">{closed ? 'Closed' : 'Open for scores'}</span>
+    </header>
+    <div className="closeout-toolbar">
+      <nav aria-label="Closeout steps">{[['review','1. Review'],['publish','2. Close round'],['recap','3. Share recap']].map(([id,label]) =>
+        <button key={id} disabled={busy || (id === 'recap' && !closed)} aria-current={step === id ? 'step' : undefined} onClick={() => setStep(id)}>{label}</button>)}</nav>
+      <Button variant="secondary" disabled={busy} icon={<RefreshCw size={15}/>} onClick={() => load(event.id)}>Refresh</Button>
     </div>
-  )
-}
+    {notice && <p className="closeout-notice" role="status">{notice}</p>}
+    {error && <p className="closeout-warning" role="alert">{error}</p>}
+    <div className="closeout-counts" aria-label="Score status">
+      {[['Verified played',status.verified.length],['Awaiting review',status.pending.length],['Missing',status.missing.length],['Existing penalties',status.penalties.length]].map(([label,value]) => <div key={label}><strong>{value}</strong><span>{label}</span></div>)}
+    </div>
+    <p className="closeout-muted">{status.completeTeams.length} of {status.teamIds.length} teams have both results verified. {status.expected} rostered players.</p>
+    {!status.rosterValid && <p className="closeout-warning">The roster needs attention. Each team must have exactly two different players before closing.</p>}
+    {!courseValid && <p className="closeout-warning">Check the assigned course, hole pars, and total par before closing.</p>}
 
-// ── Styles ───────────────────────────────────────────────────────────────────
-const s = {
-  page:    { padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px', maxWidth: '900px' },
-  loading: { padding: '60px', textAlign: 'center', color: 'var(--gray-400)' },
+    {step === 'review' && <>
+      {hasPending && <section><h3>Awaiting review</h3><p>Approve or reject these scores before closing. Pending scores are not missing rounds.</p><ul>{status.pending.map(row => <li key={row.id}>{name(row.player_id)}</li>)}</ul><Link to="/league/admin/scores">Review scores →</Link></section>}
+      {!!status.missing.length && <section><h3>Missing scores</h3><p>Confirm these players did not play. Closing will apply your missed-week rule.</p><ul>{status.missing.map(id => <li key={id}>{name(id)} <span>{courseValid ? `Penalty net ${penaltyNet(course, players.find(p => p.id === id)?.handicap)}` : 'Course setup required'}</span></li>)}</ul><Link to="/league/admin/scores">Enter or correct scores →</Link></section>}
+      <section><h3>{closed ? 'Final results' : 'Results preview'}</h3>{!closed && <p>Verified scores only. Missing-round penalties and format results are finalized when the round closes.</p>}
+        {results.map(row => <div className="closeout-result" key={row.id}><span>{row.name}</span><strong>{row.result}</strong></div>)}
+      </section>
+      {skinsEnabled && <section><h3>Skins {closed ? '' : 'preview'}</h3>{skins.length ? skins.map(s => <div className="closeout-result" key={s.hole}><span>Hole {s.hole} · {s.player.name}</span><strong>{s.score}</strong></div>) : <p>{hasPending || status.missing.length ? 'No winners in the verified scores so far. Resolve outstanding scores before confirming.' : 'No skins won. Tied holes are a completed result.'}</p>}</section>}
+      {!closed && <Button disabled={busy || hasPending || !status.rosterValid || !courseValid || !!error} onClick={() => { setReviewed(true); setStep('publish') }}>Review complete — close round</Button>}
+    </>}
 
-  // stat strip
-  statGrid: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '14px' },
-  statCard: { background: '#fff', borderRadius: 'var(--radius)', padding: '18px 12px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', boxShadow: 'var(--shadow)', border: '1px solid var(--gray-200)' },
-  statIcon: { display: 'flex', alignItems: 'center', justifyContent: 'center', height: '22px' },
-  statValue: { fontSize: '30px', fontWeight: 800, color: 'var(--green-dark)', lineHeight: 1 },
-  statLabel: { fontSize: '11px', color: 'var(--gray-500)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.4px', marginTop: '2px' },
+    {step === 'publish' && <section>
+      <h3>{closed ? 'This round is closed' : 'Close this round'}</h3>
+      <p>Closing locks the round, applies missed-week penalties, computes format results, and opens the next scheduled playable week. The email recap comes afterward.</p>
+      {hasPending && <p className="closeout-warning">Resolve {status.pending.length} pending score(s) before publishing.</p>}
+      {!closed && !reviewed && <p className="closeout-warning">Complete the Review step before closing.</p>}
+      {!!status.missing.length && !closed && <label className="closeout-confirm"><input type="checkbox" checked={penaltiesAccepted} onChange={e => setPenaltiesAccepted(e.target.checked)}/><span>I reviewed the {status.missing.length} missing player(s). Apply net penalties of course par + rounded handicap + 7.</span></label>}
+      {!closed && <Button fullWidth icon={<Lock size={16}/>} disabled={!canPublish || busy} loading={busy} onClick={() => setConfirm(true)}>Lock &amp; publish round</Button>}
+      {closed && <Button onClick={() => setStep('recap')}>View finalized recap</Button>}
+    </section>}
 
-  // no event
-  noEvent:     { background: '#fff', borderRadius: 'var(--radius)', padding: '48px 24px', textAlign: 'center', boxShadow: 'var(--shadow)', border: '1px solid var(--gray-200)' },
-  noEventTitle: { fontSize: '18px', fontWeight: 700, color: 'var(--green-dark)', marginBottom: '8px' },
-  noEventSub:   { fontSize: '14px', color: 'var(--gray-400)' },
-
-  // closeout card
-  card: { background: '#fff', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow)', border: '1px solid var(--gray-200)', overflow: 'hidden' },
-
-  closeoutHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', padding: '20px 24px 16px', background: 'var(--green-dark)', color: '#fff' },
-  closeoutTitle:  { fontSize: '20px', fontWeight: 800, color: '#fff', letterSpacing: '-0.2px' },
-  closeoutSub:    { fontSize: '13px', color: 'rgba(255,255,255,0.70)', marginTop: '4px', fontWeight: 400 },
-  openBadge:      { background: '#f6c90e', color: '#5a4200', fontSize: '11px', fontWeight: 800, padding: '3px 10px', borderRadius: '20px', flexShrink: 0, marginTop: '2px', textTransform: 'uppercase', letterSpacing: '0.4px' },
-
-  // step bar
-  stepBar: { display: 'flex', borderBottom: '1px solid var(--gray-200)', overflowX: 'auto', scrollbarWidth: 'none', background: 'var(--off-white)' },
-  stepTab: { display: 'flex', alignItems: 'center', gap: '7px', padding: '12px 16px', cursor: 'pointer', whiteSpace: 'nowrap', transition: 'all 0.15s', flexShrink: 0 },
-  stepNum: { width: '22px', height: '22px', borderRadius: '50%', color: '#fff', fontSize: '11px', fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
-  stepLabel: { fontSize: '13px' },
-
-  // step content
-  stepContent: { padding: '24px' },
-  stepTitle:   { fontSize: '16px', fontWeight: 800, color: 'var(--green-dark)', marginBottom: '14px', letterSpacing: '-0.1px' },
-  stepDesc:    { fontSize: '13px', color: 'var(--gray-500)', marginBottom: '14px' },
-  empty:       { fontSize: '13px', color: 'var(--gray-400)', textAlign: 'center', padding: '20px 0' },
-  infoBox:     { background: 'var(--off-white)', border: '1px solid var(--gray-200)', borderRadius: 'var(--radius-sm)', padding: '14px 16px', fontSize: '13px', color: 'var(--gray-600)', marginBottom: '16px' },
-
-  // scores
-  progressRow:   { display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' },
-  progressTrack: { flex: 1, height: '8px', background: 'var(--gray-100)', borderRadius: '4px', overflow: 'hidden' },
-  progressFill:  { height: '100%', borderRadius: '4px', transition: 'width 0.4s ease' },
-  progressLabel: { fontSize: '13px', color: 'var(--gray-500)', whiteSpace: 'nowrap', fontWeight: 600 },
-  scoreRow:      { display: 'flex', alignItems: 'center', gap: '10px', padding: '9px 0', borderBottom: '1px solid var(--gray-100)' },
-  scoreRank:     { width: '24px', height: '24px', background: 'var(--green-xlight)', color: 'var(--green-dark)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 800, flexShrink: 0 },
-  scoreTeam:     { flex: 1, fontSize: '14px', fontWeight: 600, color: 'var(--black)' },
-  scoreNet:      { fontSize: '13px', fontWeight: 700, color: 'var(--green-dark)', background: 'var(--green-xlight)', padding: '2px 8px', borderRadius: '10px' },
-  scoreGross:    { fontSize: '12px', color: 'var(--gray-400)' },
-
-  // skins
-  skinRow:  { display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 0', borderBottom: '1px solid var(--gray-100)' },
-  skinHole: { fontSize: '12px', fontWeight: 700, color: 'var(--green-dark)', background: 'var(--green-xlight)', padding: '2px 8px', borderRadius: '10px', flexShrink: 0 },
-  skinTeam: { flex: 1, fontSize: '14px', fontWeight: 600 },
-  skinAmt:  { fontSize: '13px', fontWeight: 700, color: '#2d6a4f' },
-
-  // results
-  resultRow:   { display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 0', borderBottom: '1px solid var(--gray-100)' },
-  resultMedal: { fontSize: '20px', width: '28px', textAlign: 'center', flexShrink: 0 },
-  resultTeam:  { flex: 1, fontSize: '14px', fontWeight: 700, color: 'var(--black)' },
-  resultRight: { display: 'flex', gap: '6px', alignItems: 'center' },
-  resultNet:   { fontSize: '13px', fontWeight: 700, color: 'var(--green-dark)', background: 'var(--green-xlight)', padding: '2px 8px', borderRadius: '10px' },
-  resultGross: { fontSize: '12px', color: 'var(--gray-400)' },
-
-  // email
-  emailArea: { width: '100%', padding: '14px', borderRadius: 'var(--radius-sm)', border: '1.5px solid var(--gray-200)', fontSize: '13px', fontFamily: 'monospace', lineHeight: '1.6', color: 'var(--black)', background: 'var(--off-white)', resize: 'vertical', boxSizing: 'border-box', marginBottom: '12px' },
-  emailBtns: { display: 'flex', gap: '10px', marginBottom: '10px' },
-  copyBtn:   { flex: 1, padding: '11px', background: 'var(--green)', color: '#fff', borderRadius: 'var(--radius-sm)', fontSize: '13px', fontWeight: 700, cursor: 'pointer' },
-  mailtoBtn: { flex: 1, padding: '11px', background: 'var(--off-white)', color: 'var(--green-dark)', borderRadius: 'var(--radius-sm)', fontSize: '13px', fontWeight: 700, textDecoration: 'none', textAlign: 'center', border: '1.5px solid var(--gray-200)', display: 'flex', alignItems: 'center', justifyContent: 'center' },
-  emailNote: { fontSize: '11px', color: 'var(--gray-400)', marginBottom: '4px' },
-
-  // publish checklist
-  checklist:   { display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '20px' },
-  checkRow:    { display: 'flex', alignItems: 'flex-start', gap: '10px' },
-  checkIcon:   { display: 'flex', alignItems: 'center', flexShrink: 0 },
-  checkText:   { fontSize: '14px', fontWeight: 500 },
-  publishInfo: { background: '#e8f4fd', border: '1px solid #bee3f8', borderRadius: 'var(--radius-sm)', padding: '14px 16px', fontSize: '13px', color: '#2b6cb0', marginBottom: '20px', lineHeight: '1.5' },
-
-  // missed-week penalty card
-  penaltyCard:         { background: '#fffbeb', border: '1px solid #f6e27a', borderRadius: 'var(--radius-sm)', padding: '14px 16px', marginBottom: '18px' },
-  penaltyToggle:       { display: 'flex', alignItems: 'flex-start', gap: '10px', cursor: 'pointer' },
-  penaltyCheckbox:     { marginTop: '3px', width: '16px', height: '16px', accentColor: '#b8860b', cursor: 'pointer', flexShrink: 0 },
-  penaltyTextWrap:     { display: 'flex', flexDirection: 'column', gap: '3px' },
-  penaltyTitle:        { fontSize: '13px', fontWeight: 700, color: '#5a4200' },
-  penaltyDesc:         { fontSize: '12px', color: '#8a6d1f', lineHeight: 1.45 },
-  penaltyEmpty:        { marginTop: '10px', fontSize: '12px', color: '#6b7280', fontStyle: 'italic' },
-  penaltyList:         { marginTop: '12px', background: '#fff', borderRadius: '8px', border: '1px solid #f6e27a', padding: '8px 4px' },
-  penaltyListHeader:   { fontSize: '11px', fontWeight: 700, color: '#8a6d1f', textTransform: 'uppercase', letterSpacing: '0.5px', padding: '4px 12px 6px' },
-  penaltyRow:          { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '7px 12px', borderTop: '1px solid var(--gray-100)' },
-  penaltyName:         { fontSize: '13px', color: 'var(--black)' },
-  penaltyScore:        { fontSize: '12px', fontWeight: 700, color: '#b8860b', background: '#fef3c7', padding: '2px 8px', borderRadius: '10px' },
-  penaltyWarning:      { marginTop: '10px', fontSize: '12px', color: '#8a6d1f', fontStyle: 'italic', padding: '8px 12px', background: '#fff', borderRadius: '8px', border: '1px dashed #f6e27a' },
-  successBanner: { background: '#d8f3dc', border: '1px solid #95d5a8', borderRadius: 'var(--radius-sm)', padding: '16px', fontSize: '15px', fontWeight: 700, color: '#2d6a4f', textAlign: 'center' },
-
-  // shared
-  stepActions: { marginTop: '20px', paddingTop: '16px', borderTop: '1px solid var(--gray-100)' },
-  nextBtn: { width: '100%', padding: '13px', background: 'var(--green)', color: '#fff', borderRadius: 'var(--radius-sm)', fontSize: '14px', fontWeight: 700, cursor: 'pointer' },
+    {step === 'recap' && closed && <section>
+      <h3><CheckCircle2 size={20}/> Ready to share</h3><p>These results were reloaded after publishing. Copying or opening your mail app does not send the message.</p>
+      <label htmlFor="closeout-recap">Weekly recap</label><textarea id="closeout-recap" value={email} onChange={e => setEmail(e.target.value)} rows={16}/>
+      <div className="closeout-actions"><Button icon={<Clipboard size={15}/>} disabled={!email || !!error} onClick={copyRecap}>Copy recap</Button>
+        {email && !error && <a href={`mailto:?bcc=${encodeURIComponent(recipients.join(','))}&subject=${encodeURIComponent(`${event.name || 'League'} — Results`)}&body=${encodeURIComponent(email)}`}><Mail size={15}/> Open mail app</a>}</div>
+      <p className="closeout-muted">{recipients.length} unique email address(es) from this round’s roster. No other leagues are included.</p>
+    </section>}
+    {confirm && <ConfirmDialog destructive={false} message={`Close ${event.name || 'this round'}? ${status.missing.length} missing player(s) will receive penalties. This locks the round and opens the next playable week.`} confirmLabel="Lock & publish" onCancel={() => setConfirm(false)} onConfirm={publish}/>}
+  </div>
 }

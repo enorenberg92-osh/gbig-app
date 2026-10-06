@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { hasCompleteCoursePars, zipHoleScoresWithPars } from './holeUtils'
+import { hasCompleteCoursePars, zipHoleScoresWithPars, displayHole } from './holeUtils'
 
 describe('holeUtils', () => {
+  it('keeps front, back, and eighteen-hole display numbers separate from array positions', () => {
+    expect(displayHole(0, {start_hole:10})).toBe(10)
+    expect(displayHole(8, {start_hole:10})).toBe(18)
+    expect(displayHole(17, {start_hole:1})).toBe(18)
+    expect(zipHoleScoresWithPars([4,5],[4,4],10).map(h=>h.hole)).toEqual([10,11])
+  })
   it('requires the configured number of valid pars', () => {
     expect(hasCompleteCoursePars({ num_holes: 9, hole_pars: Array(9).fill(4) })).toBe(true)
     expect(hasCompleteCoursePars({ num_holes: 18, hole_pars: Array(9).fill(4) })).toBe(false)

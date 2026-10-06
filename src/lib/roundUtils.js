@@ -2,17 +2,16 @@ function nullableNumber(value) {
   return value == null || value === '' ? null : Number(value)
 }
 
-/** Stable chronological order: week, local date, creation time, then id. */
+/** Dates must precede week numbers, which restart every league session. */
 export function compareRoundsChronologically(a, b) {
+  const ad = a.startDate ?? a.start_date ?? a.events?.start_date ?? a.events?.event_date ?? a.createdAt ?? a.created_at ?? ''
+  const bd = b.startDate ?? b.start_date ?? b.events?.start_date ?? b.events?.event_date ?? b.createdAt ?? b.created_at ?? ''
+  if (ad !== bd) return String(ad).localeCompare(String(bd))
   const aw = nullableNumber(a.weekNumber ?? a.week_number ?? a.events?.week_number)
   const bw = nullableNumber(b.weekNumber ?? b.week_number ?? b.events?.week_number)
   if (aw != null && bw != null && aw !== bw) return aw - bw
   if (aw == null && bw != null) return 1
   if (aw != null && bw == null) return -1
-
-  const ad = a.startDate ?? a.start_date ?? a.events?.start_date ?? a.events?.event_date ?? ''
-  const bd = b.startDate ?? b.start_date ?? b.events?.start_date ?? b.events?.event_date ?? ''
-  if (ad !== bd) return String(ad).localeCompare(String(bd))
 
   const ac = a.createdAt ?? a.created_at ?? ''
   const bc = b.createdAt ?? b.created_at ?? ''

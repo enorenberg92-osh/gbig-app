@@ -7,3 +7,8 @@ dist
 
 # Supabase CLI working state
 supabase/.temp/
+
+# Local rehearsal output and read-only production audit receipts
+artifacts/
+mtuzmasicpcxcvtslevm
+supabase/config.toml

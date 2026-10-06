@@ -31,6 +31,17 @@ export const DISCARD_TABLE = {
   12: { high: 1, low: 1 },
 }
 
+// Match server format exclusions before selecting the recent history window.
+export function handicapRounds(scores) {
+  return [...(scores || [])].filter(s => {
+    const event = s.events
+    const override = event?.format_config?.exclude_from_handicap
+    const excluded = override == null ? event?.format === 'scramble' : override === true || override === 'true'
+    return s.status === 'verified' && s.entry_type === 'played' && !s.sub_played &&
+      s.gross_total != null && event?.courses?.total_par != null && !excluded
+  }).sort(compareRoundsChronologically)
+}
+
 // Core calculation: takes an array of differentials (gross - par), returns handicap integer.
 export function calcHandicap(differentials, settings = DEFAULT_SETTINGS) {
   if (!differentials || differentials.length < settings.minScores) return null
@@ -81,66 +92,16 @@ export function calcBreakdown(differentials, settings = DEFAULT_SETTINGS) {
 }
 
 // ── One-shot recalc for a single player ───────────────────────────────────────
-// Fetches their score history, recalculates, and writes back to DB if changed.
-// Safe to call silently — never throws, returns { updated, newHcp } or { skipped }.
-export async function recalcPlayerHandicap(supabase, playerId, locationId, settings = DEFAULT_SETTINGS) {
+// The server applies venue permissions, locks, history and format rules.
+// Never skip the authoritative calculation based on a client-side prediction.
+export async function recalcPlayerHandicap(supabase, playerId) {
   try {
-    // Check if player exists and isn't locked
-    const { data: player } = await supabase
-      .from('players')
-      .select('id, handicap, handicap_locked')
-      .eq('id', playerId)
-      .eq('location_id', locationId)
-      .maybeSingle()
-
-    if (!player || player.handicap_locked) return { skipped: true }
-
-    // Load all their scores with course par info. Order chronologically so
-    // `calcHandicap`'s `.slice(-scoresUsed)` picks the most recent N.
-    //
-    // Previous version ordered by `scores.created_at`, which doesn't exist on
-    // this table; Supabase silently returned unordered rows, and handicap
-    // calcs could use an arbitrary subset of scores instead of the latest.
-    // We pull week_number + start_date from the joined events row and sort
-    // client-side (week_number primary, start_date fallback for nulls).
-    const { data: scores } = await supabase
-      .from('scores')
-      .select('gross_total, events(week_number, start_date, courses(hole_pars))')
-      .eq('player_id', playerId)
-      .eq('location_id', locationId)
-      .eq('entry_type', 'played')
-      .eq('status', 'verified')
-      // Skip sit-out marker rows: when this player sat out and a sub played
-      // for them, AdminScores wrote a row with sub_played=true whose gross
-      // is the sub's. Without this filter, the sub's score contaminates the
-      // regular player's handicap. The sub is credited via a separate row
-      // where player_id = sub_player_id.
-      .eq('sub_played', false)
-      .not('gross_total', 'is', null)
-
-    // Sort by week_number ascending (nulls last), then start_date ascending.
-    const sortedScores = [...(scores || [])].sort(compareRoundsChronologically)
-
-    const diffs = sortedScores
-      .map(s => {
-        const holePars  = s.events?.courses?.hole_pars
-        const coursePar = holePars ? holePars.reduce((sum, p) => sum + p, 0) : null
-        return coursePar != null ? s.gross_total - coursePar : null
-      })
-      .filter(d => d != null)
-
-    const newHcp = calcHandicap(diffs, settings)
-    if (newHcp == null) return { skipped: true }
-
-    // Only write if the value actually changed
-    if (newHcp === player.handicap) return { skipped: true, newHcp }
-
     const { data: recalcResult, error: recalcErr } = await supabase.rpc('recalculate_player_handicap', { p_player_id: playerId })
     if (recalcErr) throw recalcErr
-    return recalcResult || { updated: true, newHcp, oldHcp: player.handicap }
+    return recalcResult || { skipped: true }
 
   } catch (e) {
     console.warn(`recalcPlayerHandicap(${playerId}) failed:`, e)
-    return { skipped: true }
+    return { skipped: true, error: e }
   }
 }

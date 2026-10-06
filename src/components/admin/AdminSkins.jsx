@@ -3,7 +3,8 @@ import { AlertTriangle, Target, Inbox } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useLocation } from '../../context/LocationContext'
 import { Button, Toast, EmptyState } from '../ui'
-import { hasCompleteCoursePars } from '../../lib/holeUtils'
+import { displayHole } from '../../lib/holeUtils'
+import { loadSkinsRound } from '../../lib/loadSkinsRound'
 import { loadWorkingLeague } from '../../lib/leagueUtils'
 
 const SCORE_LABELS = [
@@ -77,7 +78,7 @@ export default function AdminSkins({ activeEventId = null, onEventChange = () =>
     setSkinResults(null)
     if (!selectedEvent) return
     // Load event details (for course par info)
-    supabase.from('events').select('*, courses(id, name, num_holes, hole_pars, total_par)')
+    supabase.from('events').select('*, courses(id, name, num_holes, hole_pars, total_par, start_hole)')
       .eq('id', selectedEvent).eq('location_id', locationId).single()
       .then(({ data }) => setEventDetails(data || null))
   }, [selectedEvent])
@@ -92,56 +93,20 @@ export default function AdminSkins({ activeEventId = null, onEventChange = () =>
     setCalculating(true)
     setSkinResults(null)
 
-    // 1. Load all scores for this event — played entries only.
-    // Missed-week penalty rows carry no hole_scores and are excluded from skins.
-    const { data: allScores, error } = await supabase
-      .from('scores')
-      .select('player_id, hole_scores, gross_total, net_total')
-      .eq('event_id', selectedEvent)
-      .eq('location_id', locationId)
-      .eq('entry_type', 'played')
-      .eq('status', 'verified')
-
-    if (error) {
-      showToast('Error loading scores: ' + error.message, 'error')
+    let round
+    try { round = await loadSkinsRound(supabase, selectedEvent, locationId) }
+    catch (error) {
+      showToast('Error loading skins: ' + error.message, 'error')
       setCalculating(false)
       return
     }
-
-    // 2. Load all players (for name lookup) + get skins-eligible IDs
-    const { data: allPlayers } = await supabase
-      .from('players')
-      .select('id, name, first_name, last_name, in_skins')
-      .eq('location_id', locationId)
-
+    const { scores: skinsScores, players: allPlayers, course: resolvedCourse } = round
+    const holePars = resolvedCourse.hole_pars
     const playerMap = {}
-    ;(allPlayers || []).forEach(p => { playerMap[p.id] = p })
-
-    const skinsIds = new Set((allPlayers || []).filter(p => p.in_skins).map(p => p.id))
-
-    // Filter scores to skins-eligible players only
-    const skinsScores = (allScores || []).filter(s => skinsIds.has(s.player_id))
+    allPlayers.forEach(p => { playerMap[p.id] = p })
 
     if (skinsScores.length === 0) {
       setSkinResults([])
-      setCalculating(false)
-      return
-    }
-
-    // 3. Get hole pars from the course attached to this event
-    let holePars = null
-    let resolvedCourse = eventDetails?.courses || null
-    if (eventDetails?.courses?.hole_pars) {
-      holePars = eventDetails.courses.hole_pars
-    } else if (eventDetails?.course_id) {
-      const { data: course } = await supabase
-        .from('courses').select('num_holes, hole_pars').eq('id', eventDetails.course_id).eq('location_id', locationId).single()
-      resolvedCourse = course || null
-      holePars = course?.hole_pars || null
-    }
-
-    if (!hasCompleteCoursePars(resolvedCourse)) {
-      showToast('This event needs a course with complete, valid pars before skins can be calculated.', 'error')
       setCalculating(false)
       return
     }
@@ -161,7 +126,7 @@ export default function AdminSkins({ activeEventId = null, onEventChange = () =>
         }))
 
       if (holeEntries.length === 0) {
-        results.push({ hole: h + 1, par, status: 'no_scores', participants: skinsScores.length })
+        results.push({ hole: displayHole(h, resolvedCourse), par, status: 'no_scores', participants: skinsScores.length })
         continue
       }
 
@@ -170,7 +135,7 @@ export default function AdminSkins({ activeEventId = null, onEventChange = () =>
 
       if (winners.length === 1) {
         results.push({
-          hole: h + 1,
+          hole: displayHole(h, resolvedCourse),
           par,
           status: 'won',
           winner: winners[0].player,
@@ -179,7 +144,7 @@ export default function AdminSkins({ activeEventId = null, onEventChange = () =>
         })
       } else {
         results.push({
-          hole: h + 1,
+          hole: displayHole(h, resolvedCourse),
           par,
           status: 'tied',
           tiedPlayers: winners.map(w => w.player),
