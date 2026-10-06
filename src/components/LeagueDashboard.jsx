@@ -10,6 +10,8 @@ export default function LeagueDashboard({
   adminChecking = false,
   activeRound = null,
   roundChecked = false,
+  roundError = null,
+  onRoundRetry = () => {},
 }) {
   const navigate = useNavigate()
   const friendsEnabled = useFeature('friends')
@@ -42,7 +44,8 @@ export default function LeagueDashboard({
       </div>
 
       {/* My Scores — full-width featured banner */}
-      {roundChecked && (
+      {roundError && <div role="alert"><p>This week could not be loaded. Please try again.</p><Button onClick={onRoundRetry}>Try again</Button></div>}
+      {roundChecked && !roundError && (
         <button
           style={{
             ...styles.scoresBanner,

@@ -11,3 +11,12 @@ export async function loadWorkingLeague(supabase, locationId) {
   return data
 }
 
+export async function loadActiveRound(supabase, locationId) {
+  const league = await loadWorkingLeague(supabase, locationId)
+  const { data, error } = await supabase.from('events').select('id, name, week_number')
+    .eq('location_id', locationId).eq('league_id', league.id).eq('status', 'open')
+    .order('week_number', { ascending:true }).limit(1).maybeSingle()
+  if (error) throw error
+  return data
+}
+

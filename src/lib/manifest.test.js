@@ -1,5 +1,6 @@
 import { it,expect,vi,afterEach } from 'vitest'
-import handler from './manifest'
+import handler from '../../api/manifest'
+
 afterEach(()=>vi.unstubAllGlobals())
 it('retains Appleton install identity when the database is down',async()=>{
  vi.stubGlobal('fetch',vi.fn().mockRejectedValue(new Error('Offline')))

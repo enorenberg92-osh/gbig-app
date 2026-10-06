@@ -33,9 +33,11 @@ September's draft recovery, closeout, and back-nine improvements are also includ
 
 The follow-up pass also fixed duplicate substitute mirrors entering skins, handicap previews including excluded special formats, same-name people merging in money reports, recap attribution after historical team changes, inconsistent alphabetical ordering of equal standings totals, hidden zero net totals, and back-nine labels in the expanded player scorecard. Failed skins/handicap/report reads now show errors; money suggestions reset when the selected week or values change and disable repeat clicks during submission.
 
+Live verification found the hub's open-round query could pick an older session, while score entry correctly used the working session. The hub now queries the working league, refreshes when staff return from closeout, and shows query failures separately from a week with no active round. Signed-in league state resets on account changes and sign-out. The manifest unit test was moved outside the API directory so it is not deployed as a public serverless function.
+
 ## Checks and limits
 
-83 unit tests and eleven PostgreSQL contract checks passed. The production build passed with the existing large JavaScript bundle warning. Five older Supabase integration tests are still skipped.
+85 unit tests and eleven PostgreSQL contract checks passed. The production build passed with the existing large JavaScript bundle warning. Five older Supabase integration tests are still skipped.
 
 The PostgreSQL rehearsal loads actual function bodies and triggers with a minimal schema. It is not a replay of the full historical migration chain, production RLS/grants, REST authentication, every special-format engine, push notifications, bookings, payment records, or a physical installed-phone test. The rehearsal uses ordinary stroke scoring for the season. Do not interpret local passing tests as a production launch signoff.
 
@@ -47,9 +49,9 @@ The report matches the app's sequential display positions: net totals ascending,
 
 ## Release sequence
 
-1. Obtain working hosting access; Supabase is already healthy and audited read-only.
-2. Inspect the installed schema/functions and stage these migrations in order: `202609060001_closeout_consistency.sql`, `202610060001_season_handicap_order.sql`, `202610060002_publication_guards.sql`.
-3. Run staff/player workflows against the real API in staging, then apply validated database changes and release the frontend together.
-4. Confirm each live hostname, manifest, loading screen, roster, a submitted/reviewed round, final closeout, and an actual Appleton phone installation. Existing home-screen icon/name metadata may require a fresh installation; first protect any unfinished local scorecard.
+1. Completed: hosting access and backups of production functions/data integrity snapshots.
+2. Completed: all three function migrations applied atomically with history recorded and existing rows/permissions unchanged.
+3. Completed: release PR #1 merged; October 6 production deployment serves both venue aliases. Public pages, manifests, icon dimensions, and booking destinations pass live read-only checks.
+4. Follow-up: release the hub fix, inspect live staff screens with a staff account, and confirm a physical Appleton phone installation. The initially signed-in account has no venue staff role; no access permissions were changed. Existing phone metadata may need a fresh installation; first protect unfinished local scorecards.
 
 Local test commands: `npm test`, `npm run test:database`, `npm run test:season`, and `npm run season:view`. Database checks require the dedicated PostgreSQL cluster on loopback port 55439; `GBIG_TEST_PG_BIN` overrides its executable directory. They never read production database settings.

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Routes, Route, Navigate, useNavigate } from 'react-router-dom'
+import { Routes, Route, Navigate, useNavigate, useLocation as useRouterLocation } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useLocation } from '../context/LocationContext'
 import { useIsAdmin } from '../hooks/useIsAdmin'
@@ -12,14 +12,17 @@ import SubRequest from '../components/SubRequest'
 import FriendsTab from '../components/FriendsTab'
 import AdminPanel from '../components/admin/AdminPanel'
 import { useFeature } from '../context/FeatureContext'
+import { loadActiveRound } from '../lib/leagueUtils'
 
 export default function LeaguePage({ session }) {
-  // Auth gate — unauthenticated users get the login screen
-  if (!session) return <LoginScreen />
+  return session ? <AuthenticatedLeaguePage key={session.user.id} session={session} /> : <LoginScreen />
+}
 
+function AuthenticatedLeaguePage({ session }) {
   const { locationId } = useLocation()
   const { isAdmin, checking } = useIsAdmin(session)
   const navigate = useNavigate()
+  const { pathname } = useRouterLocation()
   const subsEnabled = useFeature('subs')
   const friendsEnabled = useFeature('friends')
 
@@ -27,28 +30,32 @@ export default function LeaguePage({ session }) {
   // "Submit Scores" banner) and the /score-entry route guard can share it.
   const [activeRound, setActiveRound]   = useState(null)
   const [roundChecked, setRoundChecked] = useState(false)
+  const [roundError, setRoundError] = useState(null)
+  const [roundRetry, setRoundRetry] = useState(0)
+  const atHub = pathname === '/league' || pathname === '/league/'
 
   useEffect(() => {
     if (!locationId) return
-    // Status is the single source of truth. An event is active iff an
-    // admin has opened it. We intentionally don't filter by start_date /
-    // end_date so admins can schedule events weeks in advance and flip
-    // them open on their own timeline, independent of calendar dates.
-    supabase
-      .from('events')
-      .select('id, name, week_number')
-      .eq('location_id', locationId)
-      .eq('status', 'open')
-      .order('week_number', { ascending: true })
-      .limit(1)
-      .maybeSingle()
-      .then(({ data }) => {
-        setActiveRound(data || null)
+    if (!atHub && roundChecked) return
+    let cancelled = false
+    setRoundError(null)
+    setRoundChecked(false)
+    // Refresh on return to the hub, including after a staff closeout.
+    loadActiveRound(supabase, locationId).then(data => {
+        if (cancelled) return
+        setActiveRound(data)
+        setRoundChecked(true)
+      }).catch(error => {
+        if (cancelled) return
+        setActiveRound(null)
+        setRoundError(error.message || 'This week could not be loaded.')
         setRoundChecked(true)
       })
-  }, [locationId])
+    return () => { cancelled = true }
+  }, [locationId, roundRetry, atHub])
 
   const backToHub = () => navigate('/league')
+  const retryRound = () => { setRoundChecked(false); setRoundRetry(n=>n+1) }
 
   return (
     <Routes>
@@ -61,6 +68,8 @@ export default function LeaguePage({ session }) {
             adminChecking={checking}
             activeRound={activeRound}
             roundChecked={roundChecked}
+            roundError={roundError}
+            onRoundRetry={retryRound}
           />
         }
       />
@@ -72,6 +81,8 @@ export default function LeaguePage({ session }) {
         element={
           !roundChecked
             ? null
+            : roundError
+              ? <div style={{padding:24}}><p role="alert">This week could not be loaded: {roundError}</p><button onClick={retryRound}>Try again</button></div>
             : !activeRound
               ? <Navigate to="/league" replace />
               : <ScoreEntry key={`${session.user.id}:${locationId}`} session={session} onBack={backToHub} />
