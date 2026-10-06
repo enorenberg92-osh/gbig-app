@@ -3,6 +3,8 @@ import { supabase } from '../lib/supabase'
 import { useLocation } from '../context/LocationContext'
 import { loadWorkingLeague } from '../lib/leagueUtils'
 import { compareEffectiveScores } from '../lib/roundUtils'
+import { aggregateSeason } from '../lib/seasonStandings'
+import { fetchAllRows } from '../lib/fetchAllRows'
 
 // adminMode: Season shows ALL events (open + closed) so admins have full
 // visibility. Players only see closed weeks so rankings stay clean.
@@ -107,7 +109,8 @@ export default function Standings({ session, onBack, adminMode = false }) {
       supabase.from('matchups').select('*').eq('event_id', eventId),
     ])
 
-    if (scoresRes.error) { setError(scoresRes.error.message); setLoading(false); return }
+    const failed = [scoresRes,playersRes,teamsRes,rosterRes,matchupsRes].find(r=>r.error)
+    if (failed) { setError(failed.error.message); setLoading(false); return }
 
     // Resolve matchup side names for the week's matchup card.
     const teamNameById = {}
@@ -134,9 +137,11 @@ export default function Standings({ session, onBack, adminMode = false }) {
 
     // Admins see all events; players only see closed weeks
     if (!leagueId) { setLoading(false); return }
-    const { data: eligibleEvents } = adminMode
+    const eligible = adminMode
       ? await supabase.from('events').select('id, week_number').eq('location_id', locationId).eq('league_id', leagueId).in('status', ['open', 'closed'])
       : await supabase.from('events').select('id, week_number').eq('location_id', locationId).eq('league_id', leagueId).eq('status', 'closed')
+    if (eligible.error) { setError(eligible.error.message); setLoading(false); return }
+    const eligibleEvents = eligible.data
 
     // Segment filter: restrict to the chosen week range.
     const seg = segmentIdx >= 0 ? segments[segmentIdx] : null
@@ -145,21 +150,22 @@ export default function Standings({ session, onBack, adminMode = false }) {
     if (ids.length === 0) { setRows([]); setLoading(false); return }
 
     const [scoresRes, playersRes, teamsRes, rosterRes, matchupsRes] = await Promise.all([
-      supabase.from('scores')
+      fetchAllRows(() => supabase.from('scores')
         .select('id, player_id, team_id, event_id, gross_total, net_total, entry_type, status, created_at')
         .in('event_id', ids)
         .eq('location_id', locationId)
-        .eq('status', 'verified'),
+        .eq('status', 'verified').order('id')),
       supabase.from('players').select('id, name, first_name, last_name, handicap').eq('location_id', locationId),
       supabase.from('teams').select('id, name').eq('location_id', locationId).eq('league_id', leagueId),
-      supabase.from('roster_at').select('event_id, team_id, team_name, player_id').in('event_id', ids),
-      supabase.from('matchups')
+      fetchAllRows(() => supabase.from('roster_at').select('event_id, team_id, team_name, player_id').in('event_id', ids).order('event_id').order('player_id')),
+      fetchAllRows(() => supabase.from('matchups')
         .select('event_id, home_team_id, away_team_id, points_home, points_away, status')
         .in('event_id', ids)
-        .eq('status', 'scored'),
+        .eq('status', 'scored').order('id')),
     ])
 
-    if (scoresRes.error) { setError(scoresRes.error.message); setLoading(false); return }
+    const failed = [scoresRes,playersRes,teamsRes,rosterRes,matchupsRes].find(r=>r.error)
+    if (failed) { setError(failed.error.message); setLoading(false); return }
 
     // Match-play points per team: total points + W-T-L record.
     const pointsByTeam = {}
@@ -180,9 +186,11 @@ export default function Standings({ session, onBack, adminMode = false }) {
     })
     setHasPoints(Object.keys(pointsByTeam).length > 0)
 
-    const teamRows = buildTeamRows(
-      scoresRes.data || [], playersRes.data || [], hydrateRosterTeams(teamsRes.data || [], rosterRes.data || []), true
-    )
+    const teamRows = aggregateSeason(scoresRes.data || [], teamsRes.data || [], rosterRes.data || []).map(row => {
+      const ids = [...row.players.keys()]
+      const names = ids.map(id=>{const p=(playersRes.data || []).find(p=>p.id===id);return `${p?.first_name || ''} ${p?.last_name || ''}`.trim() || p?.name || 'Player'})
+      return { ...row, p1Name:names[0] || '', p2Name:names.slice(1).join(' / '), p1Gross:row.players.get(ids[0])?.gross || 0, p2Gross:ids.slice(1).reduce((n,id)=>n+row.players.get(id).gross,0) }
+    })
     // Merge points; include point-earning teams that have no score rows (all-forfeit edge).
     const seen = new Set(teamRows.map(r => r.teamId))
     teamRows.forEach(r => { Object.assign(r, pointsByTeam[r.teamId] || { points: 0, w: 0, t: 0, l: 0 }) })

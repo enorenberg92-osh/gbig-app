@@ -74,7 +74,7 @@ export default function LeaguePage({ session }) {
             ? null
             : !activeRound
               ? <Navigate to="/league" replace />
-              : <ScoreEntry session={session} onBack={backToHub} />
+              : <ScoreEntry key={`${session.user.id}:${locationId}`} session={session} onBack={backToHub} />
         }
       />
 

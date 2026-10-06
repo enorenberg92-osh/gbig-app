@@ -1,0 +1,79 @@
+<div id="golf-season-rehearsal">
+  <h2>150-team season rehearsal</h2>
+  <p class="text-small text-muted" id="season-summary"></p>
+  <div class="viz-controls">
+    <label class="form-label" id="season-venue-label">Venue<select class="form-select" id="season-venue"></select></label>
+    <label class="form-label">Results through<select class="form-select" id="season-week"></select></label>
+  </div>
+  <p id="season-status" aria-live="polite"></p>
+  <div class="nav nav-pills" role="tablist" aria-label="Season results">
+    <button class="nav-link active" id="season-total-tab" role="tab" type="button" aria-controls="season-total-panel" aria-selected="true">Season standings</button>
+    <button class="nav-link" id="season-weekly-tab" role="tab" type="button" aria-controls="season-weekly-panel" aria-selected="false">Weekly standings</button>
+    <button class="nav-link" id="season-scores-tab" role="tab" type="button" aria-controls="season-scores-panel" aria-selected="false">Scorecards</button>
+    <button class="nav-link" id="season-skins-tab" role="tab" type="button" aria-controls="season-skins-panel" aria-selected="false">Skins</button>
+    <button class="nav-link" id="season-handicaps-tab" role="tab" type="button" aria-controls="season-handicaps-panel" aria-selected="false">Handicaps</button>
+  </div>
+  <div role="tabpanel" id="season-total-panel" aria-labelledby="season-total-tab">
+    <div class="table-responsive"><table class="table table-sm"><caption id="season-total-caption"></caption><thead><tr><th>Rank</th><th>Team</th><th class="text-end">Weeks</th><th class="text-end">Gross</th><th class="text-end">Net</th><th class="text-end">Avg net</th></tr></thead><tbody id="season-total-body"></tbody></table></div>
+    <div class="viz-row"><button class="btn" id="season-total-prev" type="button">Previous</button><span id="season-total-page" aria-live="polite"></span><button class="btn" id="season-total-next" type="button">Next</button></div>
+  </div>
+  <div role="tabpanel" id="season-weekly-panel" aria-labelledby="season-weekly-tab" hidden>
+    <div class="table-responsive"><table class="table table-sm"><caption id="season-weekly-caption"></caption><thead><tr><th>Rank</th><th>Team</th><th class="text-end">Gross</th><th class="text-end">Net</th></tr></thead><tbody id="season-weekly-body"></tbody></table></div>
+    <div class="viz-row"><button class="btn" id="season-weekly-prev" type="button">Previous</button><span id="season-weekly-page" aria-live="polite"></span><button class="btn" id="season-weekly-next" type="button">Next</button></div>
+  </div>
+  <div role="tabpanel" id="season-scores-panel" aria-labelledby="season-scores-tab" hidden>
+    <div class="table-responsive"><table class="table table-sm"><caption id="season-scores-caption"></caption><thead><tr><th>Golfer / team</th><th>Result</th><th class="text-end">Gross</th><th class="text-end">HCP</th><th class="text-end">Net</th><th class="text-end">Difference</th><th>Hole scores</th></tr></thead><tbody id="season-scores-body"></tbody></table></div>
+    <div class="viz-row"><button class="btn" id="season-scores-prev" type="button">Previous</button><span id="season-scores-page" aria-live="polite"></span><button class="btn" id="season-scores-next" type="button">Next</button></div>
+  </div>
+  <div role="tabpanel" id="season-skins-panel" aria-labelledby="season-skins-tab" hidden>
+    <div class="table-responsive"><table class="table table-sm"><caption id="season-skins-caption"></caption><thead><tr><th>Hole</th><th class="text-end">Low gross</th><th>Award</th><th>Decision</th></tr></thead><tbody id="season-skins-body"></tbody></table></div>
+  </div>
+  <div role="tabpanel" id="season-handicaps-panel" aria-labelledby="season-handicaps-tab" hidden>
+    <div class="table-responsive"><table class="table table-sm"><caption>Handicap used on this card and after this week’s closeout</caption><thead><tr><th>Golfer</th><th class="text-end">Used</th><th class="text-end">After closeout</th></tr></thead><tbody id="season-handicaps-body"></tbody></table></div>
+    <div class="viz-row"><button class="btn" id="season-handicaps-prev" type="button">Previous</button><span id="season-handicaps-page" aria-live="polite"></span><button class="btn" id="season-handicaps-next" type="button">Next</button></div>
+  </div>
+</div>
+<script>
+(() => {
+  const root=document.getElementById('golf-season-rehearsal');
+  const report=__SEASON_DATA__;
+  const venue=root.querySelector('#season-venue'),week=root.querySelector('#season-week');
+  const pageSize=25,pages={total:0,weekly:0,scores:0,handicaps:0};
+  for(const name of report.venues){const option=document.createElement('option');option.value=name;option.textContent=name;venue.appendChild(option)}
+  root.querySelector('#season-venue-label').hidden=report.venues.length===1;
+  for(let n=1;n<=report.weeks;n++){const option=document.createElement('option');option.value=n;option.textContent=`Week ${n}`;week.appendChild(option)}
+  function restore(value){const state=value?.modelContent||value;if(report.venues.includes(state?.venue))venue.value=state.venue;week.value=String(Math.min(report.weeks,Math.max(1,Number(state?.week)||report.weeks)));for(const key in pages)pages[key]=Math.max(0,Number(value?.privateContent?.pages?.[key])||0)}
+  restore(window.openai?.widgetState);
+  function cell(row,value,numeric=false){const td=document.createElement('td');td.textContent=value;if(numeric)td.className='text-end tabular-nums';row.appendChild(td);return td}
+  function paged(key,values,makeRow){
+    const body=root.querySelector(`#season-${key}-body`);body.replaceChildren();pages[key]=Math.min(pages[key],Math.max(0,Math.ceil(values.length/pageSize)-1));
+    const start=pages[key]*pageSize;
+    values.slice(start,start+pageSize).forEach(value=>{const tr=document.createElement('tr');makeRow(tr,value);body.appendChild(tr)});
+    root.querySelector(`#season-${key}-page`).textContent=`${start+1}–${Math.min(start+pageSize,values.length)} of ${values.length}`;
+    root.querySelector(`#season-${key}-prev`).disabled=pages[key]===0;
+    root.querySelector(`#season-${key}-next`).disabled=start+pageSize>=values.length;
+  }
+  function render(){
+    const snapshot=report.snapshots.find(s=>s.venue===venue.value&&s.week===Number(week.value));
+    const all=report.snapshots.filter(s=>s.venue===venue.value),penalties=snapshot.rounds.filter(r=>r[2]).length,skins=all.flatMap(s=>s.skins);
+    root.querySelector('#season-summary').textContent=`${report.teams} teams · ${report.players} synthetic golfers · ${report.weeks} rounds · ${report.checks.toLocaleString()} checks passed`;
+    root.querySelector('#season-status').textContent=`Week ${snapshot.week} · ${snapshot.rounds.length} results · ${penalties} missed-round penalties · Holes ${snapshot.startHole}–${snapshot.startHole+8}`;
+    root.querySelector('#season-total-caption').textContent=`Cumulative net through Week ${snapshot.week} · Lower wins · Equal totals share rank · Includes corrections`;
+    paged('total',snapshot.standings,(tr,s)=>{cell(tr,s[1]);cell(tr,report.teamNames[s[0]]);cell(tr,s[4],true);cell(tr,s[3],true);cell(tr,s[2],true);cell(tr,s[5].toFixed(1),true)});
+    root.querySelector('#season-weekly-caption').textContent=`Week ${snapshot.week} · Team totals include missed-round penalties`;
+    paged('weekly',snapshot.weekly,(tr,s)=>{cell(tr,s[1]);cell(tr,report.teamNames[s[0]]);cell(tr,s[3],true);cell(tr,s[2],true)});
+    root.querySelector('#season-scores-caption').textContent=`Holes ${snapshot.startHole}–${snapshot.startHole+8} in order · Difference = recorded net minus independently expected net · Substitute mirrors excluded`;
+    paged('scores',snapshot.rounds,(tr,r)=>{cell(tr,`${report.names[r[0]]} / ${report.teamNames[r[1]]}`);cell(tr,r[2]?'Missed penalty':r[3]?'Substitute played':'Played');cell(tr,r[4]??'—',true);cell(tr,r[5],true);cell(tr,r[6],true);const delta=cell(tr,r[6]-r[7],true);if(r[6]!==r[7])delta.className+=' text-destructive';cell(tr,r[8]?.join(' · ')||'No card')});
+    root.querySelector('#season-skins-caption').textContent=`Week ${snapshot.week}: ${snapshot.skins.filter(h=>h[3]!==null).length} skins · Season: ${skins.filter(h=>h[3]!==null).length} awarded, ${skins.filter(h=>h[3]===null).length} tied · Gross skins; tied lows cancel; no carryovers; cash pool not specified`;
+    const skinBody=root.querySelector('#season-skins-body');skinBody.replaceChildren();
+    for(const h of snapshot.skins){const tr=document.createElement('tr');cell(tr,h[0]);cell(tr,h[1],true);cell(tr,h[3]!==null?report.names[h[3]]:'No skin');const td=cell(tr,'');if(h[3]!==null)td.textContent='Only golfer with the lowest gross score';else{const details=document.createElement('details'),summary=document.createElement('summary'),names=document.createElement('p');summary.textContent=`${h[2]} golfers tied — see names`;names.textContent=h[4].map(i=>report.names[i]).join(', ');details.appendChild(summary);details.appendChild(names);td.appendChild(details)}skinBody.appendChild(tr)}
+    paged('handicaps',snapshot.rounds,(tr,r)=>{cell(tr,report.names[r[0]]);cell(tr,r[5],true);cell(tr,snapshot.handicaps.find(h=>h[0]===r[0])?.[1]??'—',true)});
+  }
+  function save(){window.openai?.setWidgetState({modelContent:{venue:venue.value,week:Number(week.value)},privateContent:{pages:{...pages}}}).catch(()=>{})}
+  function change(){for(const key in pages)pages[key]=0;render();save()}
+  venue.addEventListener('change',change);week.addEventListener('change',change);
+  for(const key in pages)for(const direction of ['prev','next'])root.querySelector(`#season-${key}-${direction}`).addEventListener('click',()=>{pages[key]+=direction==='prev'?-1:1;render();save()});
+  window.addEventListener('openai:set_globals',event=>{restore(event.detail?.globals?.widgetState);render()});
+  render();
+})()
+</script>

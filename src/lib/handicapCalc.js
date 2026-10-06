@@ -1,6 +1,7 @@
 // ── Shared handicap calculation utility ───────────────────────────────────────
 // Used by AdminHandicap (display/bulk) and AdminScores (auto-recalc after save).
 import { compareRoundsChronologically } from './roundUtils'
+import { fetchAllRows } from './fetchAllRows'
 
 // Core rules for GBIG's default league. The `minHandicap`/`maxHandicap` bounds
 // are a hard clamp after truncation — a scratch or plus golfer caps at -2, a
@@ -103,9 +104,9 @@ export async function recalcPlayerHandicap(supabase, playerId, locationId, setti
     // calcs could use an arbitrary subset of scores instead of the latest.
     // We pull week_number + start_date from the joined events row and sort
     // client-side (week_number primary, start_date fallback for nulls).
-    const { data: scores } = await supabase
+    const { data: scores, error: historyError } = await fetchAllRows(() => supabase
       .from('scores')
-      .select('gross_total, events(week_number, start_date, courses(hole_pars))')
+      .select('id, created_at, gross_total, events(week_number, start_date, event_date, courses(hole_pars))')
       .eq('player_id', playerId)
       .eq('location_id', locationId)
       .eq('entry_type', 'played')
@@ -116,7 +117,8 @@ export async function recalcPlayerHandicap(supabase, playerId, locationId, setti
       // regular player's handicap. The sub is credited via a separate row
       // where player_id = sub_player_id.
       .eq('sub_played', false)
-      .not('gross_total', 'is', null)
+      .not('gross_total', 'is', null).order('id'))
+    if (historyError) throw historyError
 
     // Sort by week_number ascending (nulls last), then start_date ascending.
     const sortedScores = [...(scores || [])].sort(compareRoundsChronologically)

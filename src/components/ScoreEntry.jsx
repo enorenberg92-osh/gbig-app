@@ -1,12 +1,13 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useLayoutEffect } from 'react'
 import { ArrowLeft, ArrowRight, Check } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import HoleEventAnimation from './HoleEventAnimation'
 import { useLocation } from '../context/LocationContext'
 import { scoreColor, scoreBg, vsParLabel } from '../lib/scoreUtils'
-import { hasCompleteCoursePars } from '../lib/holeUtils'
+import { hasCompleteCoursePars, displayHole } from '../lib/holeUtils'
 import { loadWorkingLeague } from '../lib/leagueUtils'
 import { mutationErrorMessage } from '../lib/rpcErrors'
+import { readScoreDraft, saveScoreDraft, clearScoreDraft } from '../lib/scoreDraft'
 import { Button, Toast } from './ui'
 
 /**
@@ -35,12 +36,26 @@ export default function ScoreEntry({ session, onBack }) {
   const [saving, setSaving]             = useState(false)
   const [toast, setToast]               = useState(null)
   const [error, setError]               = useState(null)
+  const [draftContext, setDraftContext] = useState(null)
+  const [draftStatus, setDraftStatus]   = useState('empty')
+  const [draftNotice, setDraftNotice]   = useState('')
 
   const numHoles = course?.num_holes || 0
 
-  useEffect(() => { if (locationId) init() }, [locationId])
+  useEffect(() => {
+    let cancelled = false
+    if (locationId) init(() => cancelled)
+    return () => { cancelled = true }
+  }, [locationId, session.user.id])
 
-  async function init() {
+  // Persist after each committed edit, before paint. No debounce or unload-only
+  // save: mobile browsers may be killed without sending an unload event.
+  useLayoutEffect(() => {
+    if (!draftContext || loading || error || alreadySubmitted) return
+    setDraftStatus(saveScoreDraft(draftContext, { scores, stats, currentHole, showStats }))
+  }, [draftContext, loading, error, alreadySubmitted, scores, stats, currentHole, showStats])
+
+  async function init(isCancelled) {
     try {
       // 1. Find this player's record
       const { data: playerRow, error: pErr } = await supabase
@@ -50,6 +65,7 @@ export default function ScoreEntry({ session, onBack }) {
         .eq('location_id', locationId)
         .single()
 
+      if (isCancelled()) return
       if (pErr || !playerRow) { setError('No player record found for your account. Ask your admin.'); setLoading(false); return }
 
       const league = await loadWorkingLeague(supabase, locationId)
@@ -65,8 +81,8 @@ export default function ScoreEntry({ session, onBack }) {
         .limit(1)
         .maybeSingle()
 
+      if (isCancelled()) return
       if (!evtRow) { setError('No active round right now. Check back soon!'); setLoading(false); return }
-      setEvent(evtRow)
 
       // 3. Resolve the dated roster; legacy team slot columns are display-only.
       const { data: myRoster, error: rosterErr } = await supabase
@@ -75,6 +91,7 @@ export default function ScoreEntry({ session, onBack }) {
         .eq('event_id', evtRow.id)
         .eq('player_id', playerRow.id)
         .maybeSingle()
+      if (isCancelled()) return
       if (rosterErr || !myRoster) { setError('No team found for your account in this league. Ask your admin.'); setLoading(false); return }
 
       const [{ data: teamRow }, { data: rosterRows }] = await Promise.all([
@@ -87,6 +104,7 @@ export default function ScoreEntry({ session, onBack }) {
         .select('id, name, handicap')
         .eq('location_id', locationId)
         .in('id', rosterPlayerIds)
+      if (isCancelled()) return
       const playerById = {}
       ;(teamPlayers || []).forEach(p => { playerById[p.id] = p })
       const hydratedTeam = {
@@ -95,7 +113,6 @@ export default function ScoreEntry({ session, onBack }) {
         p2: playerById[rosterPlayerIds[1]] || null,
       }
       if (!hydratedTeam.p1 || !hydratedTeam.p2) { setError('This team roster must contain exactly two players.'); setLoading(false); return }
-      setTeam(hydratedTeam)
 
       // Load course separately to avoid FK join issues
       let loadedCourse = null
@@ -106,13 +123,13 @@ export default function ScoreEntry({ session, onBack }) {
           .eq('id', evtRow.course_id)
           .eq('location_id', locationId)
           .single()
+        if (isCancelled()) return
         if (!hasCompleteCoursePars(courseRow)) {
           setError('Score entry is unavailable because this course is missing valid hole pars. Ask your admin to fix the course setup.')
           setLoading(false)
           return
         }
         loadedCourse = courseRow
-        setCourse(courseRow)
       } else {
         setError('Score entry is unavailable until an admin assigns a course to this event.')
         setLoading(false)
@@ -122,32 +139,58 @@ export default function ScoreEntry({ session, onBack }) {
       // 4. Check if already submitted — only 'played' entries count.
       // A missed-week penalty row shouldn't block a player from retro-entering
       // their actual score (admin-driven edge case, but cheap to get right).
-      const { data: existing } = await supabase
+      const { data: existing, error: existingError } = await supabase
         .from('scores')
         .select('id, status')
         .eq('event_id', evtRow.id)
         .eq('location_id', locationId)
-        .eq('player_id', playerRow.id)
+        .in('player_id', rosterPlayerIds)
         .eq('entry_type', 'played')
         .neq('status', 'rejected')
 
+      if (isCancelled()) return
+      if (existingError) throw existingError
+
+      setEvent(evtRow)
+      setTeam(hydratedTeam)
+      setCourse(loadedCourse)
+      const context = {
+        userId: session.user.id, locationId, leagueId: league.id,
+        eventId: evtRow.id, teamId: hydratedTeam.id,
+        playerIds: [hydratedTeam.p1.id, hydratedTeam.p2.id],
+        courseId: loadedCourse.id, numHoles: loadedCourse.num_holes,
+        startHole: loadedCourse.start_hole || 1, holePars: loadedCourse.hole_pars,
+      }
+
       if (existing && existing.length > 0) {
+        clearScoreDraft(context)
         setPendingReview(existing.some(s => s.status === 'pending'))
         setAlreadySubmitted(true); setLoading(false); return
       }
 
-      // 5. Initialize blank scores
-      setScores({
+      // 5. Restore only after checking the current round, roster and submission.
+      const draft = readScoreDraft(context)
+      setDraftContext(context)
+      setDraftStatus(draft.status === 'unavailable' ? 'unavailable' : 'empty')
+      setDraftNotice(draft.status === 'restored'
+        ? 'Your unfinished scorecard has been restored.'
+        : draft.status === 'incompatible'
+          ? 'The saved scorecard could not be restored for this round. Please enter your scores again.'
+          : '')
+      setCurrentHole(draft.currentHole ?? 0)
+      setShowStats(draft.showStats ?? false)
+      setScores(draft.scores || {
         p1: Array(loadedCourse.num_holes).fill(null),
         p2: Array(loadedCourse.num_holes).fill(null),
       })
-      setStats({
+      setStats(draft.stats || {
         p1: Array.from({ length: loadedCourse.num_holes }, () => ({})),
         p2: Array.from({ length: loadedCourse.num_holes }, () => ({})),
       })
 
       setLoading(false)
     } catch (e) {
+      if (isCancelled()) return
       setError('Something went wrong. Try again.')
       setLoading(false)
     }
@@ -235,6 +278,7 @@ export default function ScoreEntry({ session, onBack }) {
   // vsParLabel imported from ../lib/scoreUtils
 
   async function handleSubmit() {
+    if (saving) return
     const allFilled = scores.p1.every(s => s != null) && scores.p2.every(s => s != null)
     if (!allFilled) {
       showToast(`Please enter scores for all ${numHoles} holes before submitting.`, 'error')
@@ -247,21 +291,27 @@ export default function ScoreEntry({ session, onBack }) {
       { player_id: team.p1.id, hole_scores: scores.p1, hole_stats: statsPayload('p1') },
       { player_id: team.p2.id, hole_scores: scores.p2, hole_stats: statsPayload('p2') },
     ]
-    const { data: result, error: insertErr } = await supabase.rpc('submit_scores', {
-      p_event_id: event.id,
-      p_entries: entries,
-    })
+    try {
+      const { data: result, error: insertErr } = await supabase.rpc('submit_scores', {
+        p_event_id: event.id,
+        p_entries: entries,
+      })
 
-    if (insertErr) {
-      showToast('Error saving scores: ' + mutationErrorMessage(insertErr, 'submit scores'), 'error')
+      if (insertErr) {
+        showToast('Error saving scores: ' + mutationErrorMessage(insertErr, 'submit scores'), 'error')
+        setSaving(false)
+        return
+      }
+
+      if (draftContext) clearScoreDraft(draftContext)
       setSaving(false)
-      return
+      setPendingReview(true)
+      setAlreadySubmitted(true)
+      showToast(result?.already_submitted ? 'Your team already submitted scores for this round.' : 'Scores submitted and awaiting admin review!')
+    } catch {
+      showToast('Could not submit scores. Please check your connection and try again.', 'error')
+      setSaving(false)
     }
-
-    setSaving(false)
-    setPendingReview(true)
-    setAlreadySubmitted(true)
-    showToast(result?.already_submitted ? 'Your team already submitted scores for this round.' : 'Scores submitted and awaiting admin review!')
   }
 
   function showToast(msg, type = 'success') {
@@ -363,7 +413,7 @@ export default function ScoreEntry({ session, onBack }) {
 
   // ─── Main hole-by-hole UI ─────────────────────────────────────────
 
-  const hole = currentHole + 1  // display number (1-indexed)
+  const hole = displayHole(currentHole, course)
   const par = getPar(currentHole)
   const isLastHole = currentHole === numHoles - 1
   const allDone = scores.p1.every(s => s != null) && scores.p2.every(s => s != null)
@@ -374,7 +424,7 @@ export default function ScoreEntry({ session, onBack }) {
       {showHoleEvent && event?.hole_event_name && (
         <HoleEventAnimation
           holeName={event.hole_event_name}
-          holeNum={event.hole_event_hole}
+          holeNum={displayHole(event.hole_event_hole - 1, course)}
           onDismiss={() => setShowHoleEvent(false)}
         />
       )}
@@ -392,6 +442,19 @@ export default function ScoreEntry({ session, onBack }) {
       </div>
 
       {/* Progress dots */}
+      <div role="status" style={{
+        padding: '10px 16px', fontSize: 13, lineHeight: 1.5,
+        color: draftStatus === 'unavailable' ? '#92400e' : 'var(--green-dark)',
+        background: draftStatus === 'unavailable' ? '#fef3c7' : 'var(--green-xlight)',
+      }}>
+        {draftNotice && <p>{draftNotice}</p>}
+        <p>{draftStatus === 'saved'
+          ? 'Draft saved on this device. Submit when your round is complete.'
+          : draftStatus === 'unavailable'
+            ? 'This browser cannot save your draft. Keep this page open until you submit.'
+            : 'Your scores will save on this device as you play.'}</p>
+      </div>
+
       <div style={styles.progressRow}>
         {Array.from({ length: numHoles }, (_, i) => {
           const done = scores.p1[i] != null && scores.p2[i] != null
@@ -399,6 +462,7 @@ export default function ScoreEntry({ session, onBack }) {
           return (
             <button
               key={i}
+              aria-label={`Hole ${displayHole(i, course)}`}
               onClick={() => setCurrentHole(i)}
               style={{
                 ...styles.dot,
@@ -417,7 +481,7 @@ export default function ScoreEntry({ session, onBack }) {
             <span style={styles.holeBadgeNum}>HOLE {hole}</span>
             {par && <span style={styles.holeBadgePar}>Par {par}</span>}
           </div>
-          {event?.hole_event_hole === hole && event?.hole_event_name && (
+          {event?.hole_event_hole === currentHole + 1 && event?.hole_event_name && (
             <button style={styles.holeEventChip} onClick={() => setShowHoleEvent(true)}>
               🎯 {event.hole_event_name}
             </button>
@@ -536,7 +600,7 @@ export default function ScoreEntry({ session, onBack }) {
           disabled={currentHole === 0}
           style={{ flex: 1, padding: '12px' }}
         >
-          Hole {hole - 1}
+          {currentHole === 0 ? 'Previous hole' : `Hole ${hole - 1}`}
         </Button>
 
         {!isLastHole ? (
@@ -582,12 +646,12 @@ export default function ScoreEntry({ session, onBack }) {
       {currentHole > 0 && (
         <div style={styles.scorecardWrap}>
           <div style={styles.scorecardTitle}>Scorecard</div>
-          <div style={styles.scorecardGrid}>
+          <div style={{ ...styles.scorecardGrid, gridTemplateColumns: `50px repeat(${numHoles}, minmax(24px, 1fr)) 36px` }}>
             {/* Header row */}
             <div style={styles.scHdr}></div>
             {Array.from({ length: numHoles }, (_, i) => (
               <div key={i} style={{ ...styles.scHdr, ...(i === currentHole ? { color: 'var(--green)', fontWeight: 700 } : {}) }}>
-                {i + 1}
+                {displayHole(i, course)}
               </div>
             ))}
             <div style={styles.scHdr}>TOT</div>

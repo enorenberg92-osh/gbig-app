@@ -4,10 +4,11 @@ import { supabase } from '../../lib/supabase'
 import { useLocation } from '../../context/LocationContext'
 import { scoreColor } from '../../lib/scoreUtils'
 import { isDateInRange, isFutureDate } from '../../lib/dateUtils'
-import { hasCompleteCoursePars } from '../../lib/holeUtils'
+import { hasCompleteCoursePars, displayHole } from '../../lib/holeUtils'
 import { loadWorkingLeague } from '../../lib/leagueUtils'
 import { mutationErrorMessage } from '../../lib/rpcErrors'
 import { compareEffectiveScores } from '../../lib/roundUtils'
+import { scoreHandicap } from '../../lib/scoreHandicap'
 import { Button, Toast } from '../ui'
 import { useFeature } from '../../context/FeatureContext'
 
@@ -100,7 +101,7 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
     if (evt?.course_id) {
       const { data: courseData } = await supabase
         .from('courses')
-        .select('id, name, num_holes, hole_pars, total_par')
+        .select('id, name, num_holes, hole_pars, total_par, start_hole')
         .eq('id', evt.course_id)
         .eq('location_id', locationId)
         .single()
@@ -215,7 +216,8 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
       }
       // Use sub's handicap if an approved sub exists for this player/event
       const sub = subMap[player.id]
-      const effectiveHandicap = sub != null ? (sub.sub_handicap || 0) : (player.handicap || 0)
+      const existing = player.id === team.p1.id ? team.score1 : team.score2
+      const effectiveHandicap = scoreHandicap(player, existing, sub)
       entries.push({
         player_id: player.id,
         hole_scores: holes,
@@ -459,7 +461,7 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
                 <TeamRow
                   key={team.id}
                   team={team}
-                  holePars={holePars}
+                  holePars={holePars} course={eventData?.course}
                   isEditing={editingTeam === team.id}
                   holeScores={holeScores}
                   saving={saving}
@@ -494,7 +496,7 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
                 <TeamRow
                   key={team.id}
                   team={team}
-                  holePars={holePars}
+                  holePars={holePars} course={eventData?.course}
                   isEditing={editingTeam === team.id}
                   holeScores={holeScores}
                   saving={saving}
@@ -548,7 +550,7 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
                 const min = Math.min(...allHoleScores.map(x => x.score))
                 return (
                   <div key={hole} style={styles.skinHoleRow}>
-                    <span style={styles.skinHoleNum}>H{hole}</span>
+                    <span style={styles.skinHoleNum}>H{displayHole(hole - 1, eventData?.course)}</span>
                     <span style={styles.skinPar}>Par {holePars[hole - 1]}</span>
                     <div style={styles.skinScores}>
                       {allHoleScores.map(x => (
@@ -580,14 +582,15 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
 }
 
 // ─── Team Row Component ───────────────────────────────────────────────────────
-function TeamRow({ team, holePars, isEditing, holeScores, saving, subMap = {}, onEdit, onHoleChange, onSave, onCancel, onDeleteScore, onReview, calcGross, calcNet, calcNetVsPar }) {
+function TeamRow({ team, holePars, course, isEditing, holeScores, saving, subMap = {}, onEdit, onHoleChange, onSave, onCancel, onDeleteScore, onReview, calcGross, calcNet, calcNetVsPar }) {
   const totalPar = holePars.reduce((s, p) => s + p, 0)
   const submitted = !!(team.score1 || team.score2)
 
   // Helper: get effective handicap (sub's if one exists, else player's own)
   function effectiveHcp(player) {
     const sub = subMap[player.id]
-    return sub != null ? (sub.sub_handicap || 0) : (player.handicap || 0)
+    const existing = player.id === team.p1.id ? team.score1 : team.score2
+    return scoreHandicap(player, existing, sub)
   }
 
   // Helper: sub display name
@@ -660,7 +663,7 @@ function TeamRow({ team, holePars, isEditing, holeScores, saving, subMap = {}, o
                 <tr>
                   <th style={trStyles.thLabel}>Hole</th>
                   {holePars.map((_, i) => (
-                    <th key={i} style={trStyles.th}>{i + 1}</th>
+                    <th key={i} style={trStyles.th}>{displayHole(i, course)}</th>
                   ))}
                   <th style={trStyles.thTotal}>Gross</th>
                   <th style={trStyles.thTotal}>Net</th>

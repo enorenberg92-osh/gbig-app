@@ -1,10 +1,13 @@
 import React, { useState, useEffect } from 'react'
+import { displayHole } from '../../lib/holeUtils'
 import { Printer, Download, FileText } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useLocation } from '../../context/LocationContext'
 import { loadWorkingLeague } from '../../lib/leagueUtils'
 import { calcSkins } from '../../lib/skinsUtils'
 import { compareEffectiveScores } from '../../lib/roundUtils'
+import { aggregateSeason } from '../../lib/seasonStandings'
+import { fetchAllRows } from '../../lib/fetchAllRows'
 import { Button, Toast } from '../ui'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -38,6 +41,7 @@ export default function AdminReports() {
 
   const [recapEvent, setRecapEvent] = useState('')
   const [report, setReport]         = useState(null)  // { kind, ...data }
+  const [reportLoading, setReportLoading] = useState(false)
 
   useEffect(() => { if (locationId) load() }, [locationId])
 
@@ -53,6 +57,8 @@ export default function AdminReports() {
         .eq('location_id', locationId).order('name'),
       supabase.from('teams').select('id, name, flight_id').eq('location_id', locationId).eq('league_id', lg.id).order('created_at'),
     ])
+    const failed = [ev, pl, tm].find(r => r.error)
+    if (failed) { showToast(failed.error.message, 'error'); setLoading(false); return }
     setEvents(ev.data || [])
     setPlayers(pl.data || [])
     setTeams(tm.data || [])
@@ -64,6 +70,20 @@ export default function AdminReports() {
     setTimeout(() => setToast(null), 3500)
   }
 
+  async function checked(query) {
+    const result = await query
+    if (result.error) throw result.error
+    return result.data
+  }
+
+  async function runReport(task, clear = false) {
+    setReportLoading(true)
+    if (clear) setReport(null)
+    try { await task() }
+    catch (error) { showToast(error.message || 'The report could not be loaded. Please retry.', 'error') }
+    finally { setReportLoading(false) }
+  }
+
   const playerName = id => players.find(p => p.id === id)?.name || '?'
   const teamName = id => teams.find(t => t.id === id)?.name || '?'
   const closedEvents = events.filter(e => e.status === 'closed')
@@ -72,23 +92,15 @@ export default function AdminReports() {
   async function standingsThrough(maxWeek) {
     const ids = closedEvents.filter(e => maxWeek == null || (e.week_number ?? 0) <= maxWeek).map(e => e.id)
     if (!ids.length) return []
-    const { data: scoreRows } = await supabase.from('scores')
-      .select('player_id, team_id, event_id, gross_total, net_total, entry_type, status, created_at')
-      .in('event_id', ids).eq('location_id', locationId).eq('status', 'verified')
-    const byTeam = {}
-    const seen = {} // one effective score per player per event
-    ;(scoreRows || []).sort(compareEffectiveScores).forEach(s => {
-      const key = `${s.event_id}:${s.player_id}`
-      if (seen[key] || !s.team_id) return
-      seen[key] = true
-      if (!byTeam[s.team_id]) byTeam[s.team_id] = { gross: 0, net: 0, rounds: 0 }
-      byTeam[s.team_id].gross += s.gross_total || 0
-      byTeam[s.team_id].net += s.net_total || 0
-      byTeam[s.team_id].rounds++
-    })
-    return teams
-      .filter(t => byTeam[t.id])
-      .map(t => ({ teamId: t.id, name: t.name, ...byTeam[t.id] }))
+    const [scoreRows, roster] = await Promise.all([
+      checked(fetchAllRows(() => supabase.from('scores')
+        .select('player_id, team_id, event_id, gross_total, net_total, entry_type, status, created_at')
+        .in('event_id', ids).eq('location_id', locationId).eq('status', 'verified').order('id'))),
+      checked(fetchAllRows(() => supabase.from('roster_at').select('event_id, player_id, team_id')
+        .in('event_id', ids).order('event_id').order('player_id'))),
+    ])
+    return aggregateSeason(scoreRows || [], teams, roster || [])
+      .map(t => ({ teamId: t.teamId, name: t.teamName, gross: t.teamGross, net: t.teamNet, rounds: t.rounds }))
       .sort((a, b) => a.net - b.net)
   }
 
@@ -96,13 +108,13 @@ export default function AdminReports() {
   async function buildRecap() {
     const evt = events.find(e => e.id === recapEvent)
     if (!evt) return
-    const [{ data: scoreRows }, { data: courseRow }, { data: matchupRows }] = await Promise.all([
-      supabase.from('scores').select('player_id, team_id, gross_total, net_total, entry_type, status, hole_scores, created_at')
-        .eq('event_id', evt.id).eq('location_id', locationId).eq('status', 'verified'),
+    const [scoreRows, courseRow, matchupRows] = await Promise.all([
+      checked(supabase.from('scores').select('player_id, team_id, gross_total, net_total, entry_type, status, hole_scores, created_at')
+        .eq('event_id', evt.id).eq('location_id', locationId).eq('status', 'verified')),
       evt.course_id
-        ? supabase.from('courses').select('name, num_holes, total_par').eq('id', evt.course_id).eq('location_id', locationId).single()
-        : Promise.resolve({ data: null }),
-      supabase.from('matchups').select('*').eq('event_id', evt.id).eq('location_id', locationId).eq('status', 'scored'),
+        ? checked(supabase.from('courses').select('name, num_holes, total_par, start_hole').eq('id', evt.course_id).eq('location_id', locationId).single())
+        : Promise.resolve(null),
+      checked(supabase.from('matchups').select('*').eq('event_id', evt.id).eq('location_id', locationId).eq('status', 'scored')),
     ])
 
     // Team results for the night
@@ -136,7 +148,7 @@ export default function AdminReports() {
     const skinsMap = calcSkins(scoreMap, courseRow?.num_holes || 9)
     const skins = Object.entries(skinsMap)
       .filter(([, pid]) => pid)
-      .map(([hole, pid]) => ({ hole, name: playerName(pid) }))
+      .map(([hole, pid]) => ({ hole: displayHole(Number(hole) - 1, courseRow), name: playerName(pid) }))
 
     // Standings movement vs prior week
     const [now, prior] = await Promise.all([
@@ -169,11 +181,11 @@ export default function AdminReports() {
   async function buildAttendance() {
     const ids = closedEvents.map(e => e.id)
     if (!ids.length) { showToast('No closed weeks yet.', 'error'); return }
-    const [{ data: scoreRows }, { data: subRows }] = await Promise.all([
-      supabase.from('scores').select('player_id, event_id, entry_type, sub_played')
-        .in('event_id', ids).eq('location_id', locationId).eq('status', 'verified'),
-      supabase.from('subs').select('player_id, event_id').in('event_id', ids)
-        .eq('location_id', locationId).eq('status', 'approved'),
+    const [scoreRows, subRows] = await Promise.all([
+      checked(fetchAllRows(() => supabase.from('scores').select('player_id, event_id, entry_type, sub_played')
+        .in('event_id', ids).eq('location_id', locationId).eq('status', 'verified').order('id'))),
+      checked(fetchAllRows(() => supabase.from('subs').select('player_id, event_id').in('event_id', ids)
+        .eq('location_id', locationId).eq('status', 'approved').order('id'))),
     ])
     const cell = {}
     ;(scoreRows || []).forEach(s => {
@@ -194,8 +206,8 @@ export default function AdminReports() {
   }
 
   async function buildMoney() {
-    const { data: entries } = await supabase.from('ledger').select('*')
-      .eq('location_id', locationId).eq('league_id', league.id).order('created_at')
+    const entries = await checked(fetchAllRows(() => supabase.from('ledger').select('*')
+      .eq('location_id', locationId).eq('league_id', league.id).order('created_at').order('id')))
     const balances = {}
     ;(entries || []).forEach(e => {
       const name = e.player_id ? playerName(e.player_id) : teamName(e.team_id)
@@ -216,9 +228,9 @@ export default function AdminReports() {
   async function exportScores() {
     const ids = events.map(e => e.id)
     if (!ids.length) return
-    const { data: scoreRows } = await supabase.from('scores')
+    const scoreRows = await checked(fetchAllRows(() => supabase.from('scores')
       .select('player_id, team_id, event_id, gross_total, net_total, handicap_used, entry_type, status, sub_played, hole_scores')
-      .in('event_id', ids).eq('location_id', locationId)
+      .in('event_id', ids).eq('location_id', locationId).order('id')))
     const evtById = {}
     events.forEach(e => { evtById[e.id] = e })
     downloadCsv('scores.csv', [
@@ -241,8 +253,8 @@ export default function AdminReports() {
   }
 
   async function exportLedger() {
-    const { data: entries } = await supabase.from('ledger').select('*')
-      .eq('location_id', locationId).eq('league_id', league.id).order('created_at')
+    const entries = await checked(fetchAllRows(() => supabase.from('ledger').select('*')
+      .eq('location_id', locationId).eq('league_id', league.id).order('created_at').order('id')))
     downloadCsv('ledger.csv', [
       ['Date', 'Who', 'Type', 'Amount', 'Note'],
       ...(entries || []).map(e => [
@@ -268,12 +280,12 @@ export default function AdminReports() {
               <option key={e.id} value={e.id}>{e.week_number != null ? `Wk ${e.week_number} — ` : ''}{e.name}</option>
             ))}
           </select>
-          <Button variant="secondary" size="sm" onClick={buildRecap} disabled={!recapEvent}>Week recap</Button>
+          <Button variant="secondary" size="sm" onClick={() => runReport(buildRecap, true)} disabled={!recapEvent || reportLoading}>Week recap</Button>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <Button variant="secondary" size="sm" onClick={buildStandings}>Standings report</Button>
-          <Button variant="secondary" size="sm" onClick={buildMoney}>Money list</Button>
-          <Button variant="secondary" size="sm" onClick={buildAttendance}>Attendance grid</Button>
+          <Button variant="secondary" size="sm" onClick={() => runReport(buildStandings, true)} disabled={reportLoading}>Standings report</Button>
+          <Button variant="secondary" size="sm" onClick={() => runReport(buildMoney, true)} disabled={reportLoading}>Money list</Button>
+          <Button variant="secondary" size="sm" onClick={() => runReport(buildAttendance, true)} disabled={reportLoading}>Attendance grid</Button>
           {report && (
             <Button variant="primary" size="sm" icon={<Printer size={14} strokeWidth={2.25} />} onClick={() => window.print()}>
               Print
@@ -287,7 +299,7 @@ export default function AdminReports() {
         <h3 style={st.cardTitle}>CSV Export</h3>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {[['Players', exportPlayers], ['Scores', exportScores], ['Standings', exportStandings], ['Ledger', exportLedger]].map(([label, fn]) => (
-            <Button key={label} variant="secondary" size="sm" icon={<Download size={13} strokeWidth={2.25} />} onClick={fn}>
+            <Button key={label} variant="secondary" size="sm" icon={<Download size={13} strokeWidth={2.25} />} onClick={() => runReport(fn)} disabled={reportLoading}>
               {label}
             </Button>
           ))}

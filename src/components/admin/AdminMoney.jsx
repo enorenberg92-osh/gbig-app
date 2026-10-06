@@ -5,6 +5,7 @@ import { useLocation } from '../../context/LocationContext'
 import { loadWorkingLeague } from '../../lib/leagueUtils'
 import { mutationErrorMessage } from '../../lib/rpcErrors'
 import { calcSkins } from '../../lib/skinsUtils'
+import { fetchAllRows } from '../../lib/fetchAllRows'
 import { Button, Toast, EmptyState } from '../ui'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -24,6 +25,7 @@ export default function AdminMoney() {
   const [teams, setTeams]     = useState([])
   const [events, setEvents]   = useState([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(null)
   const [toast, setToast]     = useState(null)
 
   const [form, setForm] = useState(EMPTY_ENTRY)
@@ -37,16 +39,20 @@ export default function AdminMoney() {
   useEffect(() => { if (locationId) load() }, [locationId])
 
   async function load() {
+    setLoading(true)
+    setLoadError(null)
     let lg
     try { lg = await loadWorkingLeague(supabase, locationId) }
-    catch (e) { showToast(e.message, 'error'); setLoading(false); return }
+    catch (e) { setLoadError(e.message); setLoading(false); return }
     setLeague(lg)
     const [led, pl, tm, ev] = await Promise.all([
-      supabase.from('ledger').select('*').eq('location_id', locationId).eq('league_id', lg.id).order('created_at', { ascending: false }),
+      fetchAllRows(() => supabase.from('ledger').select('*').eq('location_id', locationId).eq('league_id', lg.id).order('created_at', { ascending: false }).order('id')),
       supabase.from('players').select('id, name, in_skins').eq('location_id', locationId).order('name'),
       supabase.from('teams').select('id, name').eq('location_id', locationId).eq('league_id', lg.id).order('created_at'),
       supabase.from('events').select('id, name, week_number, status, course_id').eq('location_id', locationId).eq('league_id', lg.id).neq('is_bye', true).order('week_number'),
     ])
+    const failed = [led, pl, tm, ev].find(r => r.error)
+    if (failed) { setLoadError(failed.error.message); setLoading(false); return }
     setEntries(led.data || [])
     setPlayers(pl.data || [])
     setTeams(tm.data || [])
@@ -174,6 +180,7 @@ export default function AdminMoney() {
     .sort((a, b) => b.amt - a.amt)
 
   if (loading) return <div style={st.loading}>Loading…</div>
+  if (loadError) return <div style={st.container}><p role="alert">Money records could not be loaded: {loadError}</p><Button onClick={load}>Retry</Button></div>
 
   return (
     <div style={st.container}>

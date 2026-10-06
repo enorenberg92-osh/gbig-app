@@ -13,7 +13,7 @@ import { useFeature } from '../context/FeatureContext'
 
 // ── Round detail: hole-by-hole scorecard + tracked stats + skins ─────────────
 function RoundDetail({ rd, skinsWon, skinsEnabled }) {
-  const holes = zipHoleScoresWithPars(rd.holeScores, rd.holePars)
+  const holes = zipHoleScoresWithPars(rd.holeScores, rd.holePars, rd.startHole)
   if (!holes.length) return null
   const hasStats = Array.isArray(rd.holeStats) && rd.holeStats.some(h => h && (h.putts != null || h.fir != null || h.gir != null))
   const totalPutts = hasStats ? rd.holeStats.reduce((s, h) => s + (h?.putts ?? 0), 0) : null
@@ -273,7 +273,7 @@ export default function PlayerProfile({ session, onBack, playerId: adminPlayerId
           .is('effective_to', null)
           .maybeSingle(),
         supabase.from('scores')
-          .select('id, event_id, gross_total, net_total, hole_scores, hole_stats, handicap_used, entry_type, status, sub_played, created_at, events!inner(id, name, week_number, start_date, league_id, courses(id, name, num_holes, hole_pars, total_par))')
+          .select('id, event_id, gross_total, net_total, hole_scores, hole_stats, handicap_used, entry_type, status, sub_played, created_at, events!inner(id, name, week_number, start_date, league_id, courses(id, name, num_holes, hole_pars, total_par, start_hole))')
           .eq('player_id', playerRow.id)
           .eq('location_id', locationId)
           .eq('status', 'verified')
@@ -325,6 +325,7 @@ export default function PlayerProfile({ session, onBack, playerId: adminPlayerId
           holeScores:   Array.isArray(s.hole_scores) ? s.hole_scores : [],
           holeStats:    Array.isArray(s.hole_stats) ? s.hole_stats : null,
           holePars,
+          startHole: course.start_hole || 1,
         }
       }).sort(compareRoundsChronologically)
 
@@ -369,7 +370,7 @@ export default function PlayerProfile({ session, onBack, playerId: adminPlayerId
       5: { birdie: 0, par: 0, bogey: 0, double: 0, total: 0, sum: 0 },
     }
     rds.forEach(rd => {
-      zipHoleScoresWithPars(rd.holeScores, rd.holePars).forEach(({ score: s, par: p }) => {
+      zipHoleScoresWithPars(rd.holeScores, rd.holePars, rd.startHole).forEach(({ score: s, par: p }) => {
         if (!s || ![3, 4, 5].includes(p)) return
         const b = byPar[p]
         b.total++; b.sum += s
@@ -428,7 +429,7 @@ export default function PlayerProfile({ session, onBack, playerId: adminPlayerId
     ? validGross.reduce((best, r) => r.gross < best.gross ? r : best) : null
 
   // Birdies per round (from hole scores) — personal best.
-  const birdiesIn = rd => zipHoleScoresWithPars(rd.holeScores, rd.holePars)
+  const birdiesIn = rd => zipHoleScoresWithPars(rd.holeScores, rd.holePars, rd.startHole)
     .filter(({ score, par }) => score && par && score - par <= -1).length
   const mostBirdiesRound = rounds.reduce((best, rd) => {
     const n = birdiesIn(rd)

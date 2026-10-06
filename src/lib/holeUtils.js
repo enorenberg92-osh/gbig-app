@@ -9,12 +9,16 @@ export function hasCompleteCoursePars(course) {
 }
 
 /** Safely pair hole scores and pars; mismatched arrays never read past either end. */
-export function zipHoleScoresWithPars(holeScores, holePars) {
+export function displayHole(index, course) {
+  return (Number.isInteger(course?.start_hole) ? course.start_hole : 1) + index
+}
+
+export function zipHoleScoresWithPars(holeScores, holePars, startHole = 1) {
   if (!Array.isArray(holeScores) || !Array.isArray(holePars)) return []
   const length = Math.min(holeScores.length, holePars.length)
   return Array.from({ length }, (_, index) => ({
     index,
-    hole: index + 1,
+    hole: displayHole(index, { start_hole: startHole }),
     score: holeScores[index],
     par: holePars[index],
   }))

@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest'
 import { compareEffectiveScores, compareRoundsChronologically } from './roundUtils'
 
 describe('round ordering', () => {
+  it('keeps winter week one after fall week twelve', () => {
+    const rounds = [{ id:'winter', weekNumber:1, startDate:'2027-01-04' }, { id:'fall', weekNumber:12, startDate:'2026-12-21' }]
+    expect(rounds.sort(compareRoundsChronologically).map(r => r.id)).toEqual(['fall','winter'])
+  })
   it('orders by week, then date, then creation time', () => {
     const rounds = [
       { id: 'c', weekNumber: 2, startDate: '2026-01-15' },
