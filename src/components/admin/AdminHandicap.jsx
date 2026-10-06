@@ -1,11 +1,10 @@
 import React, { useState, useEffect } from 'react'
 import { Settings, RefreshCw, Lock, Inbox } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
-import { DEFAULT_SETTINGS, calcBreakdown } from '../../lib/handicapCalc'
+import { DEFAULT_SETTINGS, calcBreakdown, handicapRounds } from '../../lib/handicapCalc'
 import { useLocation } from '../../context/LocationContext'
 import { Button, Toast, EmptyState } from '../ui'
 import { formatLocalDate } from '../../lib/dateUtils'
-import { compareRoundsChronologically } from '../../lib/roundUtils'
 import { mutationErrorMessage } from '../../lib/rpcErrors'
 import { fetchAllRows } from '../../lib/fetchAllRows'
 
@@ -19,11 +18,13 @@ export default function AdminHandicap() {
   const [updating,     setUpdating]     = useState(false)
   const [expanded,     setExpanded]     = useState({}) // { playerId: bool }
   const [toast,        setToast]        = useState(null)
+  const [loadError, setLoadError] = useState(null)
 
   useEffect(() => { if (locationId) loadAll() }, [locationId])
 
   async function loadAll() {
     setLoading(true)
+    setLoadError(null)
 
     const results = await Promise.all([
       supabase.from('players').select('*').eq('location_id', locationId).order('name'),
@@ -35,7 +36,7 @@ export default function AdminHandicap() {
         // history (the sub gets credited on their own row where
         // player_id = sub_player_id). Without this filter, Erich's handicap
         // moved with his sub's score.
-        .select('id, created_at, player_id, gross_total, sub_played, events(id, name, start_date, event_date, week_number, courses(name, hole_pars))')
+        .select('id, created_at, player_id, gross_total, sub_played, status, entry_type, events(id, name, start_date, event_date, week_number, format, format_config, courses(name, total_par))')
         .eq('location_id', locationId)
         .eq('entry_type', 'played')
         .eq('status', 'verified')
@@ -43,7 +44,7 @@ export default function AdminHandicap() {
       supabase.from('league_config').select('num_weeks').eq('location_id', locationId).eq('is_working', true).maybeSingle(),
     ])
     const failed = results.find(r => r.error)
-    if (failed) { showToast(failed.error.message, 'error'); setLoading(false); return }
+    if (failed) { setLoadError(failed.error.message); setLoading(false); return }
     const [{ data: plrs }, { data: scores }, { data: leagueCfg }] = results
 
     // Merge league num_weeks into settings
@@ -54,15 +55,14 @@ export default function AdminHandicap() {
     // Sort by actual play date, then week number. Mirrors handicapCalc.js so
     // `scoresUsed` (slice -N) really
     // does pick the N most recent rounds.
-    const sortedScores = [...(scores || [])].sort(compareRoundsChronologically)
+    const sortedScores = handicapRounds(scores)
 
     // Build score history per player
     const history = {}
     sortedScores.forEach(s => {
       const pid = s.player_id
       if (!history[pid]) history[pid] = []
-      const holePars  = s.events?.courses?.hole_pars
-      const coursePar = holePars ? holePars.reduce((sum, p) => sum + p, 0) : null
+      const coursePar = s.events?.courses?.total_par
       const diff      = coursePar != null && s.gross_total != null
         ? s.gross_total - coursePar
         : null
@@ -111,6 +111,7 @@ export default function AdminHandicap() {
   }
 
   if (loading) return <div style={styles.loading}>Loading handicaps…</div>
+  if (loadError) return <div style={styles.container}><p role="alert">Handicap history could not be loaded: {loadError}</p><Button onClick={loadAll}>Retry</Button></div>
 
   const playersWithScores    = players.filter(p => (scoreHistory[p.id] || []).some(r => r.diff != null))
   const playersWithoutScores = players.filter(p => !(scoreHistory[p.id] || []).some(r => r.diff != null))
@@ -148,7 +149,7 @@ export default function AdminHandicap() {
           </div>
           <div style={styles.settingItem}>
             <span style={styles.settingLabel}>Discards (4+ scores)</span>
-            <span style={styles.settingValue}>1 high · 1 low</span>
+            <span style={styles.settingValue}>4 scores: 1 high · 5+: 1 high, 1 low</span>
           </div>
         </div>
         <div style={styles.formulaNote}>

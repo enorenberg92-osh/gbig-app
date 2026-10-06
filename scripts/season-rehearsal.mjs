@@ -4,7 +4,7 @@ import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import assert from 'node:assert/strict'
 import { aggregateSeason } from '../src/lib/seasonStandings.js'
-import { calcSkins } from '../src/lib/skinsUtils.js'
+import { calcSkins, skinScoreRows } from '../src/lib/skinsUtils.js'
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..')
 const bin=process.env.GBIG_TEST_PG_BIN || 'C:/Users/19205/scoop/apps/postgresql/current/bin'
@@ -97,7 +97,7 @@ try{
   for(const e of expected.values())if(e.event_id<=eventId&&e.event_id.startsWith(id(v.n*100000).slice(0,-6))&&Number(e.event_id.slice(-12))>=v.n*100000&&Number(e.event_id.slice(-12))<v.n*100000+100){oracle.set(e.team_id,(oracle.get(e.team_id)||0)+e.net_total)}
   for(const row of result)equal(row.teamNet,oracle.get(row.teamId),'Season standings retain historical team attribution and exclude sub mirror')
   const weekScores=actual.filter(s=>s.event_id===eventId&&roster.some(r=>r.event_id===s.event_id&&r.player_id===s.player_id))
-  const cards=Object.fromEntries(weekScores.filter(s=>s.entry_type==='played').map(s=>[s.player_id,s.hole_scores]))
+  const cards=Object.fromEntries(skinScoreRows(actual.filter(s=>s.event_id===eventId),v.players.map(p=>({id:id(p.id),in_skins:true})),roster.filter(r=>r.event_id===eventId)).map(s=>[s.player_id,s.hole_scores]))
   const awarded=calcSkins(cards,9),skins=[]
   for(let h=0;h<9;h++){
     const candidates=weekScores.filter(s=>s.entry_type==='played').map(s=>({player:s.player_id,score:s.hole_scores[h]})).sort((a,b)=>a.score-b.score)

@@ -34,12 +34,12 @@ describe('league closeout',()=>{
   })
   it('labels back-nine skins correctly and treats ties as no winner',()=>{
     const course={num_holes:2,start_hole:10}
-    expect(closeoutSkins([score('a'),score('b')],players,course)).toEqual([])
-    expect(closeoutSkins([score('a','verified',{hole_scores:[3,4]}),score('b')],players,course)[0].hole).toBe(10)
+    expect(closeoutSkins([score('a'),score('b')],players,course,roster)).toEqual([])
+    expect(closeoutSkins([score('a','verified',{hole_scores:[3,4]}),score('b')],players,course,roster)[0].hole).toBe(10)
   })
   it('excludes pending and penalty rows from skins',()=>{
     const course={num_holes:2,start_hole:10}
-    expect(closeoutSkins([score('a','pending'),score('b','verified',{entry_type:'missed_penalty',hole_scores:null})],players,course)).toEqual([])
+    expect(closeoutSkins([score('a','pending'),score('b','verified',{entry_type:'missed_penalty',hole_scores:null})],players,course,roster)).toEqual([])
   })
   it('never produces an email recap before publishing',()=>{
     expect(recapText({event:{status:'open'}},'Test venue')).toBe('')

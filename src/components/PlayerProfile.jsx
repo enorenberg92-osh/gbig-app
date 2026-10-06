@@ -8,11 +8,11 @@ import { zipHoleScoresWithPars } from '../lib/holeUtils'
 import { loadWorkingLeague } from '../lib/leagueUtils'
 import { compareRoundsChronologically } from '../lib/roundUtils'
 import { scoreColor } from '../lib/scoreUtils'
-import { calcSkins } from '../lib/skinsUtils'
+import { loadSkinsRound } from '../lib/loadSkinsRound'
 import { useFeature } from '../context/FeatureContext'
 
 // ── Round detail: hole-by-hole scorecard + tracked stats + skins ─────────────
-function RoundDetail({ rd, skinsWon, skinsEnabled }) {
+function RoundDetail({ rd, skinsWon, skinsEnabled, skinsError }) {
   const holes = zipHoleScoresWithPars(rd.holeScores, rd.holePars, rd.startHole)
   if (!holes.length) return null
   const hasStats = Array.isArray(rd.holeStats) && rd.holeStats.some(h => h && (h.putts != null || h.fir != null || h.gir != null))
@@ -23,12 +23,13 @@ function RoundDetail({ rd, skinsWon, skinsEnabled }) {
 
   return (
     <div style={{ background: 'var(--gray-100)', borderRadius: 8, padding: '8px 10px', margin: '0 0 10px' }}>
+      {skinsError && <p role="alert">Skins could not be loaded. Close and reopen this scorecard to retry.</p>}
       <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
         <table style={{ borderCollapse: 'collapse', width: '100%' }}>
           <tbody>
             <tr>
               <td style={labelCell}>Hole</td>
-              {holes.map((_, i) => <td key={i} style={{ ...cell, fontWeight: 700, color: 'var(--gray-500)', fontSize: 10 }}>{i + 1}</td>)}
+              {holes.map(({ hole }, i) => <td key={i} style={{ ...cell, fontWeight: 700, color: 'var(--gray-500)', fontSize: 10 }}>{hole}</td>)}
               <td style={{ ...cell, fontWeight: 700, fontSize: 10, color: 'var(--gray-500)' }}>TOT</td>
             </tr>
             <tr>
@@ -229,6 +230,7 @@ export default function PlayerProfile({ session, onBack, playerId: adminPlayerId
   const [cropFile, setCropFile] = useState(null)
   const [expandedRoundId, setExpandedRoundId] = useState(null)
   const [skinsByRound, setSkinsByRound] = useState({})   // roundId -> [holeNums won] | null
+  const [skinsErrors, setSkinsErrors] = useState({})
   const skinsEnabled = useFeature('skins')
   const fileInputRef = useRef(null)
 
@@ -343,22 +345,12 @@ export default function PlayerProfile({ session, onBack, playerId: adminPlayerId
     const next = expandedRoundId === rd.id ? null : rd.id
     setExpandedRoundId(next)
     if (!next || rd.isPenalty || !skinsEnabled || skinsByRound[rd.id] !== undefined) return
-    // Skins for that night: everyone's verified scores + in_skins flags.
-    const [{ data: evtScores }, { data: skinPlayers }] = await Promise.all([
-      supabase.from('scores').select('player_id, hole_scores')
-        .eq('event_id', rd.eventId).eq('location_id', locationId)
-        .eq('entry_type', 'played').eq('status', 'verified'),
-      supabase.from('players').select('id, in_skins').eq('location_id', locationId),
-    ])
-    const inSkins = new Set((skinPlayers || []).filter(p => p.in_skins).map(p => p.id))
-    if (!inSkins.has(player.id)) { setSkinsByRound(prev => ({ ...prev, [rd.id]: null })); return }
-    const scoreMap = {}
-    ;(evtScores || []).forEach(s => {
-      if (inSkins.has(s.player_id) && Array.isArray(s.hole_scores)) scoreMap[s.player_id] = s.hole_scores
-    })
-    const skins = calcSkins(scoreMap, rd.holeScores.length)
-    const won = Object.entries(skins).filter(([, pid]) => pid === player.id).map(([h]) => Number(h))
-    setSkinsByRound(prev => ({ ...prev, [rd.id]: won }))
+    setSkinsErrors(prev => ({ ...prev, [rd.id]: false }))
+    try {
+      const { skins } = await loadSkinsRound(supabase, rd.eventId, locationId)
+      const won = Object.entries(skins).filter(([, pid]) => pid === player.id).map(([h]) => Number(h))
+      setSkinsByRound(prev => ({ ...prev, [rd.id]: won }))
+    } catch { setSkinsErrors(prev => ({ ...prev, [rd.id]: true })) }
   }
 
   // ── Stat helpers ────────────────────────────────────────────────────────────
@@ -872,7 +864,7 @@ export default function PlayerProfile({ session, onBack, playerId: adminPlayerId
                   </div>
                 </div>
                 {expandedRoundId === rd.id && !rd.isPenalty && (
-                  <RoundDetail rd={rd} skinsWon={skinsByRound[rd.id]} skinsEnabled={skinsEnabled} />
+                  <RoundDetail rd={rd} skinsWon={skinsByRound[rd.id]} skinsEnabled={skinsEnabled} skinsError={skinsErrors[rd.id]} />
                 )}
               </div>
             ))}

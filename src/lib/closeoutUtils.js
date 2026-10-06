@@ -1,5 +1,6 @@
 import { compareEffectiveScores } from './roundUtils'
 import { displayHole } from './holeUtils'
+import { skinScoreRows } from './skinsUtils'
 
 export function penaltyNet(course, handicap) {
   // PostgreSQL round(numeric) rounds halves away from zero, including plus handicaps.
@@ -29,9 +30,9 @@ export function closeoutStatus(roster, scores) {
   return { expected: ids.length, pending, missing, penalties, verified, effective, completeTeams, teamIds, rosterValid }
 }
 
-export function closeoutSkins(scores, players, course) {
+export function closeoutSkins(scores, players, course, roster) {
   const eligible = new Map(players.filter(p => p.in_skins).map(p => [p.id, p]))
-  const played = [...closeoutStatus([], scores).effective.values()].filter(s => s.entry_type === 'played' && eligible.has(s.player_id))
+  const played = skinScoreRows(scores, players, roster)
   const winners = []
   for (let i = 0; i < (course?.num_holes || 0); i++) {
     const entries = played.filter(s => Number.isInteger(s.hole_scores?.[i]) && s.hole_scores[i] > 0)
@@ -71,6 +72,6 @@ export function recapText(snapshot, appName) {
   if (snapshot.event.status !== 'closed') return ''
   const { event, scores, roster, teams, players, course, matchups } = snapshot
   const results = closeoutResults(event, scores, roster, teams, players, matchups)
-  const skins = closeoutSkins(scores, players, course)
+  const skins = closeoutSkins(scores, players, course, roster)
   return `Hi everyone,\n\nHere are the finalized results for ${event.name || `Week ${event.week_number}`} at ${appName}.\n\nRESULTS\n${results.map(r => `${r.name}: ${r.result}`).join('\n') || 'See the standings for results.'}\n\n${snapshot.skinsEnabled ? `SKINS\n${skins.map(s => `Hole ${s.hole}: ${s.player.name}`).join('\n') || 'No skins won this week.'}\n\n` : ''}See the full standings in the app.\n\nSee you next week!\n— ${appName}`
 }

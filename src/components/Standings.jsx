@@ -545,7 +545,7 @@ export default function Standings({ session, onBack, adminMode = false }) {
                 {row.teamGross || '—'}
               </div>
               <div style={{ ...styles.scoreCell, fontWeight: sortBy === 'net' ? 700 : 400, color: 'var(--green-dark)' }}>
-                {row.teamNet || '—'}
+                {row.hasScore ? row.teamNet : '—'}
               </div>
             </div>
           ))}

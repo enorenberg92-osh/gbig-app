@@ -121,7 +121,7 @@ export default function AdminDashboard({ onWeekClosed = () => {} }) {
   const canPublish = !closed && !error && status.rosterValid && courseValid && !hasPending && reviewed && (!status.missing.length || penaltiesAccepted)
   const name = id => players.find(p => p.id === id)?.name || 'Unknown player'
   const results = closeoutResults(event, scores, roster, teams, players, matchups)
-  const skins = closeoutSkins(scores, players, course)
+  const skins = closeoutSkins(scores, players, course, roster)
   const rosterIds = new Set(roster.map(row => row.player_id))
   const recipients = [...new Set(players.filter(p => rosterIds.has(p.id) && p.email).map(p => p.email.trim().toLowerCase()))]
 

@@ -30,5 +30,11 @@ for(let i=0;i<11;i++)nodes.get('season-scores-next').listeners.click();
 assert.equal(nodes.get('season-scores-page').textContent,'276–300 of 300');
 assert.equal(nodes.get('season-scores-next').disabled,true);
 assert.equal(row('scores',24)[0],'Golfer 300 / Team 150');
+if(nodes.get('season-venue').children.length>1){
+  nodes.get('season-venue').value='Appleton';nodes.get('season-venue').listeners.change();
+  assert.equal(nodes.get('season-scores-page').textContent,'1–25 of 300');
+  assert.equal(nodes.get('season-total-page').textContent,'1–25 of 150');
+  assert.equal(nodes.get('season-skins-body').children.length,9);
+}
 assert.ok(Buffer.byteLength(html)<1_000_000);
 console.log(`PASS season report interactions, all 150 teams/300 cards reachable, penalties/substitutes/skins, ${Buffer.byteLength(html)} bytes`);

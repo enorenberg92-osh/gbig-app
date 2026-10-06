@@ -12,7 +12,7 @@ import { scoreHandicap } from '../../lib/scoreHandicap'
 import { Button, Toast } from '../ui'
 import { useFeature } from '../../context/FeatureContext'
 
-import { calcSkins } from '../../lib/skinsUtils'
+import { loadSkinsRound } from '../../lib/loadSkinsRound'
 
 export default function AdminScores({ activeEventId = null, onEventChange = () => {} }) {
   const { locationId, timezone } = useLocation()
@@ -344,37 +344,13 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
   }
 
   async function handleCalculateSkins() {
-    // Load scores + all players independently (avoids FK join issues)
-    const [{ data: allScores }, { data: skinPlayers }] = await Promise.all([
-      supabase.from('scores').select('player_id, hole_scores').eq('event_id', selectedEvent).eq('location_id', locationId).eq('entry_type', 'played').eq('status', 'verified'),
-      supabase.from('players').select('id, name, in_skins').eq('location_id', locationId),
-    ])
-
-    if (!allScores?.length) { showToast('No scores entered yet.', 'error'); return }
-
-    // Build player lookup
-    const playerById = {}
-    ;(skinPlayers || []).forEach(p => { playerById[p.id] = p })
-
-    // Filter to only players flagged as in_skins
-    const skinsScores = allScores.filter(s => playerById[s.player_id]?.in_skins)
-
-    if (!skinsScores.length) {
-      showToast('No players in the skins game have scores this week.', 'error')
-      return
-    }
-
-    const playerScoreMap = {}
-    const playerNames = {}
-    skinsScores.forEach(s => {
-      if (s.hole_scores) {
-        playerScoreMap[s.player_id] = s.hole_scores
-        playerNames[s.player_id] = playerById[s.player_id]?.name || s.player_id
-      }
-    })
-
-    const skins = calcSkins(playerScoreMap, eventData?.holePars?.length || 0)
-    setSkinsResult({ skins, playerNames, allScores: skinsScores })
+    setSkinsResult(null)
+    try {
+      const { skins, scores, players } = await loadSkinsRound(supabase, selectedEvent, locationId)
+      if (!scores.length) { showToast('No verified skins scores this week.', 'error'); return }
+      const playerNames = Object.fromEntries(players.map(p => [p.id, p.name]))
+      setSkinsResult({ skins, playerNames, allScores: scores })
+    } catch (error) { showToast(error.message, 'error') }
   }
 
   // ── UI Helpers ──────────────────────────────────────────────────────────────
