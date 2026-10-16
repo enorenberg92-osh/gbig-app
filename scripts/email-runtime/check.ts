@@ -7,7 +7,9 @@ try { await import('../../supabase/functions/weekly-email/index.ts') } finally {
 Deno.env.set('SUPABASE_URL', 'https://invalid.example')
 Deno.env.set('SUPABASE_ANON_KEY', 'test-only-anon')
 Deno.env.set('SUPABASE_SERVICE_ROLE_KEY', 'test-only-service')
-Deno.env.set('RESEND_API_KEY', 'test-only-never-sent')
+Deno.env.set('GMAIL_CLIENT_ID', 'test.apps.googleusercontent.com')
+Deno.env.set('GMAIL_CLIENT_SECRET', 'test-only-never-sent')
+Deno.env.set('GMAIL_TOKEN_ENCRYPTION_KEY', btoa(String.fromCharCode(...new Uint8Array(32).fill(7))))
 
 function assert(condition: unknown, message = 'Assertion failed'): asserts condition { if (!condition) throw new Error(message) }
 const request = (body: unknown, token = 'test-user') => handler(new Request('https://invalid.example/weekly-email', { method: 'POST', headers: token ? { Authorization: `Bearer ${token}` } : {}, body: JSON.stringify(body) }))
@@ -38,7 +40,7 @@ Deno.test('sender access is independent from storage and service configuration',
   reset(); state.assigned = false
   const result = await (await request({ action: 'status', ...scope })).json()
   assert(result.setup.configured === false && result.setup.checks.sender === false)
-  assert(result.setup.checks.storage === true && result.setup.checks.service_key === true)
+  assert(result.setup.checks.storage === true && result.setup.checks.service_key === false)
   assert(result.senders.length === 0)
 })
 Deno.test('missing private storage is reported as an actionable readiness failure', async () => {
@@ -63,3 +65,5 @@ Deno.test('an unassigned From and a multi-recipient To cannot save a direct prev
   assert((await request({ ...input, to: 'one@example.com' })).status === 403)
   assert(state.campaign === null)
 })
+
+await import('./gmail-check.ts')

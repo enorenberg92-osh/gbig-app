@@ -22,8 +22,8 @@ export function emailSetupGuide({ setup, senders = [], locationId, venueSlug, ve
     `Signed-in account ID confirmed by the email service: ${accountId || 'Not checked yet. Sign in and refresh readiness before assigning access.'}`,
     initialSender ? `Requested initial venue sender: ${initialSender}` : 'Choose an owner-approved sender for this venue.',
     'Review and install the weekly-email migration and authenticated Edge Function if missing. Keep JWT verification and RLS enabled.',
-    'Reuse the existing RESEND_API_KEY server secret if authorized. Enter any new credential only in the secure Supabase dashboard.',
-    'Verify the sender domain and key permissions in Resend. Before enabling a sender or assigning any verified staff account ID, obtain owner approval of that exact assignment. Do not infer account identity from the sender address or grant new venue-admin rights.',
+    'Configure the Google Gmail API web client and secure server settings GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, and GMAIL_TOKEN_ENCRYPTION_KEY. Never paste credentials into chat or the composer. No DNS changes are authorized.',
+    'Use Connect Gmail for each exact business Gmail account with only sending and email-identity permissions. Do not request inbox access. Before enabling a sender or assigning any verified staff account ID, obtain owner approval of that exact assignment. Do not infer account identity from the sender address or grant new venue-admin rights.',
     'After setup, refresh readiness. Any real test needs approval of the exact From, single To address, subject, and message. Do not use the league audience for validation.',
   ].join('\n')
   return { readiness, initialSender, domains, accountId, request }

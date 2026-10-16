@@ -59,6 +59,7 @@ export default function WeeklyEmail({ eventId, locationId, actorId, venueName, v
   const [notice, setNotice] = useState('')
   const [sendStarted, setSendStarted] = useState(false)
   const [statusRequired, setStatusRequired] = useState(false)
+  const [gmailConnecting, setGmailConnecting] = useState(false)
   const sequence = useRef(0)
   const inFlight = useRef(false)
   const busyCallback = useRef(onBusyChange)
@@ -66,7 +67,7 @@ export default function WeeklyEmail({ eventId, locationId, actorId, venueName, v
   const progressCallback = useRef(onProgressChange)
   progressCallback.current = onProgressChange
 
-  const busy = phase !== 'idle'
+  const busy = phase !== 'idle' || gmailConnecting
   const locked = sendStarted || weeklyEmailStarted(draft)
   const selectedSender = senders.find(item => item.id === senderId)
   const senderAuthorized = !!selectedSender
@@ -99,6 +100,7 @@ export default function WeeklyEmail({ eventId, locationId, actorId, venueName, v
     setNotice('')
     setSendStarted(false)
     setStatusRequired(false)
+    setGmailConnecting(false)
     checkStatus(true, version, savedCompose)
     return () => {
       sequence.current++
@@ -122,7 +124,7 @@ export default function WeeklyEmail({ eventId, locationId, actorId, venueName, v
   }
 
   function begin(nextPhase) {
-    if (inFlight.current) return false
+    if (inFlight.current || gmailConnecting) return false
     inFlight.current = true
     setPhase(nextPhase)
     setError('')
@@ -218,7 +220,7 @@ export default function WeeklyEmail({ eventId, locationId, actorId, venueName, v
   }
 
   async function send() {
-    if (disabled || !currentPreview || !senderAuthorized || !setup?.configured || statusRequired || !draft.pending_count || !['draft', 'sending', 'review'].includes(draft.status) || !begin('sending')) return
+    if (disabled || !currentPreview || !senderAuthorized || !setup?.configured || (setup?.provider === 'gmail' && !selectedSender?.gmail_connected) || statusRequired || !draft.pending_count || !['draft', 'sending', 'review'].includes(draft.status) || !begin('sending')) return
     const version = sequence.current
     const draftId = draft.draft_id
     setSendStarted(true)
@@ -258,7 +260,7 @@ export default function WeeklyEmail({ eventId, locationId, actorId, venueName, v
   }
 
   const canPreview = !busy && !disabled && senderAuthorized && !locked && !statusRequired && (!direct || !directEmailValidation(to)) && !!subject.trim() && !!text.trim()
-  const canSend = !busy && !disabled && senderAuthorized && currentPreview && setup?.configured && !statusRequired && draft.pending_count > 0 && ['draft', 'sending', 'review'].includes(draft.status)
+  const canSend = !busy && !disabled && senderAuthorized && currentPreview && setup?.configured && (setup?.provider !== 'gmail' || selectedSender?.gmail_connected) && !statusRequired && draft.pending_count > 0 && ['draft', 'sending', 'review'].includes(draft.status)
 
   return <section className="weekly-email" aria-labelledby="weekly-email-title" aria-busy={busy}>
     <h3 id="weekly-email-title"><Mail size={20} aria-hidden="true"/> {direct ? 'Email' : 'Weekly Email'}</h3>
@@ -267,11 +269,11 @@ export default function WeeklyEmail({ eventId, locationId, actorId, venueName, v
     <div className="weekly-email-setup">
       <div><strong>Email setup</strong>
         <p>{setup?.message || (phase === 'loading' ? 'Checking email setup…' : 'Email setup has not been confirmed.')}</p>
-        {setup && <p className="closeout-muted">This checks service configuration only. Sending-domain verification has not been checked.</p>}
+        {setup && <p className="closeout-muted">This checks saved configuration only. Gmail authorization validity and inbox delivery have not been tested.</p>}
       </div>
       <Button variant="secondary" icon={<RefreshCw size={15}/>} disabled={busy || disabled} onClick={() => checkStatus()}>{locked || statusRequired ? 'Refresh email status' : 'Check email setup'}</Button>
     </div>
-    {direct && <EmailSetupGuide setup={setup} senders={senders} locationId={locationId} venueName={venueName} venueSlug={venueSlug} busy={busy || disabled} onRefresh={() => checkStatus()} onCompose={() => recipientInput.current?.focus()}/>}
+    {direct && <EmailSetupGuide setup={setup} senders={senders} locationId={locationId} venueName={venueName} venueSlug={venueSlug} busy={busy || disabled || locked} onRefresh={() => checkStatus()} onCompose={() => recipientInput.current?.focus()} onConnectBusyChange={value => { setGmailConnecting(value); busyCallback.current(value) }}/>}
     {direct && storageWarning && <p className="closeout-warning" role="status">{storageWarning}</p>}
     {error && <p className="closeout-warning" role="alert">{error}</p>}
     {notice && <p className="closeout-notice" role="status">{notice}</p>}

@@ -117,7 +117,7 @@ describe('weekly email component logic', () => {
     expect(harness.invoke).toHaveBeenCalledWith('weekly-email', { body: { action: 'status', event_id: 'event-1' } })
     expect(byId('weekly-email-from').props.value).toBe('Trent <trent@greenbayindoorgolf.com>')
     expect(byId('weekly-email-from').props.readOnly).toBe(true)
-    expect(textOf(tree)).toMatch(/Sending-domain verification has not been checked/)
+    expect(textOf(tree)).toMatch(/Gmail authorization validity and inbox delivery have not been tested/)
   })
 
 

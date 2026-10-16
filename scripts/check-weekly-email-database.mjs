@@ -19,6 +19,7 @@ try {
     INSERT INTO league_config VALUES ('${id(4)}'); INSERT INTO events VALUES ('${id(5)}');
   `)
   await db.exec(readFileSync(new URL('../docs/proposed-sql/weekly-email.sql', import.meta.url), 'utf8'))
+  await db.exec(readFileSync(new URL('../supabase/migrations/20261016212050_gmail_email.sql', import.meta.url), 'utf8'))
   const { rows: senders } = await db.query('SELECT * FROM weekly_email_senders ORDER BY email')
   const sender = senders.find(s => s.location_id === id(1))
   await check('both venue defaults are disabled and grant no account access', async () => {
@@ -46,6 +47,23 @@ try {
         assert.equal((await db.query("SELECT has_table_privilege('service_role',$1,$2) AS allowed", [table, permission])).rows[0].allowed, false)
       }
     }
+  })
+  await check('Gmail refresh tokens and OAuth state deny all browser access and have RLS', async () => {
+    for (const table of ['gmail_email_connections', 'gmail_email_oauth_states']) {
+      assert.equal((await db.query('SELECT relrowsecurity FROM pg_class WHERE relname=$1', [table])).rows[0].relrowsecurity, true)
+      for (const role of ['anon', 'authenticated']) for (const permission of ['SELECT', 'INSERT', 'UPDATE', 'DELETE']) {
+        assert.equal((await db.query('SELECT has_table_privilege($1,$2,$3) AS allowed', [role, table, permission])).rows[0].allowed, false)
+      }
+      for (const permission of ['SELECT', 'INSERT', 'UPDATE']) assert.equal((await db.query("SELECT has_table_privilege('service_role',$1,$2) AS allowed", [table, permission])).rows[0].allowed, true)
+    }
+  })
+  await check('OAuth state consumption is single-use and expired states cannot be consumed', async () => {
+    await db.query("INSERT INTO gmail_email_oauth_states(state_hash,sender_id,user_id,verifier_ciphertext,return_origin,expires_at) VALUES ('test-hash',$1,$2,'v1.test.encrypted','https://gbig-app.vercel.app',now()+interval '10 minutes')", [sender.id, id(3)])
+    const consume = () => db.query("UPDATE gmail_email_oauth_states SET consumed_at=now() WHERE state_hash='test-hash' AND consumed_at IS NULL AND expires_at>now() RETURNING state_hash")
+    const results = await Promise.all([consume(), consume()])
+    assert.equal(results.reduce((count, result) => count + result.rows.length, 0), 1)
+    await db.query("UPDATE gmail_email_oauth_states SET consumed_at=NULL,expires_at=now()-interval '1 minute'")
+    assert.equal((await consume()).rows.length, 0)
   })
   await check('a second default sender for the same venue is rejected', async () => {
     await assert.rejects(db.query('INSERT INTO weekly_email_senders(location_id,display_name,email,reply_to,is_default) VALUES ($1,$2,$3,$3,true)', [id(1), 'Other', 'other@example.com']))
