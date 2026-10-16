@@ -33,10 +33,21 @@ Never paste credentials into chat, source control, frontend configuration, or
 the email composer. Never print credential values in logs. Keep the encryption
 key stable; rotating it requires reconnecting existing Gmail accounts.
 
-At implementation time no Gmail app credentials or connections existed. An
-automatic approval review blocked creating project **GBIG AIG Email** until
-the owner specifically approves creating this persistent Google resource.
-No billing account was selected and no project was created by that attempt.
+The approved Google project is **GBIG AIG Email** (`gbig-aig-email`), project
+number `103251787602`. Gmail API is enabled. Google initially attached billing
+automatically; the owner approved removing that attachment, and billing is
+disabled for this project.
+
+Before moving an External OAuth app to Production, publish owner-reviewed
+application information, privacy, and use terms. The prepared pages are
+`/email-about.html`, `/email-privacy.html`, and `/email-terms.html`; Gmail setup
+links to these disclosures before the user connects. Google may also require
+domain ownership checks and app verification. Do not change DNS to satisfy
+these requirements: DNS changes are prohibited. Use an authorized non-DNS
+verification method if available, or report the blocker.
+
+The owner must approve privacy/use commitments before publishing these pages.
+Publishing OAuth configuration does not enable an app sender or approve a send.
 
 ## Backend deployment
 

@@ -35,6 +35,7 @@ export default function GmailConnections({ gmail, disabled, onBusyChange = () =>
   return <div>
     <p>Connect each approved business Gmail account once. Google asks for permission to send email and confirm the account’s email address. Inbox-reading permission is not requested.</p>
     <p>Connecting opens Google and returns here. Finish connecting before writing your message. Connecting does not send an email or activate a sender.</p>
+    <p><a href="/email-about.html" target="_blank" rel="noopener noreferrer">About Gmail sending</a>{' · '}<a href="/email-privacy.html" target="_blank" rel="noopener noreferrer">Gmail privacy</a>{' · '}<a href="/email-terms.html" target="_blank" rel="noopener noreferrer">Email use terms</a></p>
     {!gmail?.app_configured && <p role="status">The owner needs to finish the one-time Google app setup before Connect Gmail is available.</p>}
     {gmail?.senders?.length > 0 ? <ul>{gmail.senders.map(sender => <li key={sender.id}>
       <strong>{sender.email}</strong> — {sender.connected ? 'Connected' : 'Not connected'}{!sender.enabled && ' · activation pending'}{' '}
