@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Gmail integration privacy · GBIG AIG Email</title>
+  <link rel="stylesheet" href="/email-information.css">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header>
+    <p class="eyebrow">GBIG AIG Email</p>
+    <nav aria-label="Email information">
+      <a href="/email-about.html">About email</a>
+      <a href="/email-privacy.html" aria-current="page">Privacy</a>
+      <a href="/email-terms.html">Use terms</a>
+    </nav>
+  </header>
+  <main id="main">
+    <h1>Gmail integration privacy</h1>
+    <p>Updated October 16, 2026. This notice covers the Gmail connection and email composer in the Green Bay Indoor Golf and Appleton Indoor Golf apps.</p>
+    <h2>Google access we request</h2>
+    <p>When you choose Connect Gmail, Google asks you to authorize sending email and confirming your account’s identity and verified email address. The integration does not request inbox-reading, draft-management, contact-list, or full-mailbox access. It does not collect your Google password.</p>
+    <h2>Data we store and use</h2>
+    <ul>
+      <li><strong>Connection information:</strong> the connected email address, Google account identifier, assigned sender, connecting app user, connection time, and an encrypted refresh token. These let the server confirm the correct mailbox and obtain short-lived access tokens to send approved messages.</li>
+      <li><strong>Authorization state:</strong> temporary connection state and an encrypted verifier protect the Google connection process. State can be used only once and expires after ten minutes; stored state records are not automatically deleted at expiration.</li>
+      <li><strong>Email records:</strong> the composer stores sender, recipients, subject, body, author, timestamps, delivery attempts, and provider message identifiers or errors. These support reviewed delivery, campaign history, and avoiding duplicate sends. These records come from app activity rather than reading the Gmail inbox.</li>
+    </ul>
+    <h2>Sharing and access</h2>
+    <p>Google processes authorization and outgoing email, including its recipients and content. Supabase hosts the backend and stored records, and Vercel hosts the app interface. Authorized venue staff can access email features according to their app roles and sender assignments. The app owner administers the backend and can handle support and removal requests.</p>
+    <p>This integration does not sell Google user data, use it for advertising, or use it to train AI models. GBIG AIG Email’s use and transfer of information received from Google APIs will adhere to the <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>, including the Limited Use requirements.</p>
+    <h2>Protection and retention</h2>
+    <p>Refresh tokens and connection verifiers are encrypted on the server. Token-storage tables are unavailable to browser clients. Server permissions also check current venue administration and sender assignments.</p>
+    <p>A saved Gmail connection remains until the app owner removes it or it is replaced by a new connection. Email and authorization records remain stored until removed by the app owner; there is no automatic deletion schedule for these records.</p>
+    <h2>Disconnecting and requesting deletion</h2>
+    <p>You can revoke the app’s Google access from <a href="https://myaccount.google.com/connections">your Google Account’s third-party connections</a>. Revoking access stops the app from obtaining new Gmail access tokens; an already-issued access token may remain valid until it expires. Revoking access does not retract sent email or automatically erase the app’s saved records.</p>
+    <p>To remove your saved Gmail connection, request deletion of associated app records, or ask about this notice, contact the app owner at <a href="mailto:enorenberg92@gmail.com">enorenberg92@gmail.com</a>. Identify the connected business email address; never send your password or tokens.</p>
+  </main>
+  <footer><p><a href="/email-about.html">About GBIG AIG Email</a></p></footer>
+</body>
+</html>

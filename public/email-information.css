@@ -1,0 +1,17 @@
+:root { color-scheme: light; font-family: system-ui, sans-serif; color: #17382b; background: #f3f6f2; line-height: 1.65; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+header, main, footer { width: min(100% - 2.5rem, 48rem); margin-inline: auto; }
+header { padding-block: 2.5rem 1.25rem; border-bottom: 1px solid #cdd9cf; }
+nav { display: flex; flex-wrap: wrap; gap: .65rem 1.25rem; }
+main { padding-block: 1.5rem 2.5rem; }
+footer { padding-block: 1.25rem 2.5rem; border-top: 1px solid #cdd9cf; }
+h1 { line-height: 1.2; font-size: clamp(1.8rem, 5vw, 2.5rem); }
+h2 { font-size: 1.25rem; margin-top: 2rem; }
+a { color: #176548; text-underline-offset: .2em; overflow-wrap: anywhere; }
+a:focus-visible { outline: 3px solid #977000; outline-offset: 4px; }
+li { margin-block: .5rem; }
+.eyebrow { font-weight: 700; letter-spacing: .03em; }
+.note { padding: 1rem 1.25rem; background: #fff; border-left: 4px solid #b58b2a; }
+.skip { position: absolute; left: -10000px; }
+.skip:focus { left: 1rem; top: 1rem; padding: .5rem; background: white; }
