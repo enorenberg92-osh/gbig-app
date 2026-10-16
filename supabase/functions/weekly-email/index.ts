@@ -69,7 +69,7 @@ Deno.serve(async req => {
       const allowance=await admin.from('weekly_email_direct_quota').select('slot').eq('location_id',event.location_id).eq('user_id',auth.user.id).limit(1)
       if(allowance.error)return json({from:preferredFrom,senders,latest:summary(row),setup:readiness(false,senders.length>0,'The direct-email daily allowance could not be checked. Ask the owner to verify the email setup before sending.')})
     }
-    if(input.action==='status')return json({from:preferredFrom,senders,latest:summary(row),setup:readiness(true,senders.length>0,!senders.length?'The owner needs to approve at least one venue sender for your signed-in account.':apiKey?'Your approved venue senders, email service key, and history storage are present. Live sender-domain verification and delivery have not been checked here.':'The owner needs to connect the email service. No message was sent.')})
+    if(input.action==='status')return json({from:preferredFrom,senders,latest:summary(row),setup:readiness(true,senders.length>0,!senders.length?'No enabled sender is available for your account. Ask the owner to check sender assignments and activation.':apiKey?'Your approved venue senders, email service key, and history storage are present. Live sender-domain verification and delivery have not been checked here.':'The owner needs to connect the email service. No message was sent.')})
     if(!direct&&(event.status!=='open'||!league?.is_working))throw new RequestError('Use the open round in the working league. This action never closes a round.',409)
     if(input.action==='preview'){
       const sender=senders.find(s=>s.id===input.sender_id)
