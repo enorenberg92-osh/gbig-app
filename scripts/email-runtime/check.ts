@@ -1,4 +1,5 @@
 import { reset, state, userId, venueId, senderId } from './mock-supabase.ts'
+import { seal } from '../../supabase/functions/_shared/gmailEmail.mjs'
 
 let handler: (req: Request) => Promise<Response>
 const originalServe = Deno.serve
@@ -70,3 +71,57 @@ Deno.test('a recipient list is normalized and private, while an unassigned From 
 })
 
 await import('./gmail-check.ts')
+
+Deno.test('1000-recipient anytime preview is accepted without a round, roster or daily allowance access',async()=>{
+  reset()
+  const to=Array.from({length:1000},(_,i)=>`p${i}@example.com`).join(';\n')
+  const input={action:'preview',...scope,compose_id:'00000000-0000-4000-8000-000000000004',sender_id:senderId,to,subject:'Anytime announcement',text:'Independent of all rounds.'}
+  const response=await request(input),result=await response.json()
+  assert(response.status===200&&result.recipient_count===1000)
+  assert(!state.calls.some(table=>['events','league_config','roster_at','players','weekly_email_direct_quota'].includes(table)))
+  reset()
+  assert((await request({...input,to:to+';overflow@example.com'})).status===400)
+  assert(state.campaign===null)
+})
+Deno.test('member picker paginates and isolates active venue contacts, filters league teams, and rejects another venue',async()=>{
+  reset()
+  const league='00000000-0000-4000-8000-000000000020'
+  state.leagues=[{id:league,location_id:venueId,name:'Current league'}]
+  state.contacts=Array.from({length:501},(_,i)=>({id:'player-'+i,email:`p${i}@example.com`,location_id:venueId,is_active:true}))
+  state.contacts.push({id:'wrong',email:'wrong@example.com',location_id:'other',is_active:true},{id:'inactive',email:'inactive@example.com',location_id:venueId,is_active:false},{id:'invalid',email:'',location_id:venueId,is_active:true})
+  state.teams=[{id:'team',league_id:league,location_id:venueId,player1_id:'player-0',player2_id:'player-500'},{id:'other-team',league_id:league,location_id:'other',player1_id:'player-1'}]
+  const all=await(await request({action:'audience',...scope,source:'venue'})).json()
+  assert(all.addresses.length===501&&all.missing_count===1)
+  assert(!all.addresses.includes('wrong@example.com')&&!all.addresses.includes('inactive@example.com'))
+  const selected=await(await request({action:'audience',...scope,source:'league',league_id:league})).json()
+  assert(selected.addresses.join(',')==='p0@example.com,p500@example.com')
+  assert((await request({action:'audience',...scope,source:'league',league_id:'00000000-0000-4000-8000-000000000021'})).status===403)
+  state.admin=false
+  assert((await request({action:'audience_options',...scope})).status===403)
+})
+
+Deno.test('a large saved campaign resumes untouched copies through the real Gmail adapter with private To headers and no daily ledger',async()=>{
+  reset()
+  const to=Array.from({length:500},(_,i)=>`p${i}@example.com`).join(',')
+  await request({action:'preview',...scope,compose_id:'00000000-0000-4000-8000-000000000004',sender_id:senderId,to,subject:'Anytime update',text:'Offline runtime test only.'})
+  state.campaign.recipients.slice(0,498).forEach((r:any)=>{r.status='accepted';r.provider_id='previous-mock'})
+  state.connection={sender_id:senderId,mailbox:'trent@greenbayindoorgolf.com',refresh_token_ciphertext:await seal('test-refresh',Deno.env.get('GMAIL_TOKEN_ENCRYPTION_KEY')!,`sender:${senderId}:trent@greenbayindoorgolf.com`)}
+  const originalFetch=globalThis.fetch,sent:string[]=[]
+  globalThis.fetch=(async(url:any,init:any)=>{
+    if(String(url)==='https://oauth2.googleapis.com/token')return Response.json({access_token:'mock-access',token_type:'Bearer'})
+    assert(String(url)==='https://gmail.googleapis.com/gmail/v1/users/me/messages/send','Unexpected network destination')
+    const raw=JSON.parse(init.body).raw.replace(/-/g,'+').replace(/_/g,'/')
+    const mime=atob(raw)
+    assert(!/^Cc:|^Bcc:/mi.test(mime))
+    sent.push(mime.match(/^To: (.+)$/m)![1].trim())
+    return Response.json({id:'mock-message-'+sent.length})
+  }) as typeof fetch
+  try{
+    state.calls=[]
+    const response=await request({action:'send',...scope,draft_id:state.campaign.id}),result=await response.json()
+    assert(response.status===200&&result.accepted_count===500&&result.pending_count===0)
+    assert(sent.join(',')==='p498@example.com,p499@example.com')
+    assert(state.calls.includes('claim_email_send_batch')&&state.calls.includes('save_email_send_progress'))
+    assert(!state.calls.includes('weekly_email_direct_quota'))
+  }finally{globalThis.fetch=originalFetch}
+})

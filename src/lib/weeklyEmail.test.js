@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import { describe, it, expect, vi } from 'vitest'
-import { reserveDirectAllowance, DirectQuotaError, authorizedSenders, directRecipient, resolveEmailAudience, validateMessage, resolveRecipients, summary, sendChunk } from '../../supabase/functions/_shared/weeklyEmail.mjs'
+import { authorizedSenders, directRecipient, resolveEmailAudience, validateMessage, resolveRecipients, summary, sendChunk } from '../../supabase/functions/_shared/weeklyEmail.mjs'
+import { contactRecipients } from '../../supabase/functions/_shared/emailRecipients.mjs'
 const event={id:'round',location_id:'gb',league_id:'league'}
 const roster=[{event_id:'round',location_id:'gb',league_id:'league',team_id:'team',player_id:'a'},{event_id:'round',location_id:'gb',league_id:'league',team_id:'team',player_id:'b'}]
 const teams=[{id:'team',location_id:'gb',league_id:'league'}]
@@ -66,8 +67,8 @@ describe('Direct email isolation',()=>{
   const audience=directRecipient(' A@Example.com, b@example.com; A@example.com\r\nc@example.com, ')
   expect(audience.recipients.map(r=>r.email)).toEqual(['a@example.com','b@example.com','c@example.com'])
   expect(()=>directRecipient('a@example.com,invalid,b@example.com')).toThrow()
-  expect(directRecipient(Array.from({length:50},(_,i)=>`p${i}@example.com`).join('\n')).recipients).toHaveLength(50)
-  expect(()=>directRecipient(Array.from({length:51},(_,i)=>`p${i}@example.com`).join(','))).toThrow(/50/)
+  expect(directRecipient(Array.from({length:1000},(_,i)=>`p${i}@example.com`).join('\n')).recipients).toHaveLength(1000)
+  expect(()=>directRecipient(Array.from({length:1001},(_,i)=>`p${i}@example.com`).join(','))).toThrow(/1000/)
   expect(()=>directRecipient('a@example.com\0,b@example.com')).toThrow()
  })
  it('sends a list as separate copies and resumes only untouched recipients after uncertainty',async()=>{
@@ -104,33 +105,20 @@ it('has no push/alert integration in either email path',()=>{
  expect(endpoint+shared).not.toMatch(/send-alert|send-social-push|push_subscriptions|webpush|publish_week/)
 })
 
+it('delivers 500 mock private copies across durable batches without duplicate addresses or shared headers',async()=>{
+ let current={...job(1),mode:'direct',...directRecipient(Array.from({length:500},(_,i)=>`p${i}@example.com`).join(','))}
+ const sent=[];let saves=0,batches=0
+ while(summary(current).pending_count){
+  current=await sendChunk(current,{save:async()=>{saves++},send:async p=>{sent.push(p);return{id:'mock-'+sent.length}},retryUnconfirmed:false,now})
+  batches++
+ }
+ expect(batches).toBe(50);expect(saves).toBe(1000)
+ expect(sent).toHaveLength(500);expect(new Set(sent.map(p=>p.to[0])).size).toBe(500)
+ expect(sent.every(p=>p.to.length===1&&!p.cc&&!p.bcc)).toBe(true)
+ expect(summary(current).accepted_count).toBe(500)
+})
 
-describe('Atomic direct-email daily allowance',()=>{
- function store(){const rows=[];return{rows,readSlots:async day=>rows.filter(r=>r.day===day),claimSlot:async(day,slot,campaign_id)=>{if(rows.some(r=>r.day===day&&(r.slot===slot||r.campaign_id===campaign_id)))return false;rows.push({day,slot,campaign_id});return true},now}}
- it('allows 50 new campaigns and blocks the 51st with reset information',async()=>{
-  const storage=store();for(let i=0;i<50;i++)await reserveDirectAllowance('campaign-'+i,storage)
-  await expect(reserveDirectAllowance('campaign-51',storage)).rejects.toThrow(/2026-10-17 00:00 UTC/)
-  expect(storage.rows).toHaveLength(50)
- })
- it('repeated and concurrent reservations cannot charge the same campaign twice or exceed the cap',async()=>{
-  const storage=store();await Promise.all(Array.from({length:5},()=>reserveDirectAllowance('same',storage)));expect(storage.rows).toHaveLength(1)
-  const results=await Promise.allSettled(Array.from({length:60},(_,i)=>reserveDirectAllowance('parallel-'+i,storage)))
-  expect(storage.rows).toHaveLength(50);expect(results.filter(r=>r.status==='rejected')).toHaveLength(11)
-  expect(results.find(r=>r.status==='rejected').reason).toBeInstanceOf(DirectQuotaError)
- })
- it('gives a new day a separate allowance and propagates storage failures',async()=>{
-  const storage=store();await reserveDirectAllowance('one',storage);await reserveDirectAllowance('two',{...storage,now:()=>new Date('2026-10-17T00:00:00Z')});expect(storage.rows.map(r=>r.day)).toEqual(['2026-10-16','2026-10-17'])
-  await expect(reserveDirectAllowance('three',{...storage,readSlots:async()=>{throw Error('db')}})).rejects.toThrow('db')
- })
- it('charges each recipient once and refuses a group that cannot fit the remaining allowance',async()=>{
-  const rows=[]
-  const storage={now,readSlots:async()=>rows,claimSlot:async(day,slot,campaign_id,recipient_count)=>{rows.push({day,slot,campaign_id,recipient_count});return true}}
-  await reserveDirectAllowance('group',{...storage,recipientCount:30})
-  await reserveDirectAllowance('group',{...storage,recipientCount:30})
-  expect(rows).toHaveLength(1);expect(rows[0].recipient_count).toBe(30)
-  await expect(reserveDirectAllowance('too-big',{...storage,recipientCount:21})).rejects.toBeInstanceOf(DirectQuotaError)
-  expect(rows).toHaveLength(1)
-  await reserveDirectAllowance('fits',{...storage,recipientCount:20})
-  expect(rows.reduce((n,r)=>n+r.recipient_count,0)).toBe(50)
- })
+it('bulk member import skips invalid records, normalizes shared addresses, and refuses oversized groups',()=>{
+ expect(contactRecipients([{email:' A@example.com '},{email:'a@example.com'},{email:''},{email:'Name <b@example.com>'},{email:'b@example.com,c@example.com'}])).toEqual({addresses:['a@example.com'],missing_count:3,player_count:5})
+ expect(()=>contactRecipients(Array.from({length:1001},(_,i)=>({email:`p${i}@example.com`})))).toThrow(/1,000/)
 })

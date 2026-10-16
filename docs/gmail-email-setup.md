@@ -95,23 +95,47 @@ recipient inbox result. Gmail account quotas and organization policies apply.
 
 ## Multiple direct recipients
 
-The direct Email tab accepts up to 50 unique explicit addresses, separated by
+The regular Email tab is available any time, without an open round, week, or
+closing workflow. It accepts up to 1,000 unique addresses, separated by
 commas, semicolons, or new lines. Addresses are normalized and deduplicated;
 any invalid address blocks preview of the entire list. Preview displays every
 address and its total before sending. Each recipient receives a separate Gmail
 message with only their own address in To. No shared To, CC, or BCC list is used.
 
+Choose **Choose venue or league members**, select a group, and use **Add whole
+league to To** or **Add all venue members to To**. League groups use that venue's
+current teams and their active players; they do not use a historical round roster.
+All-venue groups use active player records at the current venue. Missing/invalid
+addresses are counted, and shared addresses are deduplicated. Contacts are paged
+in stable ID order so groups larger than a single API page are not truncated.
+You can edit To and paste extra addresses before previewing. Loading a group
+does not send or implicitly add anyone to a later saved audience.
+
 One Send click processes the saved list in batches of at most ten. An error or
 uncertain attempt stops automatic continuation; refresh status before continuing
 the untouched recipients. Accepted and uncertain recipients are never resent.
 
-Apply the multi_recipient_email migration before deploying the updated function
-and frontend. The daily allowance remains 50 recipients per user and venue per
-UTC day, rather than 50 lists. A transaction advisory lock serializes quota
-reservations, and the database derives each reservation's cost from its saved
-campaign. The entire list must fit the remaining allowance before sending starts.
-Continuing a started campaign does not charge again. Abandoned reservations still
-count for their day. Sender permissions and Google connection scopes are unchanged.
+**Pause after this batch** saves progress and stops further batches. Use **New
+email** to compose another message while an earlier saved message is unfinished;
+**Saved emails** lists your latest 100 emails at this venue and opens the exact
+compose ID without sending. A resume still requires an explicit Continue click.
+Large sends require this browser page to stay open; a closed page does not run
+an unattended worker. Reload or use Saved emails to recover and continue.
+
+Apply anytime_bulk_email before deploying the updated function and frontend.
+The app's former 50/day cap is retired; its private quota ledger is preserved
+as history and the service role can no longer insert into it. Google mailbox
+limits still apply, including sending outside this app. Paid Workspace accounts
+typically allow 2,000 messages per rolling 24 hours; trials can be lower. Private
+copies each count as a message. No billing or account quota changes are made.
+
+The sender-batch RPC uses a transaction advisory lock and campaign leases so
+different campaigns or users cannot run parallel batches through the same
+sender. Each provider attempt is durably recorded first; the batch pauses 1.1
+seconds after each successful send. This pacing accounts for Google's current
+6,000 units/user/project/minute and 100 units per messages.send for newer
+projects. RPCs remain service-role-only, with no browser execution grants.
+Sender permissions and Google connection scopes are unchanged.
 
 ## Validation
 
@@ -129,3 +153,5 @@ References: [Gmail sending](https://developers.google.com/workspace/gmail/api/gu
 [Gmail scopes](https://developers.google.com/workspace/gmail/api/auth/scopes),
 [Google web OAuth](https://developers.google.com/identity/protocols/oauth2/web-server),
 [refresh token expiration](https://developers.google.com/identity/protocols/oauth2#expiration).
+See also [Gmail API quotas](https://developers.google.com/workspace/gmail/api/reference/quota)
+and [Workspace sending limits](https://knowledge.workspace.google.com/admin/gmail/gmail-sending-limits-in-google-workspace).
