@@ -31,12 +31,18 @@ export function summary(row) {
     created_at:row.created_at, started_at:row.started_at, message:row.last_error || null }
 }
 // save must durably persist before contacting the provider. All provider calls are injected.
-export async function sendChunk(row, { save, send, now = () => new Date(), pause = async () => {} }) {
+export async function sendChunk(row, { save, send, now = () => new Date(), pause = async () => {}, retryUnconfirmed = true }) {
   const state = structuredClone(row)
   let count = 0
   for (let i = 0; i < state.recipients.length && count < 10; i++) {
     const recipient = state.recipients[i]
     if (['accepted','review'].includes(recipient.status)) continue
+    if (!retryUnconfirmed && recipient.attempted_at) {
+      recipient.status = 'review'
+      state.last_error = 'An earlier Gmail attempt has no confirmed result. Check the sender’s Sent mail before creating any replacement email. This address will not be resent automatically.'
+      await save(state)
+      continue
+    }
     if (recipient.attempted_at && now().getTime() - Date.parse(recipient.attempted_at) >= 23 * 3600000) {
       recipient.status = 'review'
       state.last_error = 'An earlier attempt is too old to retry safely. Ask the owner to check the email service history before any further send.'
@@ -54,8 +60,12 @@ export async function sendChunk(row, { save, send, now = () => new Date(), pause
       recipient.provider_id = result.id
       await save(state)
     } catch {
-      // A timeout or write failure can mean accepted-but-unrecorded. Keep the same payload/key.
-      state.last_error = 'Sending stopped without a confirmed result for every address. Retry this same email to safely check or continue. Do not create another email.'
+      // Gmail has no provider idempotency key. A timeout or write failure must
+      // never turn into another provider call for this recipient.
+      if (!retryUnconfirmed) recipient.status = 'review'
+      state.last_error = retryUnconfirmed
+        ? 'Sending stopped without a confirmed result for every address. Retry this same email to safely check or continue. Do not create another email.'
+        : 'Gmail did not confirm this attempt. Check the sender’s Sent mail before creating any replacement email. This address will not be resent automatically.'
       await save(state)
       break
     }

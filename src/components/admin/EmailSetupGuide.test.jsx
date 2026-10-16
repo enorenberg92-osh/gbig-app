@@ -1,6 +1,7 @@
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+vi.mock('../../lib/supabase', () => ({ supabase: { functions: { invoke: vi.fn() } } }))
 import EmailSetupGuide from './EmailSetupGuide'
 
 describe('guided in-app owner setup', () => {
@@ -12,7 +13,9 @@ describe('guided in-app owner setup', () => {
     expect(html).toContain('Not checked')
     expect(html).toContain('Refresh readiness')
     expect(html).toContain('Copy setup request')
-    expect(html).toContain('RESEND_API_KEY')
+    expect(html).toContain('Connect your existing Gmail account')
+    expect(html).toContain('GMAIL_CLIENT_ID')
+    expect(html).not.toContain('RESEND_API_KEY')
     expect(html).not.toContain('type="password"')
     expect(html).not.toContain('API key value')
   })

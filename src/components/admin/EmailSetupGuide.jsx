@@ -1,11 +1,12 @@
 import React, { useState } from 'react'
 import { Button } from '../ui'
 import { emailSetupGuide } from '../../lib/emailSetupGuide'
+import GmailConnections from './GmailConnections'
 
-const STEPS = ['Check connection', 'Approve senders', 'Verify domain', 'Private test']
+const STEPS = ['Connect Gmail', 'Approve senders', 'Review connection', 'Private test']
 const statusLabel = value => value === true ? 'Present' : value === false ? 'Action needed' : 'Not checked'
 
-export default function EmailSetupGuide({ setup, senders, locationId, venueSlug, venueName, busy, onRefresh, onCompose }) {
+export default function EmailSetupGuide({ setup, senders, locationId, venueSlug, venueName, busy, onRefresh, onCompose, onConnectBusyChange }) {
   const [step, setStep] = useState(0)
   const [copyNotice, setCopyNotice] = useState('')
   const guide = emailSetupGuide({ setup, senders, locationId, venueSlug, venueName })
@@ -28,13 +29,13 @@ export default function EmailSetupGuide({ setup, senders, locationId, venueSlug,
     <div className="email-setup-step" role="region" aria-label={`Step ${step + 1}: ${STEPS[step]}`}>
       <p className="closeout-muted">Step {step + 1} of {STEPS.length}</p>
       {step === 0 && <>
-        <h4>Check the app connection</h4>
+        <h4>Connect your existing Gmail account</h4>
         <dl className="weekly-email-details">
           <dt>Email storage</dt><dd>{statusLabel(guide.readiness.storage)}</dd>
-          <dt>Email service connection</dt><dd>{statusLabel(guide.readiness.serviceKey)}</dd>
+          <dt>Gmail connection for an enabled sender</dt><dd>{statusLabel(guide.readiness.serviceKey)}</dd>
         </dl>
         <p>If action is needed, copy the setup request below for your app maintainer. After they finish, choose Refresh readiness.</p>
-        <p>Keep credentials in the secure provider dashboard. The server setting is named <code>RESEND_API_KEY</code>; never paste a key into this app.</p>
+        <GmailConnections gmail={setup?.gmail} disabled={busy} onBusyChange={onConnectBusyChange}/>
         <Button variant="secondary" disabled={busy} onClick={onRefresh}>Refresh readiness</Button>
       </>}
       {step === 1 && <>
@@ -43,18 +44,17 @@ export default function EmailSetupGuide({ setup, senders, locationId, venueSlug,
         {guide.initialSender && <p><strong>Initial venue sender:</strong> {guide.initialSender}</p>}
         {senders?.length > 0 && <ul>{senders.map(sender => <li key={sender.id}>{sender.from}</li>)}</ul>}
         <p>The owner approves each staff account and sender for this venue. Copy the setup request to make that approval specific. Multiple approved senders appear in the From menu.</p>
-        <p>For a new location, use the same steps with its own verified sender domain and staff account IDs.</p>
+        <p>For a new location, approve its own Gmail sender and staff account IDs.</p>
         <p>A sender address does not identify a staff account. This guide does not change anyone’s permissions.</p>
       </>}
       {step === 2 && <>
-        <h4>Verify the sending domain</h4>
-        {guide.domains.length > 0 && <p><strong>Domains to review:</strong> {guide.domains.join(', ')}</p>}
+        <h4>Review the Gmail connection</h4>
         <ol>
-          <li><a href="https://resend.com/domains" target="_blank" rel="noopener noreferrer">Open Resend Domains</a> and choose the sending domain. Reuse its existing record if present.</li>
-          <li>If it is unverified, the domain owner copies Resend’s exact DNS records into their DNS provider and waits for verification.</li>
-          <li>Confirm the existing sending key is allowed to send from this domain. Have the owner approve any provider or credential change.</li>
+          <li>Connect the Gmail account whose sign-in address exactly matches the approved From address.</li>
+          <li>Choose Refresh readiness to see the saved connection and sender activation status.</li>
+          <li>The owner approves sender activation separately. Gmail’s account sending limits still apply.</li>
         </ol>
-        <p>Domain verification and key validity require owner review. A green configuration check does not confirm either, and this guide never changes DNS or credentials.</p>
+        <p>This uses your existing Gmail service. No DNS changes are part of this setup. A saved connection does not confirm that its authorization is still valid or that a message reached an inbox.</p>
       </>}
       {step === 3 && <>
         <h4>Approve one private delivery test</h4>
