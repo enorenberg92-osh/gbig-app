@@ -373,10 +373,11 @@ describe('direct Email composition', () => {
     return harness.invoke.mock.calls.at(-1)[1].body.compose_id
   }
 
-  it('validates exactly one To address and rejects lists or display-name syntax', () => {
+  it('accepts recipient lists and rejects invalid entries or display-name syntax', () => {
     expect(directEmailValidation('test@example.com')).toBe('')
-    for (const to of ['', 'a@example.com,b@example.com', 'a@example.com;b@example.com', 'Name <a@example.com>', 'a@example.com\nb@example.com', 'no-address']) {
-      expect(directEmailValidation(to)).toMatch(/one email address/)
+    for (const to of ['a@example.com,b@example.com', 'a@example.com;b@example.com', 'a@example.com\nb@example.com']) expect(directEmailValidation(to)).toBe('')
+    for (const to of ['', 'Name <a@example.com>', 'no-address', 'a@example.com,not-an-email']) {
+      expect(directEmailValidation(to)).not.toBe('')
     }
   })
   it('opens without a round and does not guess a To address or use roster fields', async () => {
@@ -396,7 +397,8 @@ describe('direct Email composition', () => {
     expect(composeId).toMatch(/^[0-9a-f-]{36}$/)
     expect(harness.invoke).toHaveBeenLastCalledWith('weekly-email', { body: { action: 'preview', mode: 'direct', location_id: 'gbig', compose_id: composeId, sender_id: 'sender-trent', to: 'test@example.com', subject: 'Week 3', text: 'Hello league!' } })
     expect(harness.invoke).toHaveBeenCalledTimes(2)
-    expect(textOf(tree)).toMatch(/To:test@example.com|To: test@example.com/)
+    expect(textOf(tree)).toContain('test@example.com')
+    expect(textOf(tree)).toContain('1 recipient · separate private copies')
     expect(textOf(tree)).not.toMatch(/rostered players without/)
     harness.invoke.mockResolvedValueOnce(response(directDraft(composeId, { status: 'accepted', accepted_count: 1, pending_count: 0 })))
     await button('Send email').props.onClick()
@@ -519,7 +521,7 @@ describe('direct Email composition', () => {
     expect(harness.invoke).toHaveBeenCalledTimes(3)
   })
 
-  it('does not expose Send if a direct preview unexpectedly contains more than one recipient', async () => {
+  it('rejects a preview whose recipient count differs from the entered list', async () => {
     directProps()
     await mount()
     writeTo()
@@ -528,5 +530,35 @@ describe('direct Email composition', () => {
     await button('Preview email').props.onClick()
     render()
     expect(button('Send email')).toBeUndefined()
+    expect(textOf(tree)).toMatch(/preview recipient list did not match/)
+  })
+  it('reviews a deduplicated list and sends all saved chunks from one explicit click', async () => {
+    directProps();await mount()
+    const addresses=Array.from({length:12},(_,i)=>`p${i}@example.com`)
+    writeTo(addresses.join(';')+';p0@example.com');writeMessage()
+    let compose
+    const group=overrides=>directDraft(compose,{to:addresses.join(', '),to_addresses:addresses,recipient_count:12,pending_count:12,...overrides})
+    harness.invoke.mockImplementationOnce(async(_name,{body})=>{compose=body.compose_id;return response(group())})
+    await button('Preview email').props.onClick();render()
+    expect(byId('weekly-email-to').type).toBe('textarea')
+    expect(textOf(tree)).toContain('12 recipients · separate private copies')
+    expect(button('Send to 12 recipients').props.disabled).toBe(false)
+    harness.invoke.mockResolvedValueOnce(response(group({status:'sending',accepted_count:10,pending_count:2})))
+    harness.invoke.mockResolvedValueOnce(response(group({status:'accepted',accepted_count:12,pending_count:0})))
+    await button('Send to 12 recipients').props.onClick();render()
+    expect(harness.invoke.mock.calls.slice(-2).map(call=>call[1].body)).toEqual(Array(2).fill({action:'send',mode:'direct',location_id:'gbig',draft_id:'draft-1'}))
+    expect(textOf(tree)).toContain('All 12 emails accepted')
+    expect(byId('weekly-email-to').props.disabled).toBe(true)
+  })
+  it('stops automatic continuation on uncertain delivery instead of silently proceeding', async () => {
+    directProps();await mount();writeTo('a@example.com,b@example.com');writeMessage()
+    let compose
+    const group=overrides=>directDraft(compose,{to:'a@example.com, b@example.com',to_addresses:['a@example.com','b@example.com'],recipient_count:2,pending_count:2,...overrides})
+    harness.invoke.mockImplementationOnce(async(_name,{body})=>{compose=body.compose_id;return response(group())})
+    await button('Preview email').props.onClick();render()
+    harness.invoke.mockResolvedValueOnce(response(group({status:'review',review_count:1,pending_count:1,message:'Check Sent mail.'})))
+    await button('Send to 2 recipients').props.onClick();render()
+    expect(harness.invoke).toHaveBeenCalledTimes(3)
+    expect(button('Continue sending')).toBeDefined()
   })
 })

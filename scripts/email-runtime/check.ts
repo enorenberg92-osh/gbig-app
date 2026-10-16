@@ -57,10 +57,13 @@ Deno.test('a direct preview saves exactly one explicit recipient without loading
   assert(state.campaign.event_id === null && state.campaign.league_id === null)
   assert(!state.calls.some(table => ['events', 'league_config', 'roster_at', 'players'].includes(table)))
 })
-Deno.test('an unassigned From and a multi-recipient To cannot save a direct preview', async () => {
+Deno.test('a recipient list is normalized and private, while an unassigned From remains denied', async () => {
   reset()
   const input = { action: 'preview', ...scope, compose_id: '00000000-0000-4000-8000-000000000004', sender_id: senderId, to: 'one@example.com,two@example.com', subject: 'Test', text: 'Private' }
-  assert((await request(input)).status === 400)
+  const result=await (await request(input)).json()
+  assert(result.recipient_count===2 && result.to_addresses.join(',')==='one@example.com,two@example.com')
+  assert(!state.calls.some(table=>['events','league_config','roster_at','players'].includes(table)))
+  reset()
   state.assigned = false
   assert((await request({ ...input, to: 'one@example.com' })).status === 403)
   assert(state.campaign === null)

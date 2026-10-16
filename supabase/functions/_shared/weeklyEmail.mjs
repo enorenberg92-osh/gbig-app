@@ -1,4 +1,7 @@
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+import { directRecipient } from './emailRecipients.mjs'
+export { directRecipient } from './emailRecipients.mjs'
+
 export function validateMessage(subject, text) {
   if (typeof subject !== 'string' || !subject.trim() || subject.length > 200 || /[\r\n\x00-\x1f]/.test(subject)) throw new Error('Enter a subject of 1–200 characters without line breaks.')
   if (typeof text !== 'string' || !text.trim() || text.length > 20000 || text.includes('\0')) throw new Error('Enter a message of 1–20,000 characters.')
@@ -24,7 +27,10 @@ export function summary(row) {
   if (!row) return null
   const accepted_count = row.recipients.filter(r => r.status === 'accepted').length
   const review_count = row.recipients.filter(r => r.status === 'review').length
-  return { draft_id:row.id, mode:row.mode||'league', compose_id:row.compose_id||null, to:row.mode==='direct'?row.recipients[0]?.email:undefined, sender_id:row.sender_id, from:row.sender, subject:row.subject, text:row.body,
+  return { draft_id:row.id, mode:row.mode||'league', compose_id:row.compose_id||null,
+    to:row.mode==='direct'?row.recipients.map(r=>r.email).join(', '):undefined,
+    to_addresses:row.mode==='direct'?row.recipients.map(r=>r.email):undefined,
+    sender_id:row.sender_id, from:row.sender, subject:row.subject, text:row.body,
     recipient_count:row.recipients.length, missing_count:row.missing_count,
     accepted_count, review_count, pending_count:row.recipients.length - accepted_count - review_count,
     status:accepted_count === row.recipients.length ? 'accepted' : review_count ? 'review' : row.started_at ? 'sending' : 'draft',
@@ -86,13 +92,6 @@ export function authorizedSenders(configs, assignments, userId, locationId) {
   }).sort((a,b) => Number(b.is_default) - Number(a.is_default) || a.from.localeCompare(b.from))
 }
 
-export function directRecipient(value) {
-  if (typeof value !== 'string' || value.length > 254) throw new Error('Enter one recipient email address.')
-  const email=value.trim().toLowerCase()
-  if (!/^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/i.test(email)) throw new Error('Enter one valid email address, without a name, comma, or additional recipients.')
-  return { recipients:[{email,status:'pending',attempted_at:null}], missing_count:0 }
-}
-
 // The direct path cannot accidentally load a league audience: the callback is
 // invoked only for league mode. Kept injectable for offline isolation tests.
 export async function resolveEmailAudience(mode, to, loadLeagueAudience) {
@@ -105,15 +104,17 @@ export const DIRECT_DAILY_LIMIT = 50
 export class DirectQuotaError extends Error {}
 // Each slot is protected by a database unique constraint. A count-only check
 // would allow concurrent requests to exceed the limit.
-export async function reserveDirectAllowance(campaignId, { readSlots, claimSlot, now=()=>new Date() }) {
+export async function reserveDirectAllowance(campaignId, { readSlots, claimSlot, recipientCount=1, now=()=>new Date() }) {
+  if (!Number.isInteger(recipientCount) || recipientCount < 1 || recipientCount > DIRECT_DAILY_LIMIT) throw new DirectQuotaError('Choose 1–50 recipients before sending.')
   const day=now().toISOString().slice(0,10)
   const reset=new Date(`${day}T00:00:00.000Z`);reset.setUTCDate(reset.getUTCDate()+1)
   const slots=await readSlots(day)
   if(slots.some(s=>s.campaign_id===campaignId))return
+  if(slots.reduce((total,s)=>total+(s.recipient_count||1),0)+recipientCount>DIRECT_DAILY_LIMIT) throw new DirectQuotaError(`This email needs ${recipientCount} recipient places, but fewer remain in today's ${DIRECT_DAILY_LIMIT}-recipient limit. Try after ${reset.toISOString().slice(0,16).replace('T',' ')} UTC.`)
   const used=new Set(slots.map(s=>s.slot))
   for(let slot=0;slot<DIRECT_DAILY_LIMIT;slot++){
     if(used.has(slot))continue
-    if(await claimSlot(day,slot,campaignId))return
+    if(await claimSlot(day,slot,campaignId,recipientCount))return
     // Another request may have reserved this same campaign concurrently.
     if((await readSlots(day)).some(s=>s.campaign_id===campaignId))return
   }
