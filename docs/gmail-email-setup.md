@@ -84,8 +84,11 @@ Use direct email only for validation. Never send to the league roster as a test.
 Gmail has no Resend-style provider idempotency key. Progress is saved before
 calling Gmail; an uncertain attempt or interrupted write moves that recipient
 to review and never resends it automatically. The owner checks the sender's
-Sent mail before approving a replacement. Stable Message-IDs help identify
-the original attempt but are not claimed to provide Gmail deduplication.
+Sent mail before approving a replacement. The app supplies a stable Message-ID,
+but Gmail can rewrite it: the live private delivery test returned a different
+RFC Message-ID. Review sender, recipient, subject, send time, and saved provider
+message ID rather than relying on the submitted Message-ID. Neither identifier
+is claimed to provide Gmail deduplication.
 
 Saved configuration and Gmail API acceptance are distinct from a confirmed
 recipient inbox result. Gmail account quotas and organization policies apply.
