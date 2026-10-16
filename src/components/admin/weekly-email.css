@@ -29,3 +29,5 @@
 .email-setup-step h4 { margin:8px 0; font-size:17px; }
 .email-setup-navigation { display:flex; gap:12px; margin:20px 0; }
 .email-setup-request pre { padding:12px; border:1px solid #a5b3ab; border-radius:8px; background:white; white-space:pre-wrap; overflow-wrap:anywhere; font:inherit; font-size:13px; }
+.weekly-email-recipients { max-height: 14rem; overflow-y: auto; overflow-wrap: anywhere; padding-left: 1.5rem; }
+.weekly-email-recipients li { margin-bottom: .35rem; }

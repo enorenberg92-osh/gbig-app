@@ -3,6 +3,7 @@ import { Mail, RefreshCw } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { Button } from '../ui'
 import EmailSetupGuide from './EmailSetupGuide'
+import { directRecipient, DIRECT_RECIPIENT_INPUT_LIMIT } from '../../../supabase/functions/_shared/emailRecipients.mjs'
 import './weekly-email.css'
 
 export function weeklyEmailValidation(subject, text) {
@@ -14,9 +15,15 @@ export function weeklyEmailValidation(subject, text) {
 }
 
 export function directEmailValidation(to) {
-  const address = to.trim()
-  return address.length <= 254 && /^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/.test(address)
-    ? '' : 'Enter one email address in To. Multiple recipients are not supported here.'
+  try { directRecipient(to); return '' } catch (error) { return error.message }
+}
+
+function directAudienceMatches(draft, to) {
+  try {
+    const expected = directRecipient(to).recipients.map(item => item.email)
+    const actual = draft.to_addresses || directRecipient(draft.to).recipients.map(item => item.email)
+    return draft.recipient_count === expected.length && actual.length === expected.length && expected.every((email, i) => actual[i] === email)
+  } catch { return false }
 }
 
 export function weeklyEmailStarted(draft) {
@@ -72,7 +79,7 @@ export default function WeeklyEmail({ eventId, locationId, actorId, venueName, v
   const selectedSender = senders.find(item => item.id === senderId)
   const senderAuthorized = !!selectedSender
   const displayedSender = locked ? draft?.from || sender : selectedSender?.from || sender
-  const currentPreview = !!draft && draft.subject === subject && draft.text === text && draft.sender_id === senderId && (!direct || (draft.mode === 'direct' && draft.recipient_count === 1 && draft.to === to && draft.compose_id === composeId))
+  const currentPreview = !!draft && draft.subject === subject && draft.text === text && draft.sender_id === senderId && (!direct || (draft.mode === 'direct' && directAudienceMatches(draft, to) && draft.to === to && draft.compose_id === composeId))
 
   useEffect(() => {
     const version = ++sequence.current
@@ -209,6 +216,7 @@ export default function WeeklyEmail({ eventId, locationId, actorId, venueName, v
     try {
       const result = await requestEmail({ action: 'preview', ...emailScope(), sender_id: senderId, subject, text, ...(direct ? { to, compose_id: composeId } : {}) })
       if (version !== sequence.current) return
+      if (direct && !directAudienceMatches(result, to)) throw new Error('The preview recipient list did not match your addresses. Check setup and preview again.')
       showDraft(result)
       setNotice(direct ? 'Preview saved. Check From, To, subject, and message, then choose Send email.' : 'Preview saved. Check the message and recipient counts, then choose Send.')
     } catch (err) {
@@ -226,11 +234,18 @@ export default function WeeklyEmail({ eventId, locationId, actorId, venueName, v
     setSendStarted(true)
     reportProgress(draft, true)
     try {
-      // Only an explicit Send or Continue click reaches this action. No recipients
-      // or editable content are supplied, including after an interrupted request.
-      const result = await requestEmail({ action: 'send', ...emailScope(), draft_id: draftId })
-      if (version !== sequence.current) return
-      showDraft(result)
+      // One explicit click authorizes the reviewed private copies. Continue only
+      // the same saved direct campaign; never retry an error or uncertain result.
+      let result, previousPending = draft.pending_count
+      do {
+        result = await requestEmail({ action: 'send', ...emailScope(), draft_id: draftId })
+        if (version !== sequence.current) return
+        if (result.draft_id !== draftId) throw new Error('The email result did not match this saved preview.')
+        showDraft(result)
+        if (!direct || !result.pending_count || result.review_count || result.message) break
+        if (result.pending_count >= previousPending) throw new Error('Email processing stopped making progress. Check the saved status before continuing.')
+        previousPending = result.pending_count
+      } while (true)
       setNotice(result.message ? '' : result.pending_count > 0
         ? 'Batch finished. Choose Continue sending for the remaining recipients.'
         : 'Email processing finished. Review the results below.')
@@ -252,7 +267,7 @@ export default function WeeklyEmail({ eventId, locationId, actorId, venueName, v
     setSendStarted(false)
     setStatusRequired(false)
     setError('')
-    setNotice('New email started. Enter one To address and preview before sending.')
+    setNotice('New email started. Enter recipient addresses and preview before sending.')
     const preferred = senders.find(item => item.is_default) || senders[0]
     setSenderId(preferred?.id || '')
     setSender(preferred?.from || '')
@@ -264,7 +279,7 @@ export default function WeeklyEmail({ eventId, locationId, actorId, venueName, v
 
   return <section className="weekly-email" aria-labelledby="weekly-email-title" aria-busy={busy}>
     <h3 id="weekly-email-title"><Mail size={20} aria-hidden="true"/> {direct ? 'Email' : 'Weekly Email'}</h3>
-    <p>{direct ? 'Send an email to one person, or send yourself a private test. Preview the exact recipient, sender, subject, and message before sending.' : 'Paste or type this week’s message. Preview the roster audience before sending. Each golfer receives a separate email.'}</p>
+    <p>{direct ? 'Send one message to up to 50 recipients. Each person receives a private copy showing only their own address. Preview the recipients, sender, subject, and message before sending.' : 'Paste or type this week’s message. Preview the roster audience before sending. Each golfer receives a separate email.'}</p>
     {direct ? <p className="closeout-muted">No round or league roster is used. This sends email only, with no app or push notification.</p> : <p className="closeout-muted">Finish sending before closing this round. Closing removes this composer and prevents continuing any remaining emails.</p>}
     <div className="weekly-email-setup">
       <div><strong>Email setup</strong>
@@ -277,7 +292,7 @@ export default function WeeklyEmail({ eventId, locationId, actorId, venueName, v
     {direct && storageWarning && <p className="closeout-warning" role="status">{storageWarning}</p>}
     {error && <p className="closeout-warning" role="alert">{error}</p>}
     {notice && <p className="closeout-notice" role="status">{notice}</p>}
-    {busy && <p role="status">{phase === 'sending' ? 'Sending this batch to the email service…' : phase === 'previewing' ? (direct ? 'Saving preview for this one recipient…' : 'Saving preview and confirming this round’s recipients…') : 'Checking email setup and saved progress…'}</p>}
+    {busy && <p role="status">{phase === 'sending' ? 'Sending the saved email to the email service…' : phase === 'previewing' ? (direct ? 'Saving preview and confirming your recipient list…' : 'Saving preview and confirming this round’s recipients…') : 'Checking email setup and saved progress…'}</p>}
 
     <label htmlFor="weekly-email-from">From</label>
     {!locked && senders.length > 1
@@ -291,9 +306,9 @@ export default function WeeklyEmail({ eventId, locationId, actorId, venueName, v
     {!locked && !senderAuthorized && senders.length === 1 && <Button variant="secondary" disabled={busy || disabled} onClick={() => { setSenderId(senders[0].id); setNotice('') }}>Use {senders[0].from}</Button>}
     {direct && <>
       <label htmlFor="weekly-email-to">To</label>
-      <input ref={recipientInput} id="weekly-email-to" type="email" inputMode="email" autoComplete="off" maxLength={254} value={to} placeholder="name@example.com" disabled={busy || disabled || locked} onChange={e => { setTo(e.target.value); setNotice('') }} aria-describedby="weekly-email-to-note"/>
-      <p id="weekly-email-to-note" className="closeout-muted">One email address. Enter your own address if you want to test delivery.</p>
-      <p className="closeout-muted">Limit: 50 new direct emails per account and venue each UTC day. Continuing a saved send does not use another allowance.</p>
+      <textarea ref={recipientInput} id="weekly-email-to" rows={3} autoComplete="off" autoCapitalize="none" spellCheck={false} maxLength={DIRECT_RECIPIENT_INPUT_LIMIT} value={to} placeholder="first@example.com, second@example.com" disabled={busy || disabled || locked} onChange={e => { setTo(e.target.value); setNotice('') }} aria-describedby="weekly-email-to-note"/>
+      <p id="weekly-email-to-note" className="closeout-muted">Separate addresses with commas, semicolons, or new lines. Duplicates are removed. Recipients cannot see each other’s addresses.</p>
+      <p className="closeout-muted">Limit: 50 direct-email recipients per account and venue each UTC day. Each private copy counts once. Continuing a saved send does not use another allowance.</p>
     </>}
     <label htmlFor="weekly-email-subject">Subject</label>
     <input id="weekly-email-subject" type="text" maxLength={200} value={subject} disabled={busy || disabled || locked} onChange={e => { setSubject(e.target.value); setNotice('') }} aria-describedby="weekly-email-subject-count"/>
@@ -301,13 +316,13 @@ export default function WeeklyEmail({ eventId, locationId, actorId, venueName, v
     <label htmlFor="weekly-email-body">Message</label>
     <textarea id="weekly-email-body" rows={12} maxLength={20000} value={text} disabled={busy || disabled || locked} onChange={e => { setText(e.target.value); setNotice('') }} aria-describedby="weekly-email-body-note"/>
     <p id="weekly-email-body-note" className="closeout-muted">Plain text · {text.length.toLocaleString()}/20,000 characters. Previewing does not send email.</p>
-    {locked && <p className="closeout-muted">Sending has started. The message, sender, and recipient are locked for this saved email.</p>}
+    {locked && <p className="closeout-muted">Sending has started. The message, sender, and recipients are locked for this saved email.</p>}
     {!locked && <Button disabled={!canPreview} loading={phase === 'previewing'} onClick={preview}>{currentPreview ? (direct ? 'Refresh preview' : 'Refresh preview and audience') : 'Preview email'}</Button>}
     {draft && !currentPreview && <p className="closeout-muted">Your message, sender, or recipient changed. Preview again before sending.</p>}
 
     {draft && currentPreview && <div className="weekly-email-preview" aria-labelledby="weekly-email-preview-title">
       <h4 id="weekly-email-preview-title">{locked ? 'Email and sending progress' : 'Review before sending'}</h4>
-      {direct ? <p><strong>To:</strong> {draft.to} · {draft.recipient_count} recipient</p> : <><p><strong>{draft.recipient_count}</strong> unique recipient address{draft.recipient_count === 1 ? '' : 'es'} confirmed by the server for this round.</p>
+      {direct ? <><p><strong>To:</strong> {draft.recipient_count} recipient{draft.recipient_count === 1 ? '' : 's'} · separate private copies</p><ul className="weekly-email-recipients" aria-label="Recipient preview">{(draft.to_addresses || directRecipient(draft.to).recipients.map(item => item.email)).map(email => <li key={email}>{email}</li>)}</ul></> : <><p><strong>{draft.recipient_count}</strong> unique recipient address{draft.recipient_count === 1 ? '' : 'es'} confirmed by the server for this round.</p>
       <p className={draft.missing_count ? 'closeout-warning' : 'closeout-muted'}>{draft.missing_count} rostered player{draft.missing_count === 1 ? '' : 's'} without a usable email address{draft.missing_count ? '; they will not receive this email.' : '.'}</p></>}
       <dl className="weekly-email-details"><dt>From</dt><dd>{draft.from}</dd><dt>Subject</dt><dd>{draft.subject}</dd></dl>
       <div className="weekly-email-message">{draft.text}</div>
@@ -323,9 +338,9 @@ export default function WeeklyEmail({ eventId, locationId, actorId, venueName, v
       {draft.review_count > 0 && <p className="closeout-warning">An earlier attempt for {draft.review_count} recipient{draft.review_count === 1 ? '' : 's'} is too old to retry safely. Ask the owner to check the email service history. These recipients are not automatically retried, to avoid duplicate emails.</p>}
       {!direct && !draft.recipient_count && <p className="closeout-warning">No usable recipient addresses were found. Update the roster’s email addresses and preview again.</p>}
       {draft.pending_count > 0 && <>
-        <p className="closeout-muted">{direct ? `Send this exact email to ${draft.to}?` : <>{locked ? 'Continue processes only the remaining recipients in this saved draft.' : `Send this exact message to ${draft.recipient_count} recipient${draft.recipient_count === 1 ? '' : 's'}?`} Up to 10 recipients are processed per batch.</>}</p>
+        <p className="closeout-muted">{direct ? `Send this exact message as ${draft.recipient_count} private ${draft.recipient_count === 1 ? 'copy' : 'copies'}? If interrupted, refresh status and continue the saved email.` : <>{locked ? 'Continue processes only the remaining recipients in this saved draft.' : `Send this exact message to ${draft.recipient_count} recipient${draft.recipient_count === 1 ? '' : 's'}?`} Up to 10 recipients are processed per batch.</>}</p>
         {!setup?.configured && <p className="closeout-warning">Email service configuration is required before sending.</p>}
-        <Button icon={<Mail size={16}/>} disabled={!canSend} loading={phase === 'sending'} onClick={send}>{locked ? 'Continue sending' : direct ? 'Send email' : `Send to ${draft.recipient_count} recipient${draft.recipient_count === 1 ? '' : 's'}`}</Button>
+        <Button icon={<Mail size={16}/>} disabled={!canSend} loading={phase === 'sending'} onClick={send}>{locked ? 'Continue sending' : direct && draft.recipient_count === 1 ? 'Send email' : `Send to ${draft.recipient_count} recipient${draft.recipient_count === 1 ? '' : 's'}`}</Button>
       </>}
       {direct && draft.status === 'accepted' && <Button variant="secondary" disabled={busy || disabled} onClick={newEmail}>New email</Button>}
       {draft.status === 'accepted' && <p className="closeout-notice" role="status">All {draft.accepted_count} email{draft.accepted_count === 1 ? '' : 's'} accepted by the email service.</p>}

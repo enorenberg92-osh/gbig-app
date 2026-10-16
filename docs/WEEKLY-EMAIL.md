@@ -1,6 +1,6 @@
 # Email: staff use and one-time owner setup
 
-This feature provides separate direct email and pre-close weekly email workflows. See WEEKLY-EMAIL-VERIFICATION.md for the current release record. No real validation emails have been sent.
+This feature provides separate direct email and pre-close weekly email workflows. Current delivery uses Gmail; follow **gmail-email-setup.md** for setup and sending reliability. The original Resend owner notes below are historical and must not be followed. DNS changes are prohibited. One separately approved Erich-to-owner private test was delivered; that does not verify other mailboxes or group delivery.
 
 ## Guided owner setup inside the app
 
@@ -8,13 +8,13 @@ Open **Email → Owner setup · four simple steps**. The interactive guide walks
 
 The guide provides a copyable setup request containing this venue's ID and the account ID confirmed by the backend. A sender address never establishes account identity. Multiple senders and future venues use the same guide. Credentials are entered only in the secure provider dashboards. Domain verification and key validity remain owner checks; presence alone does not establish delivery readiness.
 
-## Send yourself a test or email one person
+## Send a private message to one or more people
 
 1. Open **Email** in the venue's admin menu. No round or league is required.
-2. Check **From**, enter one address in **To**, and type or paste **Subject** and **Message**. To test, enter your own exact email address. The app does not guess the owner's address.
-3. Choose **Preview email**. Check the exact sender, recipient, subject, and message, then explicitly send to that one address.
+2. Check **From**, enter up to 50 unique addresses in **To**, and type or paste **Subject** and **Message**. Separate addresses with commas, semicolons, or new lines. Duplicates are removed; invalid addresses block preview. For a private test, enter only the approved test recipients.
+3. Choose **Preview email**. Check the full recipient list, sender, subject, and message, then choose **Send to N recipients** (or **Send email** for one).
 
-This path never looks up the league roster and never sends a push notification. It can only send to one explicitly entered address. It is suitable for a private test or an ordinary individual message. A test is a real email to that address; previewing is not a send. Choose **New email** to deliberately start a different message after the current message finishes.
+Each person receives a separate private copy showing only their own address. One click processes the saved list in batches of ten, stopping on errors or uncertainty. This path never looks up the league roster and never sends a push notification. A test is a real email; previewing is not a send. Choose **New email** to deliberately start a different message after the current message finishes. The daily allowance is 50 recipient copies per user and venue each UTC day, not 50 lists; the entire list must fit before sending begins.
 
 The initial sender defaults requested are:
 - Green Bay: **Trent <trent@greenbayindoorgolf.com>**
@@ -39,7 +39,9 @@ Sending never closes a round or finalizes scores. Finish the league email before
 
 If sender permission was removed or the configured address changed, further sending stops. The owner must review the saved email and permissions; the app never silently substitutes another sender. One league email is allowed per round. Additional individual messages require explicit New email.
 
-## Owner: one-time setup
+## Historical V2 owner notes — superseded by Gmail setup
+
+The remainder records the original Resend package, not the current setup procedure. Use **gmail-email-setup.md** instead. Do not install a Resend sending key or change DNS for this composer. Gmail does not provide provider idempotency: uncertain recipients require review and are never automatically retried.
 
 Ordinary staff do not need API keys, provider settings, DNS, or technical knowledge. An owner/app maintainer performs this initial setup once. The in-app guide reports what still needs attention; check the verification record before applying a migration again.
 

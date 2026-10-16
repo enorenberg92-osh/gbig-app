@@ -58,9 +58,27 @@ describe('Approved senders by venue and signed-in administrator',()=>{
 
 
 describe('Direct email isolation',()=>{
- it('accepts exactly one explicit address and never supplies a roster',()=>{
+ it('accepts explicit addresses and rejects display names or header injection',()=>{
   expect(directRecipient(' Owner@Example.com ')).toEqual({recipients:[{email:'owner@example.com',status:'pending',attempted_at:null}],missing_count:0})
-  for(const value of ['',undefined,['owner@example.com'],'a@example.com,b@example.com','Owner <a@example.com>','a@example.com\nBcc:b@example.com'])expect(()=>directRecipient(value)).toThrow()
+  for(const value of ['',undefined,['owner@example.com'],'Owner <a@example.com>','a@example.com\nBcc:b@example.com'])expect(()=>directRecipient(value)).toThrow()
+ })
+ it('normalizes and deduplicates comma, semicolon and newline lists without dropping invalid entries',()=>{
+  const audience=directRecipient(' A@Example.com, b@example.com; A@example.com\r\nc@example.com, ')
+  expect(audience.recipients.map(r=>r.email)).toEqual(['a@example.com','b@example.com','c@example.com'])
+  expect(()=>directRecipient('a@example.com,invalid,b@example.com')).toThrow()
+  expect(directRecipient(Array.from({length:50},(_,i)=>`p${i}@example.com`).join('\n')).recipients).toHaveLength(50)
+  expect(()=>directRecipient(Array.from({length:51},(_,i)=>`p${i}@example.com`).join(','))).toThrow(/50/)
+  expect(()=>directRecipient('a@example.com\0,b@example.com')).toThrow()
+ })
+ it('sends a list as separate copies and resumes only untouched recipients after uncertainty',async()=>{
+  let saved;const calls=[]
+  const j={...job(1),mode:'direct',...directRecipient('a@example.com,b@example.com,c@example.com')}
+  await sendChunk(j,{save:async s=>{saved=structuredClone(s)},send:async p=>{calls.push(p);if(calls.length===2)throw Error('timeout');return{id:'ok'}},retryUnconfirmed:false,now})
+  expect(saved.recipients.map(r=>r.status)).toEqual(['accepted','review','pending'])
+  await sendChunk(saved,{save:async s=>{saved=structuredClone(s)},send:async p=>{calls.push(p);return{id:'ok'}},retryUnconfirmed:false,now})
+  expect(calls.map(p=>p.to)).toEqual([['a@example.com'],['b@example.com'],['c@example.com']])
+  expect(calls.every(p=>!('cc' in p)&&!('bcc' in p))).toBe(true)
+  expect(summary(saved).to_addresses).toEqual(['a@example.com','b@example.com','c@example.com'])
  })
  it('retries only the frozen direct target, sender and content',async()=>{
   const j={...job(1),mode:'direct',compose_id:'compose',...directRecipient('owner@example.com')};let saved;const calls=[]
@@ -103,5 +121,16 @@ describe('Atomic direct-email daily allowance',()=>{
  it('gives a new day a separate allowance and propagates storage failures',async()=>{
   const storage=store();await reserveDirectAllowance('one',storage);await reserveDirectAllowance('two',{...storage,now:()=>new Date('2026-10-17T00:00:00Z')});expect(storage.rows.map(r=>r.day)).toEqual(['2026-10-16','2026-10-17'])
   await expect(reserveDirectAllowance('three',{...storage,readSlots:async()=>{throw Error('db')}})).rejects.toThrow('db')
+ })
+ it('charges each recipient once and refuses a group that cannot fit the remaining allowance',async()=>{
+  const rows=[]
+  const storage={now,readSlots:async()=>rows,claimSlot:async(day,slot,campaign_id,recipient_count)=>{rows.push({day,slot,campaign_id,recipient_count});return true}}
+  await reserveDirectAllowance('group',{...storage,recipientCount:30})
+  await reserveDirectAllowance('group',{...storage,recipientCount:30})
+  expect(rows).toHaveLength(1);expect(rows[0].recipient_count).toBe(30)
+  await expect(reserveDirectAllowance('too-big',{...storage,recipientCount:21})).rejects.toBeInstanceOf(DirectQuotaError)
+  expect(rows).toHaveLength(1)
+  await reserveDirectAllowance('fits',{...storage,recipientCount:20})
+  expect(rows.reduce((n,r)=>n+r.recipient_count,0)).toBe(50)
  })
 })

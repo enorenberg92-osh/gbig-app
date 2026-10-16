@@ -78,7 +78,7 @@ and an exact matching saved Gmail connection are both required for sending.
 Existing owner/staff sender assignments remain authoritative.
 
 Sender activation still needs separate owner approval. A live delivery test
-requires approval of exact From, one To address, subject, and complete message.
+requires approval of exact From, recipient addresses, subject, and complete message.
 Use direct email only for validation. Never send to the league roster as a test.
 
 Gmail has no Resend-style provider idempotency key. Progress is saved before
@@ -92,6 +92,26 @@ is claimed to provide Gmail deduplication.
 
 Saved configuration and Gmail API acceptance are distinct from a confirmed
 recipient inbox result. Gmail account quotas and organization policies apply.
+
+## Multiple direct recipients
+
+The direct Email tab accepts up to 50 unique explicit addresses, separated by
+commas, semicolons, or new lines. Addresses are normalized and deduplicated;
+any invalid address blocks preview of the entire list. Preview displays every
+address and its total before sending. Each recipient receives a separate Gmail
+message with only their own address in To. No shared To, CC, or BCC list is used.
+
+One Send click processes the saved list in batches of at most ten. An error or
+uncertain attempt stops automatic continuation; refresh status before continuing
+the untouched recipients. Accepted and uncertain recipients are never resent.
+
+Apply the multi_recipient_email migration before deploying the updated function
+and frontend. The daily allowance remains 50 recipients per user and venue per
+UTC day, rather than 50 lists. A transaction advisory lock serializes quota
+reservations, and the database derives each reservation's cost from its saved
+campaign. The entire list must fit the remaining allowance before sending starts.
+Continuing a started campaign does not charge again. Abandoned reservations still
+count for their day. Sender permissions and Google connection scopes are unchanged.
 
 ## Validation
 

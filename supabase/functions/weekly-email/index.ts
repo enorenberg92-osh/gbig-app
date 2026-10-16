@@ -133,10 +133,12 @@ Deno.serve(async req => {
     }
     if(direct&&!row.started_at){
       try{await reserveDirectAllowance(row.id,{
-        readSlots:async(day:string)=>checked(admin.from('weekly_email_direct_quota').select('slot,campaign_id').eq('quota_day',day).eq('location_id',event.location_id).eq('user_id',auth.user.id).limit(51)),
+        recipientCount:row.recipients.length,
+        readSlots:async(day:string)=>checked(admin.from('weekly_email_direct_quota').select('slot,campaign_id,recipient_count').eq('quota_day',day).eq('location_id',event.location_id).eq('user_id',auth.user.id).limit(51)),
         claimSlot:async(day:string,slot:number,campaignId:string)=>{
           const result=await admin.from('weekly_email_direct_quota').insert({quota_day:day,location_id:event.location_id,user_id:auth.user.id,slot,campaign_id:campaignId})
           if(result.error?.code==='23505')return false
+          if(result.error?.message?.includes('DIRECT_EMAIL_DAILY_LIMIT'))throw new DirectQuotaError('The daily limit is 50 direct-email recipients per account and venue. Try after the next 00:00 UTC reset. No new send was started.')
           if(result.error)throw result.error
           return true
         },

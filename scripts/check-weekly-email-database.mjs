@@ -20,6 +20,7 @@ try {
   `)
   await db.exec(readFileSync(new URL('../docs/proposed-sql/weekly-email.sql', import.meta.url), 'utf8'))
   await db.exec(readFileSync(new URL('../supabase/migrations/20261016212050_gmail_email.sql', import.meta.url), 'utf8'))
+  await db.exec(readFileSync(new URL('../supabase/migrations/20261016233945_multi_recipient_email.sql', import.meta.url), 'utf8'))
   const { rows: senders } = await db.query('SELECT * FROM weekly_email_senders ORDER BY email')
   const sender = senders.find(s => s.location_id === id(1))
   await check('both venue defaults are disabled and grant no account access', async () => {
@@ -72,10 +73,14 @@ try {
     INSERT INTO weekly_email_campaigns(id,mode,compose_id,location_id,created_by,sender_id,sender,reply_to,subject,body,recipients)
     VALUES ($1,'direct',$1,$2,$3,$4,'Trent <trent@greenbayindoorgolf.com>','trent@greenbayindoorgolf.com','Test','Private message',$5::jsonb)`,
     [campaignId, locationId, id(3), sender.id, JSON.stringify(recipients)])
-  await check('direct campaigns require one recipient and a sender belonging to the venue', async () => {
+  const audience = n => Array.from({ length: n }, (_, i) => ({ email: `person${i}@example.com`, status: 'pending' }))
+  await check('direct campaigns allow 1–50 recipients and require the correct venue and direct scope', async () => {
     await insert(id(10))
     await assert.rejects(insert(id(11), id(2)))
-    await assert.rejects(insert(id(12), id(1), [{ email: 'a@example.com' }, { email: 'b@example.com' }]))
+    await insert(id(12), id(1), audience(2))
+    await insert(id(13), id(1), audience(50))
+    await assert.rejects(insert(id(14), id(1), audience(51)))
+    await assert.rejects(insert(id(15), id(1), []))
     await assert.rejects(db.query('UPDATE weekly_email_campaigns SET event_id=$1 WHERE id=$2', [id(5), id(10)]))
   })
   await check('two lease claims have exactly one winner and stale tokens cannot write', async () => {
@@ -86,10 +91,23 @@ try {
     assert.equal(stale.rows.length, 0)
   })
   await check('direct allowance slots reject concurrent duplicates and slots above 49', async () => {
-    const reserve = campaign => db.query('INSERT INTO weekly_email_direct_quota VALUES (CURRENT_DATE,$1,$2,0,$3)', [id(1), id(3), campaign])
+    await insert(id(30)); await insert(id(31)); await insert(id(32))
+    const reserve = campaign => db.query('INSERT INTO weekly_email_direct_quota(quota_day,location_id,user_id,slot,campaign_id) VALUES (CURRENT_DATE,$1,$2,0,$3)', [id(1), id(3), campaign])
     const results = await Promise.allSettled([reserve(id(30)), reserve(id(31))])
     assert.equal(results.filter(result => result.status === 'fulfilled').length, 1)
-    await assert.rejects(db.query('INSERT INTO weekly_email_direct_quota VALUES (CURRENT_DATE,$1,$2,50,$3)', [id(1), id(3), id(32)]))
+    await assert.rejects(db.query('INSERT INTO weekly_email_direct_quota(quota_day,location_id,user_id,slot,campaign_id) VALUES (CURRENT_DATE,$1,$2,50,$3)', [id(1), id(3), id(32)]))
+  })
+  await check('quota derives recipient cost from the saved campaign and enforces 50 total', async () => {
+    await insert(id(40), id(1), audience(30)); await insert(id(41), id(1), audience(20)); await insert(id(42))
+    const reserve = (campaign, slot) => db.query("INSERT INTO weekly_email_direct_quota(quota_day,location_id,user_id,slot,campaign_id,recipient_count) VALUES ('2026-10-01',$1,$2,$3,$4,1)", [id(1), id(3), slot, campaign])
+    await reserve(id(40), 0)
+    assert.equal((await db.query("SELECT recipient_count FROM weekly_email_direct_quota WHERE campaign_id=$1", [id(40)])).rows[0].recipient_count, 30)
+    await assert.rejects(reserve(id(40), 1), /unique/i)
+    await reserve(id(41), 1)
+    await assert.rejects(reserve(id(42), 2), /DIRECT_EMAIL_DAILY_LIMIT/)
+    assert.equal((await db.query("SELECT SUM(recipient_count)::int AS n FROM weekly_email_direct_quota WHERE quota_day='2026-10-01'")).rows[0].n, 50)
+    await assert.rejects(db.query("INSERT INTO weekly_email_direct_quota(quota_day,location_id,user_id,slot,campaign_id) VALUES ('2026-10-02',$1,$2,0,$3)", [id(2), id(3), id(40)]), /DIRECT_EMAIL_CAMPAIGN_NOT_FOUND/)
+    for (const role of ['anon', 'authenticated']) assert.equal((await db.query("SELECT has_function_privilege($1,'public.enforce_direct_email_allowance()','EXECUTE') AS allowed", [role])).rows[0].allowed, false)
   })
   console.log(`${passed} PostgreSQL email checks passed. No production connection or email provider used.`)
 } finally { await db.close() }
