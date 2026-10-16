@@ -9,6 +9,7 @@ import { hasCompleteCoursePars } from '../../lib/holeUtils'
 import { closeoutStatus, closeoutSkins, closeoutResults, penaltyNet, recapText } from '../../lib/closeoutUtils'
 import { mutationErrorMessage } from '../../lib/rpcErrors'
 import ConfirmDialog from '../ConfirmDialog'
+import WeeklyEmail from './WeeklyEmail'
 import { Button } from '../ui'
 import './closeout.css'
 
@@ -24,6 +25,8 @@ export default function AdminDashboard({ onWeekClosed = () => {} }) {
   const [snapshot, setSnapshot] = useState(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
+  const [emailBusy, setEmailBusy] = useState(false)
+  const [emailProgress, setEmailProgress] = useState(null)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [reviewed, setReviewed] = useState(false)
@@ -79,7 +82,7 @@ export default function AdminDashboard({ onWeekClosed = () => {} }) {
   }
 
   async function publish() {
-    if (busy) return
+    if (busy || emailBusy || emailInProgress) return
     setConfirm(false)
     setBusy(true)
     setError('')
@@ -103,6 +106,11 @@ export default function AdminDashboard({ onWeekClosed = () => {} }) {
     } finally { setBusy(false) }
   }
 
+  function updateEmailProgress(next) {
+    setEmailProgress(previous => previous?.eventId === next.eventId && previous?.locationId === next.locationId
+      ? { ...previous, ...next } : next)
+  }
+
   async function copyRecap() {
     try { await navigator.clipboard.writeText(email); setNotice('Recap copied. It has not been emailed.') }
     catch { setNotice('Copy was blocked. Select the recap text and copy it manually.') }
@@ -116,24 +124,31 @@ export default function AdminDashboard({ onWeekClosed = () => {} }) {
   const { event, course, players, scores, roster, teams, matchups } = snapshot
   const status = closeoutStatus(roster, scores)
   const closed = event.status === 'closed'
+  const weeklyEmailEnabled = event.status === 'open'
+  const workflowBusy = busy || emailBusy
+  const currentEmailProgress = emailProgress?.eventId === event.id && emailProgress?.locationId === locationId ? emailProgress : null
+  const emailInProgress = weeklyEmailEnabled && currentEmailProgress?.started && currentEmailProgress.pending > 0
+  const steps = weeklyEmailEnabled
+    ? [['review','1. Review'],['weekly-email','2. Weekly Email'],['publish','3. Close round'],['recap','4. Share recap']]
+    : [['review','1. Review'],['publish','2. Close round'],['recap','3. Share recap']]
   const courseValid = hasCompleteCoursePars(course) && course.total_par === course.hole_pars.reduce((a,b) => a+b,0)
   const hasPending = status.pending.length > 0
-  const canPublish = !closed && !error && status.rosterValid && courseValid && !hasPending && reviewed && (!status.missing.length || penaltiesAccepted)
+  const canPublish = !closed && !error && !emailInProgress && status.rosterValid && courseValid && !hasPending && reviewed && (!status.missing.length || penaltiesAccepted)
   const name = id => players.find(p => p.id === id)?.name || 'Unknown player'
   const results = closeoutResults(event, scores, roster, teams, players, matchups)
   const skins = closeoutSkins(scores, players, course, roster)
   const rosterIds = new Set(roster.map(row => row.player_id))
   const recipients = [...new Set(players.filter(p => rosterIds.has(p.id) && p.email).map(p => p.email.trim().toLowerCase()))]
 
-  return <div className="closeout" aria-busy={busy}>
+  return <div className="closeout" aria-busy={workflowBusy}>
     <header className="closeout-header">
       <div><p>{snapshot.league.name} · {course?.name || 'Course not set'}</p><h2>{event.name || `Week ${event.week_number}`}</h2></div>
       <span className="closeout-status">{closed ? 'Closed' : 'Open for scores'}</span>
     </header>
     <div className="closeout-toolbar">
-      <nav aria-label="Closeout steps">{[['review','1. Review'],['publish','2. Close round'],['recap','3. Share recap']].map(([id,label]) =>
-        <button key={id} disabled={busy || (id === 'recap' && !closed)} aria-current={step === id ? 'step' : undefined} onClick={() => setStep(id)}>{label}</button>)}</nav>
-      <Button variant="secondary" disabled={busy} icon={<RefreshCw size={15}/>} onClick={() => load(event.id)}>Refresh</Button>
+      <nav aria-label="Closeout steps">{steps.map(([id,label]) =>
+        <button key={id} disabled={workflowBusy || (id === 'recap' && !closed)} aria-current={step === id ? 'step' : undefined} onClick={() => setStep(id)}>{label}</button>)}</nav>
+      <Button variant="secondary" disabled={workflowBusy} icon={<RefreshCw size={15}/>} onClick={() => load(event.id)}>Refresh</Button>
     </div>
     {notice && <p className="closeout-notice" role="status">{notice}</p>}
     {error && <p className="closeout-warning" role="alert">{error}</p>}
@@ -151,16 +166,26 @@ export default function AdminDashboard({ onWeekClosed = () => {} }) {
         {results.map(row => <div className="closeout-result" key={row.id}><span>{row.name}</span><strong>{row.result}</strong></div>)}
       </section>
       {skinsEnabled && <section><h3>Skins {closed ? '' : 'preview'}</h3>{skins.length ? skins.map(s => <div className="closeout-result" key={s.hole}><span>Hole {s.hole} · {s.player.name}</span><strong>{s.score}</strong></div>) : <p>{hasPending || status.missing.length ? 'No winners in the verified scores so far. Resolve outstanding scores before confirming.' : 'No skins won. Tied holes are a completed result.'}</p>}</section>}
-      {!closed && <Button disabled={busy || hasPending || !status.rosterValid || !courseValid || !!error} onClick={() => { setReviewed(true); setStep('publish') }}>Review complete — close round</Button>}
+      {!closed && <Button disabled={workflowBusy || hasPending || !status.rosterValid || !courseValid || !!error} onClick={() => { setReviewed(true); setStep(weeklyEmailEnabled ? 'weekly-email' : 'publish') }}>{weeklyEmailEnabled ? 'Review complete — Weekly Email' : 'Review complete — close round'}</Button>}
     </>}
+
+    {weeklyEmailEnabled && <div hidden={step !== 'weekly-email'}>
+      <WeeklyEmail key={`${locationId}:${event.id}`} eventId={event.id} locationId={locationId} disabled={busy || !!error} onBusyChange={setEmailBusy} onProgressChange={updateEmailProgress}/>
+      <Button variant="secondary" disabled={workflowBusy} onClick={() => setStep('publish')}>Continue to Close round</Button>
+      <p className="closeout-muted">Sending a weekly email is optional and does not close the round.</p>
+    </div>}
 
     {step === 'publish' && <section>
       <h3>{closed ? 'This round is closed' : 'Close this round'}</h3>
-      <p>Closing locks the round, applies missed-week penalties, computes format results, and opens the next scheduled playable week. The email recap comes afterward.</p>
+      <p>Closing locks the round, applies missed-week penalties, computes format results, and opens the next scheduled playable week. {weeklyEmailEnabled ? 'Send the Weekly Email before closing; the finalized recap remains available afterward.' : 'The email recap comes afterward.'}</p>
+      {weeklyEmailEnabled && <p className="closeout-muted">Finish any Weekly Email before closing. Closing removes the composer and prevents continuing remaining emails for this round.</p>}
+      {weeklyEmailEnabled && currentEmailProgress?.statusError && <p className="closeout-warning">Email status could not be checked. Confirm any earlier Weekly Email is finished before closing; remaining emails cannot continue afterward.</p>}
+      {emailInProgress && <div className="closeout-warning"><p>Finish the Weekly Email before closing: {currentEmailProgress.pending} recipient result(s) are still pending or unconfirmed.</p><Button variant="secondary" disabled={workflowBusy} onClick={() => setStep('weekly-email')}>Return to Weekly Email</Button></div>}
+      {weeklyEmailEnabled && currentEmailProgress?.review > 0 && <p className="closeout-warning">{currentEmailProgress.review} email recipient result(s) need review in the email service. Resolve those results before closing if further email action is needed.</p>}
       {hasPending && <p className="closeout-warning">Resolve {status.pending.length} pending score(s) before publishing.</p>}
       {!closed && !reviewed && <p className="closeout-warning">Complete the Review step before closing.</p>}
       {!!status.missing.length && !closed && <label className="closeout-confirm"><input type="checkbox" checked={penaltiesAccepted} onChange={e => setPenaltiesAccepted(e.target.checked)}/><span>I reviewed the {status.missing.length} missing player(s). Apply net penalties of course par + rounded handicap + 7.</span></label>}
-      {!closed && <Button fullWidth icon={<Lock size={16}/>} disabled={!canPublish || busy} loading={busy} onClick={() => setConfirm(true)}>Lock &amp; publish round</Button>}
+      {!closed && <Button fullWidth icon={<Lock size={16}/>} disabled={!canPublish || workflowBusy} loading={busy} onClick={() => setConfirm(true)}>Lock &amp; publish round</Button>}
       {closed && <Button onClick={() => setStep('recap')}>View finalized recap</Button>}
     </section>}
 
