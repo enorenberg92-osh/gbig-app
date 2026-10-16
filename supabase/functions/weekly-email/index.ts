@@ -1,5 +1,6 @@
 import { createClient } from 'npm:@supabase/supabase-js@2.101.1'
-import { UUID, emailSetupStatus, reserveDirectAllowance, DirectQuotaError, authorizedSenders, resolveEmailAudience, validateMessage, resolveRecipients, summary, sendChunk } from '../_shared/weeklyEmail.mjs'
+import { UUID, emailSetupStatus, authorizedSenders, resolveEmailAudience, validateMessage, resolveRecipients, summary, sendChunk } from '../_shared/weeklyEmail.mjs'
+import { contactRecipients } from '../_shared/emailRecipients.mjs'
 import { gmailConfiguration, unseal, exchangeGoogleToken, sendGmail } from '../_shared/gmailEmail.mjs'
 
 const headers = { 'Access-Control-Allow-Origin':'*', 'Access-Control-Allow-Headers':'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods':'POST, OPTIONS' }
@@ -7,6 +8,15 @@ const json = (body:unknown, status=200) => new Response(JSON.stringify(body), { 
 class RequestError extends Error { constructor(message:string, public status=400) { super(message) } }
 type ApprovedSender = { id:string; from:string; reply_to:string; is_default:boolean }
 async function checked(query:any) { const {data,error}=await query; if(error)throw error; return data }
+async function contactPages(query:()=>any) {
+  const rows:any[]=[]
+  for(let offset=0;offset<10000;offset+=500){
+    const page=await checked(query().order('id').range(offset,offset+499))
+    rows.push(...page)
+    if(page.length<500)return rows
+  }
+  throw new RequestError('This group is too large to load safely. Choose a smaller league.',413)
+}
 
 Deno.serve(async req => {
   if(req.method==='OPTIONS')return new Response('ok',{headers})
@@ -20,11 +30,12 @@ Deno.serve(async req => {
     // Bound the stream, including requests without Content-Length.
     const reader=req.body?.getReader(); if(!reader)throw new RequestError('Choose a round.')
     let bytes=0; const chunks:Uint8Array[]=[]
-    while(true){const {value,done}=await reader.read();if(done)break;bytes+=value.length;if(bytes>90000){await reader.cancel();throw new RequestError('The message is too long.',413)}chunks.push(value)}
+    while(true){const {value,done}=await reader.read();if(done)break;bytes+=value.length;if(bytes>400000){await reader.cancel();throw new RequestError('The message or recipient list is too long.',413)}chunks.push(value)}
     const raw=new Uint8Array(bytes);let offset=0;for(const chunk of chunks){raw.set(chunk,offset);offset+=chunk.length}
     let input:any;try{input=JSON.parse(new TextDecoder().decode(raw))}catch{throw new RequestError('The request must contain valid JSON.')}
-    if(!input||!['status','preview','send'].includes(input.action)||!['league','direct'].includes(input.mode||'league'))throw new RequestError('Choose a valid email action.')
+    if(!input||!['status','preview','send','audience_options','audience'].includes(input.action)||!['league','direct'].includes(input.mode||'league'))throw new RequestError('Choose a valid email action.')
     const direct=input.mode==='direct'
+    if(!direct&&['audience_options','audience'].includes(input.action))throw new RequestError('Use the regular Email tab to choose members.')
     const scopeId=direct?input.location_id:input.event_id
     if(typeof scopeId!=='string'||!UUID.test(scopeId))throw new RequestError(direct?'Choose a valid venue.':'Choose a valid round.')
     if(input.action==='send'&&(typeof input.draft_id!=='string'||!UUID.test(input.draft_id)))throw new RequestError('Preview this email before sending.')
@@ -39,6 +50,22 @@ Deno.serve(async req => {
       checked(admin.from('super_admins').select('user_id').eq('user_id',auth.user.id).maybeSingle()),
     ])
     if(!staff&&!superAdmin)throw new RequestError('You are not an administrator for this venue.',403)
+    // Explicit member-picker actions only. Manual previews never query a roster.
+    if(input.action==='audience_options')return json({leagues:await checked(admin.from('league_config').select('id,name').eq('location_id',event.location_id).order('name').limit(1000))})
+    if(input.action==='audience'){
+      if(!['venue','league'].includes(input.source))throw new RequestError('Choose venue members or a league.')
+      let memberIds:Set<string>|null=null
+      if(input.source==='league'){
+        if(typeof input.league_id!=='string'||!UUID.test(input.league_id))throw new RequestError('Choose a valid league.')
+        const chosen=await checked(admin.from('league_config').select('id').eq('id',input.league_id).eq('location_id',event.location_id).maybeSingle())
+        if(!chosen)throw new RequestError('This league does not belong to this venue.',403)
+        const teams=await contactPages(()=>admin.from('teams').select('id,player1_id,player2_id').eq('location_id',event.location_id).eq('league_id',chosen.id))
+        memberIds=new Set(teams.flatMap((t:any)=>[t.player1_id,t.player2_id]).filter(Boolean))
+      }
+      const players=await contactPages(()=>admin.from('players').select('id,email').eq('location_id',event.location_id).eq('is_active',true))
+      try{return json(contactRecipients(memberIds?players.filter((p:any)=>memberIds!.has(p.id)):players))}
+      catch(e){throw new RequestError((e as Error).message)}
+    }
     const gmailConfig=gmailConfiguration((name:string)=>Deno.env.get(name))
     let connected=false
     let gmailSenders:any[]=[]
@@ -77,11 +104,10 @@ Deno.serve(async req => {
       throw new RequestError('Email history storage is unavailable. Ask the owner to check setup before sending.',503)
     }
     let row=stored.data
-    if(direct&&input.action==='status'){
-      const allowance=await admin.from('weekly_email_direct_quota').select('slot').eq('location_id',event.location_id).eq('user_id',auth.user.id).limit(1)
-      if(allowance.error)return json({from:preferredFrom,senders,latest:summary(row),setup:readiness(false,senders.length>0,'The direct-email daily allowance could not be checked. Ask the owner to verify the email setup before sending.')})
+    if(input.action==='status'){
+      const recent=direct?await checked(admin.rpc('list_email_history',{expected_location:event.location_id,expected_creator:auth.user.id})):[]
+      return json({from:preferredFrom,senders,latest:summary(row),recent,setup:readiness(true,senders.length>0,!gmailConfig?'The owner needs to finish Google app setup. Your existing Gmail accounts will deliver email.':!senders.length?'No enabled sender is available for your account. The owner must approve activation separately.':connected?'An approved Gmail connection and email storage are present. Refresh-token validity and inbox delivery have not been tested.':'Connect the exact approved Gmail account before sending. No message was sent.')})
     }
-    if(input.action==='status')return json({from:preferredFrom,senders,latest:summary(row),setup:readiness(true,senders.length>0,!gmailConfig?'The owner needs to finish Google app setup. Your existing Gmail accounts will deliver email.':!senders.length?'No enabled sender is available for your account. The owner must approve activation separately.':connected?'An approved Gmail connection and email storage are present. Refresh-token validity and inbox delivery have not been tested.':'Connect the exact approved Gmail account before sending. No message was sent.')})
     if(!direct&&(event.status!=='open'||!league?.is_working))throw new RequestError('Use the open round in the working league. This action never closes a round.',409)
     if(input.action==='preview'){
       const sender=senders.find(s=>s.id===input.sender_id)
@@ -131,34 +157,20 @@ Deno.serve(async req => {
       let audience;try{audience=resolveRecipients(currentRoster,currentPlayers,currentTeams,event)}catch{throw new RequestError('The roster changed. Preview the email again.',409)}
       if(JSON.stringify(audience.recipients.map((r:any)=>r.email))!==JSON.stringify(row.recipients.map((r:any)=>r.email))||audience.missing_count!==row.missing_count)throw new RequestError('The recipient list changed. Preview the email again before sending.',409)
     }
-    if(direct&&!row.started_at){
-      try{await reserveDirectAllowance(row.id,{
-        recipientCount:row.recipients.length,
-        readSlots:async(day:string)=>checked(admin.from('weekly_email_direct_quota').select('slot,campaign_id,recipient_count').eq('quota_day',day).eq('location_id',event.location_id).eq('user_id',auth.user.id).limit(51)),
-        claimSlot:async(day:string,slot:number,campaignId:string)=>{
-          const result=await admin.from('weekly_email_direct_quota').insert({quota_day:day,location_id:event.location_id,user_id:auth.user.id,slot,campaign_id:campaignId})
-          if(result.error?.code==='23505')return false
-          if(result.error?.message?.includes('DIRECT_EMAIL_DAILY_LIMIT'))throw new DirectQuotaError('The daily limit is 50 direct-email recipients per account and venue. Try after the next 00:00 UTC reset. No new send was started.')
-          if(result.error)throw result.error
-          return true
-        },
-      })}catch(e){if(e instanceof DirectQuotaError)throw new RequestError(e.message,429);throw new RequestError('The direct-email sending allowance could not be checked. No new send was started; ask the owner to check setup.',503)}
-    }
-    const token=crypto.randomUUID(), now=new Date()
-    const claimed=await table().update({lease_token:token,lease_until:new Date(now.getTime()+180000).toISOString(),started_at:row.started_at||now.toISOString()})
-      .eq('id',row.id).or(`lease_until.is.null,lease_until.lt.${now.toISOString()}`).select('*').maybeSingle()
+    const token=crypto.randomUUID()
+    const claimed=await admin.rpc('claim_email_send_batch',{target_campaign:row.id,expected_location:event.location_id,expected_creator:direct?auth.user.id:null,claim_token:token}).maybeSingle()
     if(claimed.error)throw claimed.error
-    if(!claimed.data)throw new RequestError('This email is already being processed. Wait a moment, then check status.',409)
+    if(!claimed.data)throw new RequestError('This Gmail sender is processing another batch. Wait a moment, then refresh status and continue the saved email.',409)
     row=claimed.data
     try {
       const result=await sendChunk(row,{
         save:async (state:any)=>{
-          const saved=await table().update({recipients:state.recipients,last_error:state.last_error,lease_until:new Date(Date.now()+180000).toISOString()}).eq('id',row.id).eq('lease_token',token).select('id').maybeSingle()
+          const saved=await admin.rpc('save_email_send_progress',{target_campaign:row.id,claim_token:token,new_recipients:state.recipients,new_error:state.last_error||null}).maybeSingle()
           if(saved.error||!saved.data)throw new Error('Send progress could not be recorded. Check status before retrying.')
         },
         send:(payload:any,key:string)=>sendGmail(payload,key,connection.mailbox,accessToken),
         retryUnconfirmed:false,
-        pause:()=>new Promise(resolve=>setTimeout(resolve,600)),
+        pause:()=>new Promise(resolve=>setTimeout(resolve,1100)),
       })
       return json(summary(result))
     } finally {

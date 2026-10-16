@@ -31,3 +31,6 @@
 .email-setup-request pre { padding:12px; border:1px solid #a5b3ab; border-radius:8px; background:white; white-space:pre-wrap; overflow-wrap:anywhere; font:inherit; font-size:13px; }
 .weekly-email-recipients { max-height: 14rem; overflow-y: auto; overflow-wrap: anywhere; padding-left: 1.5rem; }
 .weekly-email-recipients li { margin-bottom: .35rem; }
+.weekly-email-toolbar, .weekly-email-audience { margin: 16px 0; padding: 16px; border: 1px solid var(--gray-200); border-radius: 10px; }
+.weekly-email-toolbar label { margin-top: 12px; }
+.weekly-email-audience > strong { display: block; margin-bottom: 12px; }

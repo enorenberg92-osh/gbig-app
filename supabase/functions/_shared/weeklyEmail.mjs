@@ -100,26 +100,6 @@ export async function resolveEmailAudience(mode, to, loadLeagueAudience) {
   return await loadLeagueAudience()
 }
 
-export const DIRECT_DAILY_LIMIT = 50
-export class DirectQuotaError extends Error {}
-// Each slot is protected by a database unique constraint. A count-only check
-// would allow concurrent requests to exceed the limit.
-export async function reserveDirectAllowance(campaignId, { readSlots, claimSlot, recipientCount=1, now=()=>new Date() }) {
-  if (!Number.isInteger(recipientCount) || recipientCount < 1 || recipientCount > DIRECT_DAILY_LIMIT) throw new DirectQuotaError('Choose 1–50 recipients before sending.')
-  const day=now().toISOString().slice(0,10)
-  const reset=new Date(`${day}T00:00:00.000Z`);reset.setUTCDate(reset.getUTCDate()+1)
-  const slots=await readSlots(day)
-  if(slots.some(s=>s.campaign_id===campaignId))return
-  if(slots.reduce((total,s)=>total+(s.recipient_count||1),0)+recipientCount>DIRECT_DAILY_LIMIT) throw new DirectQuotaError(`This email needs ${recipientCount} recipient places, but fewer remain in today's ${DIRECT_DAILY_LIMIT}-recipient limit. Try after ${reset.toISOString().slice(0,16).replace('T',' ')} UTC.`)
-  const used=new Set(slots.map(s=>s.slot))
-  for(let slot=0;slot<DIRECT_DAILY_LIMIT;slot++){
-    if(used.has(slot))continue
-    if(await claimSlot(day,slot,campaignId,recipientCount))return
-    // Another request may have reserved this same campaign concurrently.
-    if((await readSlots(day)).some(s=>s.campaign_id===campaignId))return
-  }
-  throw new DirectQuotaError(`This account has reached the limit of ${DIRECT_DAILY_LIMIT} new direct emails for this venue today. Try a new email after ${reset.toISOString().slice(0,16).replace('T',' ')} UTC. Existing started emails can still be safely retried.`)
-}
 // Readiness exposes presence checks only, never a credential or a delivery claim.
 /** @param {{storage?: boolean|null, sender?: boolean|null, serviceKey?: boolean, accountId?: string, locationId?: string, message?: string}} options */
 export function emailSetupStatus({ storage = null, sender = null, serviceKey = false, accountId, locationId, message }) {

@@ -3,7 +3,7 @@ import { Mail, RefreshCw } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { Button } from '../ui'
 import EmailSetupGuide from './EmailSetupGuide'
-import { directRecipient, DIRECT_RECIPIENT_INPUT_LIMIT } from '../../../supabase/functions/_shared/emailRecipients.mjs'
+import { directRecipient, DIRECT_RECIPIENT_INPUT_LIMIT, DIRECT_RECIPIENT_LIMIT } from '../../../supabase/functions/_shared/emailRecipients.mjs'
 import './weekly-email.css'
 
 export function weeklyEmailValidation(subject, text) {
@@ -67,6 +67,10 @@ export default function WeeklyEmail({ eventId, locationId, actorId, venueName, v
   const [sendStarted, setSendStarted] = useState(false)
   const [statusRequired, setStatusRequired] = useState(false)
   const [gmailConnecting, setGmailConnecting] = useState(false)
+  const [savedEmails, setSavedEmails] = useState([])
+  const [groups, setGroups] = useState(null)
+  const [groupId, setGroupId] = useState('venue')
+  const pauseRequested = useRef(false)
   const sequence = useRef(0)
   const inFlight = useRef(false)
   const busyCallback = useRef(onBusyChange)
@@ -108,6 +112,10 @@ export default function WeeklyEmail({ eventId, locationId, actorId, venueName, v
     setSendStarted(false)
     setStatusRequired(false)
     setGmailConnecting(false)
+    setSavedEmails([])
+    setGroups(null)
+    setGroupId('venue')
+    pauseRequested.current = true
     checkStatus(true, version, savedCompose)
     return () => {
       sequence.current++
@@ -153,6 +161,7 @@ export default function WeeklyEmail({ eventId, locationId, actorId, venueName, v
 
   function showDraft(next, hydrate = true) {
     setDraft(next)
+    if (direct && next?.compose_id) setSavedEmails(previous => [{ compose_id: next.compose_id, subject: next.subject, created_at: next.created_at, recipient_count: next.recipient_count, accepted_count: next.accepted_count, review_count: next.review_count, pending_count: next.pending_count }, ...previous.filter(item => item.compose_id !== next.compose_id)].slice(0,100))
     reportProgress(next)
     if (next?.from) setSender(next.from)
     if (hydrate && next) {
@@ -174,6 +183,7 @@ export default function WeeklyEmail({ eventId, locationId, actorId, venueName, v
       const result = await requestEmail({ action: 'status', ...emailScope(), ...(requestedCompose ? { compose_id: requestedCompose } : {}) })
       if (version !== sequence.current) return
       setSetup(result.setup)
+      if (Array.isArray(result.recent)) setSavedEmails(result.recent)
       const approved = Array.isArray(result.senders) ? result.senders : []
       setSenders(approved)
       const preferred = approved.find(item => item.is_default) || approved[0]
@@ -227,11 +237,36 @@ export default function WeeklyEmail({ eventId, locationId, actorId, venueName, v
     } finally { finish(version) }
   }
 
+  async function loadGroups() {
+    if (!direct || locked || !begin('checking')) return
+    const version = sequence.current
+    try {
+      const result = await requestEmail({ action: 'audience_options', ...emailScope() })
+      if (version === sequence.current) setGroups(result.leagues || [])
+    } catch (err) { if (version === sequence.current) setError(err.message) }
+    finally { finish(version) }
+  }
+
+  async function addMembers() {
+    if (!direct || locked || !begin('checking')) return
+    const version = sequence.current
+    try {
+      const result = await requestEmail({ action: 'audience', ...emailScope(), source: groupId === 'venue' ? 'venue' : 'league', ...(groupId === 'venue' ? {} : { league_id: groupId }) })
+      if (version !== sequence.current) return
+      if (!Array.isArray(result.addresses) || !result.addresses.length) throw new Error('No usable email addresses were found in this group.')
+      const combined = directRecipient([to, ...result.addresses].filter(Boolean).join('\n')).recipients.map(item => item.email)
+      setTo(combined.join(', '))
+      setNotice(`${combined.length} unique recipient addresses are now in To. ${result.missing_count || 0} member records had no usable email address. Review the list and preview before sending.`)
+    } catch (err) { if (version === sequence.current) setError(err.message) }
+    finally { finish(version) }
+  }
+
   async function send() {
     if (disabled || !currentPreview || !senderAuthorized || !setup?.configured || (setup?.provider === 'gmail' && !selectedSender?.gmail_connected) || statusRequired || !draft.pending_count || !['draft', 'sending', 'review'].includes(draft.status) || !begin('sending')) return
     const version = sequence.current
     const draftId = draft.draft_id
     setSendStarted(true)
+    pauseRequested.current = false
     reportProgress(draft, true)
     try {
       // One explicit click authorizes the reviewed private copies. Continue only
@@ -242,11 +277,11 @@ export default function WeeklyEmail({ eventId, locationId, actorId, venueName, v
         if (version !== sequence.current) return
         if (result.draft_id !== draftId) throw new Error('The email result did not match this saved preview.')
         showDraft(result)
-        if (!direct || !result.pending_count || result.review_count || result.message) break
+        if (!direct || !result.pending_count || result.review_count || result.message || pauseRequested.current) break
         if (result.pending_count >= previousPending) throw new Error('Email processing stopped making progress. Check the saved status before continuing.')
         previousPending = result.pending_count
       } while (true)
-      setNotice(result.message ? '' : result.pending_count > 0
+      setNotice(pauseRequested.current && result.pending_count > 0 ? 'Sending paused. Your progress is saved. Continue this email later from Saved emails.' : result.message ? '' : result.pending_count > 0
         ? 'Batch finished. Choose Continue sending for the remaining recipients.'
         : 'Email processing finished. Review the results below.')
     } catch (err) {
@@ -258,7 +293,7 @@ export default function WeeklyEmail({ eventId, locationId, actorId, venueName, v
   }
 
   function newEmail() {
-    if (!direct || busy || disabled || draft?.status !== 'accepted') return
+    if (!direct || busy || disabled || statusRequired) return
     rememberCompose(globalThis.crypto.randomUUID())
     setTo('')
     setSubject('')
@@ -279,8 +314,8 @@ export default function WeeklyEmail({ eventId, locationId, actorId, venueName, v
 
   return <section className="weekly-email" aria-labelledby="weekly-email-title" aria-busy={busy}>
     <h3 id="weekly-email-title"><Mail size={20} aria-hidden="true"/> {direct ? 'Email' : 'Weekly Email'}</h3>
-    <p>{direct ? 'Send one message to up to 50 recipients. Each person receives a private copy showing only their own address. Preview the recipients, sender, subject, and message before sending.' : 'Paste or type this week’s message. Preview the roster audience before sending. Each golfer receives a separate email.'}</p>
-    {direct ? <p className="closeout-muted">No round or league roster is used. This sends email only, with no app or push notification.</p> : <p className="closeout-muted">Finish sending before closing this round. Closing removes this composer and prevents continuing any remaining emails.</p>}
+    <p>{direct ? 'Send email any time: announcements, league updates, or individual messages. Add up to 1,000 recipients; each person receives a private copy showing only their own address.' : 'Paste or type this week’s message. Preview the roster audience before sending. Each golfer receives a separate email.'}</p>
+    {direct ? <p className="closeout-muted">No round or weekly schedule is required. Choose members or paste addresses, then preview before sending. This sends email only, with no app or push notification.</p> : <p className="closeout-muted">Finish sending before closing this round. Closing removes this composer and prevents continuing any remaining emails.</p>}
     <div className="weekly-email-setup">
       <div><strong>Email setup</strong>
         <p>{setup?.message || (phase === 'loading' ? 'Checking email setup…' : 'Email setup has not been confirmed.')}</p>
@@ -292,6 +327,15 @@ export default function WeeklyEmail({ eventId, locationId, actorId, venueName, v
     {direct && storageWarning && <p className="closeout-warning" role="status">{storageWarning}</p>}
     {error && <p className="closeout-warning" role="alert">{error}</p>}
     {notice && <p className="closeout-notice" role="status">{notice}</p>}
+    {direct && <div className="weekly-email-toolbar">
+      <Button variant="secondary" disabled={busy || disabled || statusRequired} onClick={newEmail}>New email</Button>
+      <label htmlFor="weekly-email-saved">Saved emails (your latest 100)</label>
+      <select id="weekly-email-saved" value={draft?.compose_id || ''} disabled={busy || disabled} onChange={e => { if (e.target.value) checkStatus(true, sequence.current, e.target.value) }}>
+        <option value="">Choose a saved email</option>
+        {savedEmails.map(item => <option key={item.compose_id} value={item.compose_id}>{item.subject} · {item.recipient_count} recipients · {item.accepted_count} accepted / {item.pending_count} pending / {item.review_count} review</option>)}
+      </select>
+    </div>}
+    {direct && phase === 'sending' && <Button variant="secondary" onClick={() => { pauseRequested.current = true; setNotice('Pausing after the current batch. Your progress will be saved.') }}>Pause after this batch</Button>}
     {busy && <p role="status">{phase === 'sending' ? 'Sending the saved email to the email service…' : phase === 'previewing' ? (direct ? 'Saving preview and confirming your recipient list…' : 'Saving preview and confirming this round’s recipients…') : 'Checking email setup and saved progress…'}</p>}
 
     <label htmlFor="weekly-email-from">From</label>
@@ -305,10 +349,22 @@ export default function WeeklyEmail({ eventId, locationId, actorId, venueName, v
     {!busy && !senderAuthorized && <p className="closeout-warning">{senderId ? 'The saved sender is no longer available to your account at this venue.' : 'No approved sender is selected for your account at this venue.'} {locked ? 'Ask the owner to restore sender access before continuing this saved email.' : senders.length ? 'Choose an approved sender and preview again.' : (direct ? 'Ask the owner to configure sender access.' : 'Ask the owner to configure sender access. Weekly Email is optional.')}</p>}
     {!locked && !senderAuthorized && senders.length === 1 && <Button variant="secondary" disabled={busy || disabled} onClick={() => { setSenderId(senders[0].id); setNotice('') }}>Use {senders[0].from}</Button>}
     {direct && <>
+      {!locked && <div className="weekly-email-audience">
+        <strong>Add member addresses</strong>
+        {groups === null ? <Button variant="secondary" disabled={busy || disabled} onClick={loadGroups}>Choose venue or league members</Button> : <>
+          <label htmlFor="weekly-email-group">Member group</label>
+          <select id="weekly-email-group" value={groupId} disabled={busy || disabled} onChange={e => setGroupId(e.target.value)}>
+            <option value="venue">All active venue members</option>
+            {groups.map(group => <option key={group.id} value={group.id}>{group.name} · current league roster</option>)}
+          </select>
+          <Button variant="secondary" disabled={busy || disabled} onClick={addMembers}>{groupId === 'venue' ? 'Add all venue members to To' : 'Add whole league to To'}</Button>
+        </>}
+        <p className="closeout-muted">Only members at this venue are available. Adding addresses does not send email. You can edit the list and paste extra addresses below.</p>
+      </div>}
       <label htmlFor="weekly-email-to">To</label>
       <textarea ref={recipientInput} id="weekly-email-to" rows={3} autoComplete="off" autoCapitalize="none" spellCheck={false} maxLength={DIRECT_RECIPIENT_INPUT_LIMIT} value={to} placeholder="first@example.com, second@example.com" disabled={busy || disabled || locked} onChange={e => { setTo(e.target.value); setNotice('') }} aria-describedby="weekly-email-to-note"/>
       <p id="weekly-email-to-note" className="closeout-muted">Separate addresses with commas, semicolons, or new lines. Duplicates are removed. Recipients cannot see each other’s addresses.</p>
-      <p className="closeout-muted">Limit: 50 direct-email recipients per account and venue each UTC day. Each private copy counts once. Continuing a saved send does not use another allowance.</p>
+      <p className="closeout-muted">Up to {DIRECT_RECIPIENT_LIMIT.toLocaleString()} recipients per message. There is no app daily cap. Gmail’s mailbox sending limits still apply. Large lists take several minutes; keep this page open, or pause and resume from Saved emails.</p>
     </>}
     <label htmlFor="weekly-email-subject">Subject</label>
     <input id="weekly-email-subject" type="text" maxLength={200} value={subject} disabled={busy || disabled || locked} onChange={e => { setSubject(e.target.value); setNotice('') }} aria-describedby="weekly-email-subject-count"/>
@@ -342,7 +398,6 @@ export default function WeeklyEmail({ eventId, locationId, actorId, venueName, v
         {!setup?.configured && <p className="closeout-warning">Email service configuration is required before sending.</p>}
         <Button icon={<Mail size={16}/>} disabled={!canSend} loading={phase === 'sending'} onClick={send}>{locked ? 'Continue sending' : direct && draft.recipient_count === 1 ? 'Send email' : `Send to ${draft.recipient_count} recipient${draft.recipient_count === 1 ? '' : 's'}`}</Button>
       </>}
-      {direct && draft.status === 'accepted' && <Button variant="secondary" disabled={busy || disabled} onClick={newEmail}>New email</Button>}
       {draft.status === 'accepted' && <p className="closeout-notice" role="status">All {draft.accepted_count} email{draft.accepted_count === 1 ? '' : 's'} accepted by the email service.</p>}
     </div>}
   </section>
