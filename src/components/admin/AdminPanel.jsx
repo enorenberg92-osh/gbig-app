@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { Routes, Route, Navigate, useLocation as useRouterLocation, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard, Flag, Medal, Users, Trophy, Activity,
-  Calendar, Repeat2, Map, Target, Bell, CalendarPlus,
+  Calendar, Repeat2, Map, Target, Bell, CalendarPlus, Mail,
 } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useLocation } from '../../context/LocationContext'
@@ -22,6 +22,8 @@ import AdminCup       from './AdminCup'
 import AdminMoney     from './AdminMoney'
 import AdminReports   from './AdminReports'
 import AdminTournaments from './AdminTournaments'
+import WeeklyEmail from './WeeklyEmail'
+import './closeout.css'
 import { isFutureDate } from '../../lib/dateUtils'
 import { loadWorkingLeague } from '../../lib/leagueUtils'
 import { useFeature } from '../../context/FeatureContext'
@@ -42,6 +44,7 @@ const SECTIONS = [
   { id: 'cup',        label: 'Cup',          Icon: Trophy },
   { id: 'money',      label: 'Money',        Icon: Target },
   { id: 'reports',    label: 'Reports',      Icon: LayoutDashboard },
+  { id: 'email',      label: 'Email',        Icon: Mail },
   { id: 'alerts',     label: 'Alerts',       Icon: Bell },
 ]
 
@@ -55,7 +58,7 @@ function sectionFromPath(pathname) {
 }
 
 export default function AdminPanel({ session, onBack }) {
-  const { locationId, appName, timezone } = useLocation()
+  const { locationId, appName, timezone, location } = useLocation()
   const routerLocation = useRouterLocation()
   const navigate = useNavigate()
   const activeSection = sectionFromPath(routerLocation.pathname)
@@ -170,6 +173,7 @@ export default function AdminPanel({ session, onBack }) {
       <Route path="money"      element={moneyEnabled ? <AdminMoney /> : <Navigate to="/league/admin/dashboard" replace />} />
       <Route path="reports"    element={<AdminReports />} />
       <Route path="tournaments" element={tournamentsEnabled ? <AdminTournaments /> : <Navigate to="/league/admin/dashboard" replace />} />
+      <Route path="email"      element={<div className="closeout"><WeeklyEmail key={`direct:${locationId}`} mode="direct" locationId={locationId} actorId={session?.user?.id} venueName={appName} venueSlug={location?.slug} /></div>} />
       <Route path="alerts"     element={<AdminAlerts />} />
       <Route path="*"          element={<Navigate to="/league/admin/dashboard" replace />} />
     </Routes>
@@ -177,6 +181,7 @@ export default function AdminPanel({ session, onBack }) {
 
   const current = SECTIONS.find(s => s.id === activeSection) || SECTIONS[0]
   const CurrentIcon = current.Icon
+  const showActiveWeek = activeSection !== 'email' && activeEventLabel
 
   // ── DESKTOP LAYOUT ──────────────────────────────────────────────────────
   if (isDesktop) {
@@ -236,7 +241,7 @@ export default function AdminPanel({ session, onBack }) {
               <CurrentIcon size={22} strokeWidth={2} color="var(--green-dark)" />
             </span>
             <h1 style={ds.topBarTitle}>{current.label}</h1>
-            {activeEventLabel && (
+            {showActiveWeek && (
               <div style={ds.activeWeekPill}>
                 <span style={ds.statusDot} />
                 {activeEventLabel}{activeEventOpen ? ' active' : ''}
@@ -267,7 +272,7 @@ export default function AdminPanel({ session, onBack }) {
           </span>
           <span style={ms.headerTitle}>Admin — {current.label}</span>
         </div>
-        {activeEventLabel
+        {showActiveWeek
           ? (
             <div style={ms.activeWeekPill}>
               <span style={ms.statusDot} />

@@ -10,6 +10,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:database": "node scripts/test-database.mjs",
+    "test:email:database": "node scripts/check-weekly-email-database.mjs",
     "test:season": "node scripts/season-rehearsal.mjs",
     "season:view": "node scripts/build-season-view.mjs"
   },
@@ -21,6 +22,7 @@
     "react-router-dom": "^6.26.1"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.5.10",
     "@types/react": "^18.3.5",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",
