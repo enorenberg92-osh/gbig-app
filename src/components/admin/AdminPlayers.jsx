@@ -7,6 +7,7 @@ import {
 import { supabase } from '../../lib/supabase'
 import PlayerProfile from '../PlayerProfile'
 import AdminImport from './AdminImport'
+import PlayerLoginEditor from './PlayerLoginEditor'
 import { useLocation } from '../../context/LocationContext'
 import ConfirmDialog from '../ConfirmDialog'
 import { Button, Toast, EmptyState, Input } from '../ui'
@@ -24,6 +25,7 @@ export default function AdminPlayers() {
   const [showPlayerForm, setShowPlayerForm] = useState(false)
   const [playerForm, setPlayerForm]   = useState(EMPTY_PLAYER_FORM)
   const [editingPlayer, setEditingPlayer] = useState(null)
+  const [loginPlayer, setLoginPlayer] = useState(null)
   const [showTeamForm, setShowTeamForm]   = useState(false)
   const [teamForm, setTeamForm]       = useState(EMPTY_TEAM_FORM)
   const [editingTeam, setEditingTeam] = useState(null)
@@ -88,11 +90,11 @@ export default function AdminPlayers() {
 
     const payload = {
       name: playerForm.name.trim(),
-      email: playerForm.email.trim().toLowerCase() || null,
+      ...(!editingPlayer?.user_id ? { email: playerForm.email.trim().toLowerCase() || null } : {}),
       handicap,
       in_skins: playerForm.in_skins,
       handicap_locked: playerForm.handicap_locked,
-      league_password: playerForm.league_password.trim() || 'password',
+      ...(!editingPlayer?.user_id ? { league_password: playerForm.league_password.trim() || 'password' } : {}),
     }
 
     if (editingPlayer) {
@@ -497,6 +499,14 @@ export default function AdminPlayers() {
       <Toast toast={toast} />
 
       {/* ── PLAYERS SECTION ── */}
+      {loginPlayer && loginPlayer.location_id === locationId && (
+        <PlayerLoginEditor
+          key={locationId + ':' + loginPlayer.id}
+          playerId={loginPlayer.id}
+          onClose={() => setLoginPlayer(null)}
+          onSaved={() => loadAll()}
+        />
+      )}
       <div style={styles.sectionHeader}>
         <h2 style={styles.sectionTitle}>
           <User size={18} strokeWidth={2} style={{ verticalAlign: '-4px', marginRight: 8, color: 'var(--green-dark)' }} />
@@ -521,10 +531,14 @@ export default function AdminPlayers() {
               <input style={styles.input} value={playerForm.name} onChange={e => setPlayerForm(f => ({ ...f, name: e.target.value }))} placeholder="John Smith" required />
             </div>
             <div style={styles.fieldGroup}>
-              <label style={styles.label}>Email</label>
-              <input type="email" style={styles.input} value={playerForm.email} onChange={e => setPlayerForm(f => ({ ...f, email: e.target.value }))} placeholder="john@example.com" />
+              <label style={styles.label} htmlFor="player-roster-email">Roster Email</label>
+              <input id="player-roster-email" type="email" style={styles.input} value={playerForm.email} readOnly={!!editingPlayer?.user_id} onChange={e => setPlayerForm(f => ({ ...f, email: e.target.value }))} placeholder="john@example.com" />
+              {editingPlayer?.user_id && <>
+                <span style={styles.hint}>Use Manage Login to review and correct both the roster email and the existing login.</span>
+                <Button type="button" variant="secondary" size="sm" onClick={() => { setLoginPlayer(editingPlayer); setShowPlayerForm(false) }}>Manage Login</Button>
+              </>}
             </div>
-            <div style={styles.fieldGroup}>
+            {!editingPlayer?.user_id && <div style={styles.fieldGroup}>
               <label style={styles.label}>Login Password</label>
               <input
                 type="text"
@@ -535,7 +549,7 @@ export default function AdminPlayers() {
                 autoComplete="off"
               />
               <span style={styles.hint}>Default is "password" — player can change this after logging in.</span>
-            </div>
+            </div>}
             <div style={styles.fieldGroup}>
               <label style={styles.label}>Handicap</label>
               <input
@@ -674,12 +688,13 @@ export default function AdminPlayers() {
                         </span>
                       : <span style={styles.noSkinsPill}>No Skins</span>
                     }
+                    {player.user_id && <Button variant="secondary" size="sm" onClick={() => { setLoginPlayer(player); setShowPlayerForm(false) }}>Manage Login</Button>}
                   </div>
                   <div style={styles.playerMeta}>
                     {player.user_id
                       ? <span style={styles.loginPill}>
                           <CheckCircle2 size={12} strokeWidth={2.5} style={{ verticalAlign: '-2px', marginRight: 4 }} />
-                          Account active
+                          Account linked
                         </span>
                       : (
                         <Button
