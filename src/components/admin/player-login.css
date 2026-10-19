@@ -1,0 +1,30 @@
+.player-login {
+  padding: 22px;
+  margin: 0 0 22px;
+  border: 1px solid var(--gray-200);
+  border-radius: 14px;
+  background: var(--white, #fff);
+  color: var(--black);
+}
+.player-login-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.player-login h3 { margin: 0; font-size: 18px; }
+.player-login h4 { margin: 0 0 14px; font-size: 16px; }
+.player-login-person { margin: 16px 0; }
+.player-login-details { margin: 16px 0 22px; }
+.player-login-details > div { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--gray-200); }
+.player-login dt { color: var(--gray-600); font-size: 13px; }
+.player-login dd { margin: 0; overflow-wrap: anywhere; font-size: 14px; }
+.player-login form > label { display: block; font-size: 14px; font-weight: 650; margin-bottom: 8px; }
+.player-login form > input { width: 100%; box-sizing: border-box; padding: 12px; border: 1px solid var(--gray-600); border-radius: 8px; background: var(--white, #fff); color: var(--black); font: inherit; font-size: 16px; }
+.player-login-help { color: var(--gray-600); font-size: 13px; line-height: 1.6; margin: 10px 0 16px; max-width: 70ch; }
+.player-login-review { margin-top: 24px; padding-top: 22px; border-top: 1px solid var(--gray-200); }
+.player-login-confirm { display: flex; align-items: flex-start; gap: 10px; font-size: 14px; line-height: 1.5; margin: 18px 0; cursor: pointer; max-width: 65ch; }
+.player-login-confirm input { width: 18px; height: 18px; flex-shrink: 0; accent-color: var(--green-dark); margin-top: 2px; }
+.player-login-error { color: #a52121; font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; }
+.player-login-success { color: var(--green-dark); font-size: 14px; line-height: 1.6; }
+.player-login-footer { margin-top: 22px; }
+.player-login :is(input, button, h3):focus-visible { outline: 2px solid var(--green-dark); outline-offset: 3px; }
+@media (max-width: 520px) {
+  .player-login { padding: 16px; }
+  .player-login-details > div { grid-template-columns: minmax(0, 1fr); gap: 5px; }
+}
