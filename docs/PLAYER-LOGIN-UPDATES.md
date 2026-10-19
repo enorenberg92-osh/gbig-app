@@ -2,7 +2,7 @@
 
 Staff can correct an existing player's roster email and linked email/password login together from **Players → Manage Login**. The correction keeps the existing player and Auth account; it does not create or merge accounts.
 
-This feature is implemented locally. **No player-login migration, Edge Function, or frontend release has been deployed for this feature yet.** Production release and live staff/player verification remain pending.
+The database migration and Edge Function must be released before the frontend. The deployment order and verification limits below also apply to future changes to this feature.
 
 ## Staff workflow
 
@@ -79,15 +79,15 @@ Never automatically retry an ambiguous operation, clear `players.user_id`, reset
 4. Release the frontend to both **Appleton** and **GBIG** apps through the repository's existing release flow, after the database and function are ready. Validate both venue aliases and authenticated venue authorization.
 5. Complete live staff/player verification with approved test accounts: status reads, review/confirmation, corrected-email sign-in using the existing password, unconfirmed-account behavior, cross-venue denial, conflict handling, and recovery visibility. Confirm no onboarding/reset/confirmation request was initiated by this path.
 
-No deployment command is executed by these notes. Backend application, function deployment, frontend release, and deployed end-to-end validation remain pending.
+These notes describe the release procedure; they do not run deployment commands. Verify the deployed commit and both venue aliases after each release.
 
 ## Validation and limits
 
 - `npm test`: **237 passing, 5 live integration tests skipped** at the current handoff. Service tests use synthetic accounts and cover signed reviews, authorization, conflict/stale checks, preserved confirmation, timeout readback, partial failures, and completed-request verification. PGlite tests exercise migration permissions, serialization, guarded roster edits, and audit/recovery behavior.
 - `npm run build`: passed after the final review fixes.
-- Deno type-checking was not completed: the runtime was unavailable and both retrieval approaches failed. A successful Deno check or deployment build is required before release; the Node service tests do not substitute for this runtime check.
+- Local Deno type-checking was unavailable because the runtime download could not complete. The Supabase server-side deployment build succeeded. The live handler passed CORS, method handling, and missing/invalid-session rejection checks. The database helper also passed a read-only production check under the actual service role with the narrow Auth column grants.
 - Local browser checks use synthetic data and mocked service responses. They exercise the staff flow and responsive layout; they are not deployed end-to-end evidence or proof of real Auth email delivery behavior.
-- Live migration compatibility, Edge Function deployment/runtime behavior, both deployed venue flows, and owner recovery against the actual production state still need release verification.
+- The scoped production migration was applied with its exact history version. Existing roster/Auth identity checksums were unchanged, and authenticated clients cannot directly invoke the service RPCs or read private correction requests. Full correction/recovery tests use synthetic fixtures; release verification does not change existing players simply to exercise the tool.
 
 ## Visual ground truth
 
