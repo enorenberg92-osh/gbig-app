@@ -596,9 +596,9 @@ export default function ScoreEntry({ session, onBack }) {
         <div style={styles.totalsTitle}>Running Total</div>
         {['p1', 'p2'].map(pk => {
           const gross = totalScore(pk)
-          const filled = scores[pk].filter(s => s != null).length
+          const authoritativeHoles = submitted[team[pk].id]?.hole_scores || scores[pk]
           const par_so_far = course?.hole_pars
-            ? course.hole_pars.slice(0, filled).reduce((a, b) => a + b, 0)
+            ? authoritativeHoles.reduce((sum, score, index) => sum + (score != null ? course.hole_pars[index] : 0), 0)
             : null
           const diff = par_so_far ? gross - par_so_far : null
           return (
@@ -801,7 +801,7 @@ const styles = {
   doneCard: { background: 'var(--white)', borderRadius: 'var(--radius)', padding: '32px 24px', boxShadow: 'var(--shadow-lg)', textAlign: 'center', width: '100%', maxWidth: 360 },
   doneEmoji: { fontSize: 52, marginBottom: 12 },
   doneTitle: { fontSize: 24, fontWeight: 800, color: 'var(--green-dark)', marginBottom: 6 },
-  doneSub: { fontSize: 15, color: 'var(--gray-400)', marginBottom: 24 },
+  doneSub: { fontSize: 15, color: 'var(--gray-600)', marginBottom: 24 },
   doneSummary: { background: 'var(--off-white)', borderRadius: 'var(--radius-sm)', padding: '14px 16px', marginBottom: 24, display: 'flex', flexDirection: 'column', gap: 10 },
   doneSummaryRow: { display: 'flex', justifyContent: 'space-between', fontSize: 14 },
 }

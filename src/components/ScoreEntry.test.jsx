@@ -127,3 +127,14 @@ it('keeps drafts if the RPC succeeds but confirmation cannot be read', async () 
   expect(checkbox('Alex Player').props.disabled).toBe(false)
   expect(nodes().find(node => node.props?.toast)?.props.toast.msg).toContain('draft is kept')
 })
+
+it('uses the full authoritative card for versus-par totals after refresh, keeping the partner editable', async () => {
+  h.draft = { ...completeDraft(), scores: { p1: [4, null], p2: [5, null] }, selectedPlayerIds: ['a', 'b'] }
+  await mount()
+  h.rows = [card('a')]
+  await button('Refresh submitted cards').props.onClick(); render()
+  expect(text(tree)).toContain('Alex Player7(E)')
+  expect(text(tree)).not.toContain('7(+3)')
+  expect(nodes().some(node => node.props?.['aria-label'] === 'Increase score for Blair Partner')).toBe(true)
+  expect(h.save.mock.calls.at(-1)[1].scores.p2).toEqual([5, null])
+})
