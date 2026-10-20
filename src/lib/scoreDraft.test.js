@@ -93,4 +93,13 @@ describe('unfinished scorecard recovery', () => {
     expect(saveScoreDraft(context, blank, storage)).toBe('empty')
     expect(readScoreDraft(context, storage).status).toBe('empty')
   })
+
+  it('keeps the selected golfer IDs when roster slots change, and removes a cleared draft', () => {
+    const storage = memoryStorage()
+    saveScoreDraft(context, { ...draft, selectedPlayerIds: ['b'] }, storage)
+    expect(readScoreDraft({ ...context, playerIds: ['b', 'a'] }, storage).selectedPlayerIds).toEqual(['b'])
+    const blank = { scores: { p1: [null, null], p2: [null, null] }, stats: { p1: [{}, {}], p2: [{}, {}] }, currentHole: 0, showStats: false }
+    saveScoreDraft(context, blank, storage)
+    expect(readScoreDraft(context, storage).status).toBe('empty')
+  })
 })

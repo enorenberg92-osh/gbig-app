@@ -38,7 +38,10 @@ export function readScoreDraft(context, storage) {
         !Array.isArray(saved.players) || saved.players.length !== 2 ||
         !saved.players.every(player => player && validScores(player.scores, context.numHoles) && validStats(player.stats, context.numHoles)) ||
         !Number.isInteger(saved.currentHole) || saved.currentHole < 0 || saved.currentHole >= context.numHoles ||
-        typeof saved.showStats !== 'boolean') {
+        typeof saved.showStats !== 'boolean' ||
+        (saved.selectedPlayerIds !== undefined && (!Array.isArray(saved.selectedPlayerIds) ||
+          new Set(saved.selectedPlayerIds).size !== saved.selectedPlayerIds.length ||
+          !saved.selectedPlayerIds.every(id => context.playerIds.includes(id))))) {
       return { status: 'incompatible' }
     }
     // Roster query order can change. Match by player ID, never by array slot.
@@ -49,6 +52,7 @@ export function readScoreDraft(context, storage) {
       stats: { p1: players[0].stats, p2: players[1].stats },
       currentHole: saved.currentHole,
       showStats: saved.showStats,
+      ...(saved.selectedPlayerIds !== undefined ? { selectedPlayerIds: saved.selectedPlayerIds } : {}),
     }
   } catch (error) {
     return { status: error instanceof SyntaxError ? 'incompatible' : 'unavailable' }
@@ -62,7 +66,10 @@ export function saveScoreDraft(context, draft, storage) {
       draft.scores[pk]?.some(value => value != null) ||
       draft.stats[pk]?.some(hole => hole.putts != null || hole.fir != null || hole.gir != null),
     )
-    if (!hasProgress) return 'empty'
+    if (!hasProgress) {
+      storage.removeItem(scoreDraftKey(context))
+      return 'empty'
+    }
     storage.setItem(scoreDraftKey(context), JSON.stringify({
       version: 1,
       course: courseSignature(context),
@@ -70,6 +77,7 @@ export function saveScoreDraft(context, draft, storage) {
       players: ['p1', 'p2'].map(pk => ({ scores: draft.scores[pk], stats: draft.stats[pk] })),
       currentHole: draft.currentHole,
       showStats: draft.showStats,
+      ...(draft.selectedPlayerIds !== undefined ? { selectedPlayerIds: draft.selectedPlayerIds } : {}),
       updatedAt: Date.now(),
     }))
     return 'saved'
