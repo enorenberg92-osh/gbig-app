@@ -356,6 +356,8 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
   // ── UI Helpers ──────────────────────────────────────────────────────────────
   const submitted   = teams.filter(t => t.score1 || t.score2)
   const unsubmitted = teams.filter(t => !t.score1 && !t.score2)
+  const completeTeams = teams.filter(t => t.score1 && t.score2).length
+  const partialTeams = submitted.length - completeTeams
   const pendingCount = teams.reduce((n, t) =>
     n + (t.score1?.status === 'pending' ? 1 : 0) + (t.score2?.status === 'pending' ? 1 : 0), 0)
   const holePars    = eventData?.holePars || []
@@ -383,7 +385,8 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
             <div style={styles.eventMeta}>
               Course: <strong>{eventData.course?.name || 'Not assigned'}</strong>
               {' · '}Par {totalPar || '—'}
-              {' · '}{submitted.length}/{teams.length} teams submitted
+              {' · '}{completeTeams}/{teams.length} teams have both scores
+              {partialTeams > 0 && ` · ${partialTeams} awaiting a partner’s score`}
             </div>
             {eventData.courseError && (
               <div style={{ marginTop: 10, color: '#c53030', fontSize: 13, fontWeight: 600 }}>
@@ -462,7 +465,7 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
               <div style={styles.cardTitleRow}>
                 <h3 style={styles.cardTitle}>
                   <Check size={13} strokeWidth={2.5} style={{ marginRight: 6, verticalAlign: '-2px' }} />
-                  Submitted
+                  Teams with scores
                 </h3>
                 <span style={{ ...styles.badge, background: 'var(--green-xlight)', color: 'var(--green)' }}>
                   {submitted.length}
@@ -595,8 +598,13 @@ function TeamRow({ team, holePars, course, isEditing, holeScores, saving, subMap
         {submitted && !isEditing && (
           <div style={trStyles.headerRight}>
             <div style={trStyles.teamTotals}>
-              <span>Gross {(team.score1?.gross_total || 0) + (team.score2?.gross_total || 0)}</span>
-              <span>Net {(team.score1?.net_total || 0) + (team.score2?.net_total || 0)}</span>
+              {team.score1 && team.score2 ? <>
+                <span>Gross {team.score1.gross_total + team.score2.gross_total}</span>
+                <span>Net {team.score1.net_total + team.score2.net_total}</span>
+              </> : <>
+                <span>1 of 2 scorecards submitted</span>
+                <span>Awaiting {(team.score1 ? team.p2 : team.p1)?.name}</span>
+              </>}
               {(team.score1?.status === 'pending' || team.score2?.status === 'pending') && (
                 <span style={{ color: '#b45309', fontWeight: 700 }}>Pending review</span>
               )}

@@ -1,0 +1,99 @@
+import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest'
+import { PGlite } from '@electric-sql/pglite'
+import { readFileSync } from 'node:fs'
+
+let db
+const id = n => '00000000-0000-0000-0000-' + String(n).padStart(12, '0')
+const q = n => "'" + id(n) + "'"
+const migration = name => readFileSync(new URL('../../supabase/migrations/' + name, import.meta.url), 'utf8')
+const fn = (file, name) => migration(file).match(new RegExp('CREATE OR REPLACE FUNCTION public\\.' + name + '\\([\\s\\S]*?\\$\\$;'))[0]
+const entry = (player, score = 4, extra = {}) => ({ player_id: id(player), hole_scores: Array(9).fill(score), ...extra })
+async function submit(entries, actor = 101, event = 41) {
+  await db.exec('set role authenticated; set "request.jwt.claim.sub"=' + q(actor))
+  try { return (await db.query('select submit_scores($1,$2) as result', [id(event), JSON.stringify(entries)])).rows[0].result }
+  finally { await db.exec('reset role') }
+}
+const rows = async () => (await db.query('select * from scores order by player_id')).rows
+
+beforeAll(async () => {
+  db = new PGlite()
+  await db.exec(readFileSync(new URL('../../scripts/database-fixture.sql', import.meta.url), 'utf8'))
+  await db.exec('create role anon;')
+  await db.exec(migration('202607100003_phase1_league_rosters.sql').match(/CREATE OR REPLACE VIEW public\.roster_at[\s\S]*?;/)[0])
+  for (const name of ['jsonb_int_array_valid', 'jsonb_int_array_sum', 'int_array_valid', 'int_array_sum', 'validate_score_row']) {
+    await db.exec(fn('202607100002_phase1_score_and_course_constraints.sql', name))
+  }
+  await db.exec(fn('202607180007_phase4_hole_stats.sql', 'hole_stats_valid'))
+  for (const name of ['redact_audit_payload', 'write_audit_event']) await db.exec(fn('202607100001_phase1_audit_foundation.sql', name))
+  await db.exec(migration('20261020005345_independent_partner_scores.sql'))
+  await db.exec('create trigger validate_scores before insert or update on scores for each row execute function validate_score_row(); grant usage on schema public,auth to authenticated,anon;')
+}, 30000)
+afterAll(async () => { await db?.close() })
+beforeEach(async () => {
+  await db.exec('reset role; truncate scores,events,players,teams,team_memberships,courses,locations,audit_events cascade;' +
+    'insert into locations values(' + q(1) + '),(' + q(2) + ');' +
+    'insert into teams values(' + q(21) + ',' + q(1) + ',' + q(3) + ",'Partners'),(" + q(22) + ',' + q(1) + ',' + q(3) + ",'Other team');" +
+    'insert into players values(' + [q(11), q(101), q(1), "'Alex'", 2, q(21)].join(',') + '),(' + [q(12), q(102), q(1), "'Blair'", 4, q(21)].join(',') + '),(' + [q(13), q(103), q(2), "'Other venue'", 3, 'null'].join(',') + '),(' + [q(14), q(104), q(1), "'Other team'", 3, q(22)].join(',') + ');' +
+    'insert into courses values(' + q(31) + ',' + q(1) + ",9,'[4,4,4,4,4,4,4,4,4]',36,null);" +
+    'insert into events(id,location_id,league_id,course_id,status,start_date) values(' + [q(41),q(1),q(3),q(31),"'open'","'2026-10-01'"].join(',') + ');' +
+    'insert into team_memberships values(' + [q(21),q(11),q(1),q(3),"'2026-01-01'",'null'].join(',') + '),(' + [q(21),q(12),q(1),q(3),"'2026-01-01'",'null'].join(',') + '),(' + [q(22),q(14),q(1),q(3),"'2026-01-01'",'null'].join(',') + ');')
+})
+
+it('lets one partner submit, then the other later, preserving the first card and handicap snapshot', async () => {
+  expect((await submit([entry(11)])).inserted).toBe(1)
+  const first = (await rows())[0]
+  expect(first).toMatchObject({ player_id: id(11), gross_total: 36, net_total: 34, handicap_used: 2, status: 'pending' })
+  await db.exec('update players set handicap=8 where id=' + q(11))
+  expect((await submit([entry(12, 5)], 102)).inserted).toBe(1)
+  expect((await rows())[0]).toEqual(first)
+  expect((await rows())[1]).toMatchObject({ gross_total: 45, net_total: 41, handicap_used: 4, status: 'pending' })
+  expect((await db.query("select after_data->'submitted_player_ids' as ids from audit_events order by created_at")).rows.map(row => row.ids)).toEqual([[id(11)], [id(12)]])
+})
+it('still allows both cards together and safely retries a mixed existing/new batch', async () => {
+  await submit([entry(11)])
+  const first = (await rows())[0]
+  expect((await submit([entry(11, 9), entry(12, 5)])).inserted).toBe(1)
+  expect((await rows())[0]).toEqual(first)
+  expect((await submit([entry(11), entry(12)])).already_submitted).toBe(true)
+  expect(await rows()).toHaveLength(2)
+})
+it('allows a teammate to record the absent partner and preserves optional stats', async () => {
+  const stats = Array.from({ length: 9 }, () => ({ putts: 2, fir: false, gir: true }))
+  await submit([entry(12, 4, { hole_stats: stats })])
+  expect((await rows())[0]).toMatchObject({ player_id: id(12), hole_stats: stats })
+})
+it.each([[], null, {}, [entry(11), entry(11)], [entry(11), entry(12), entry(14)]])('rejects empty, malformed, duplicate and oversized batches: %j', async entries => {
+  await expect(submit(entries)).rejects.toThrow(/array|selected teammate/)
+  expect(await rows()).toHaveLength(0)
+})
+it('rejects another team or venue, a non-rostered caller, and anonymous access', async () => {
+  await expect(submit([entry(14)])).rejects.toThrow('not on your event roster')
+  await expect(submit([entry(11)], 103)).rejects.toThrow('No player profile')
+  await db.exec('delete from team_memberships where player_id=' + q(11))
+  await expect(submit([entry(12)])).rejects.toThrow('not rostered')
+  await db.exec('set role anon')
+  await expect(db.query('select submit_scores($1,$2)', [id(41), JSON.stringify([entry(12)])])).rejects.toThrow('permission denied')
+  await db.exec('reset role')
+})
+it('rejects incomplete/invalid cards atomically, without saving the valid partner', async () => {
+  for (const holes of [[4], Array(9).fill(null), Array(9).fill(0), Array(9).fill(4.5)]) {
+    await expect(submit([entry(11), entry(12, 4, { hole_scores: holes })])).rejects.toThrow(/Scores must include|hole_scores must contain/)
+    expect(await rows()).toHaveLength(0)
+  }
+})
+it('keeps the first submission when a retry arrives after approval; rejected cards can be re-entered', async () => {
+  await submit([entry(11)])
+  await db.exec("update scores set status='verified'")
+  const verified = (await rows())[0]
+  expect((await submit([entry(11, 8)])).inserted).toBe(0)
+  expect((await rows())[0]).toEqual(verified)
+  await db.exec("update scores set status='rejected'")
+  expect((await submit([entry(11, 5)])).inserted).toBe(1)
+  expect((await rows()).filter(row => row.status !== 'rejected')).toHaveLength(1)
+})
+it('keeps the normal round deadline: no second partner submission after publishing', async () => {
+  await submit([entry(11)])
+  await db.exec("update events set status='closed'")
+  await expect(submit([entry(12)], 102)).rejects.toThrow('no longer open')
+  expect(await rows()).toHaveLength(1)
+})

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useLayoutEffect } from 'react'
+import React, { useState, useEffect, useLayoutEffect, useRef } from 'react'
 import { ArrowLeft, ArrowRight, Check } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import HoleEventAnimation from './HoleEventAnimation'
@@ -8,13 +8,13 @@ import { hasCompleteCoursePars, displayHole } from '../lib/holeUtils'
 import { loadWorkingLeague } from '../lib/leagueUtils'
 import { mutationErrorMessage } from '../lib/rpcErrors'
 import { readScoreDraft, saveScoreDraft, clearScoreDraft } from '../lib/scoreDraft'
+import { PLAYER_KEYS, unsubmittedDraft, scorecardComplete, submittedByPlayer } from '../lib/scoreSubmission'
 import { Button, Toast } from './ui'
 
 /**
  * ScoreEntry
  *
- * Player-facing, hole-by-hole score entry for both teammates.
- * One player on the team enters scores for both players.
+ * Player-facing score entry for one or both teammates, independently.
  *
  * Props:
  *   session   {object}  - Supabase auth session
@@ -31,8 +31,9 @@ export default function ScoreEntry({ session, onBack }) {
   const [stats, setStats]               = useState({ p1: [], p2: [] }) // per-hole {putts, fir, gir}, all optional
   const [showStats, setShowStats]       = useState(false)
   const [showHoleEvent, setShowHoleEvent] = useState(false)
-  const [alreadySubmitted, setAlreadySubmitted] = useState(false)
-  const [pendingReview, setPendingReview]       = useState(false)
+  const [submitted, setSubmitted] = useState({}) // authoritative cards, keyed by player ID
+  const [selectedPlayers, setSelectedPlayers] = useState([])
+  const savingRef = useRef(false)
   const [saving, setSaving]             = useState(false)
   const [toast, setToast]               = useState(null)
   const [error, setError]               = useState(null)
@@ -41,6 +42,8 @@ export default function ScoreEntry({ session, onBack }) {
   const [draftNotice, setDraftNotice]   = useState('')
 
   const numHoles = course?.num_holes || 0
+  const alreadySubmitted = !!team && PLAYER_KEYS.every(pk => submitted[team[pk].id])
+  const activePlayers = team ? selectedPlayers.filter(pk => !submitted[team[pk].id]) : []
 
   useEffect(() => {
     let cancelled = false
@@ -52,10 +55,17 @@ export default function ScoreEntry({ session, onBack }) {
   // save: mobile browsers may be killed without sending an unload event.
   useLayoutEffect(() => {
     if (!draftContext || loading || error || alreadySubmitted) return
-    setDraftStatus(saveScoreDraft(draftContext, { scores, stats, currentHole, showStats }))
-  }, [draftContext, loading, error, alreadySubmitted, scores, stats, currentHole, showStats])
+    const remaining = unsubmittedDraft(draftContext, { scores, stats }, submitted)
+    setDraftStatus(saveScoreDraft(draftContext, {
+      ...remaining, currentHole, showStats,
+      selectedPlayerIds: selectedPlayers.map(pk => team[pk].id).filter(id => !submitted[id]),
+    }))
+  }, [draftContext, loading, error, alreadySubmitted, scores, stats, currentHole, showStats, submitted, selectedPlayers, team])
 
   async function init(isCancelled) {
+    setLoading(true)
+    setError(null)
+    setDraftContext(null)
     try {
       // 1. Find this player's record
       const { data: playerRow, error: pErr } = await supabase
@@ -94,17 +104,22 @@ export default function ScoreEntry({ session, onBack }) {
       if (isCancelled()) return
       if (rosterErr || !myRoster) { setError('No team found for your account in this league. Ask your admin.'); setLoading(false); return }
 
-      const [{ data: teamRow }, { data: rosterRows }] = await Promise.all([
+      const [{ data: teamRow, error: teamError }, { data: rosterRows, error: teamRosterError }] = await Promise.all([
         supabase.from('teams').select('id, name').eq('id', myRoster.team_id).eq('league_id', league.id).eq('location_id', locationId).single(),
         supabase.from('roster_at').select('player_id').eq('event_id', evtRow.id).eq('team_id', myRoster.team_id),
       ])
+      if (teamError || teamRosterError) throw teamError || teamRosterError
       const rosterPlayerIds = (rosterRows || []).map(row => row.player_id)
-      const { data: teamPlayers } = await supabase
+      if (rosterPlayerIds.length !== 2 || new Set(rosterPlayerIds).size !== 2) throw new Error('Invalid team roster')
+      // The signed-in golfer always occupies p1; drafts still match by ID.
+      rosterPlayerIds.sort((a, b) => a === playerRow.id ? -1 : b === playerRow.id ? 1 : a.localeCompare(b))
+      const { data: teamPlayers, error: teamPlayersError } = await supabase
         .from('players')
         .select('id, name, handicap')
         .eq('location_id', locationId)
         .in('id', rosterPlayerIds)
       if (isCancelled()) return
+      if (teamPlayersError) throw teamPlayersError
       const playerById = {}
       ;(teamPlayers || []).forEach(p => { playerById[p.id] = p })
       const hydratedTeam = {
@@ -141,7 +156,7 @@ export default function ScoreEntry({ session, onBack }) {
       // their actual score (admin-driven edge case, but cheap to get right).
       const { data: existing, error: existingError } = await supabase
         .from('scores')
-        .select('id, status')
+        .select('id, player_id, status, hole_scores, gross_total')
         .eq('event_id', evtRow.id)
         .eq('location_id', locationId)
         .in('player_id', rosterPlayerIds)
@@ -162,14 +177,19 @@ export default function ScoreEntry({ session, onBack }) {
         startHole: loadedCourse.start_hole || 1, holePars: loadedCourse.hole_pars,
       }
 
-      if (existing && existing.length > 0) {
+      const savedCards = submittedByPlayer(existing || [])
+      setSubmitted(savedCards)
+      if (rosterPlayerIds.every(id => savedCards[id])) {
         clearScoreDraft(context)
-        setPendingReview(existing.some(s => s.status === 'pending'))
-        setAlreadySubmitted(true); setLoading(false); return
+        setLoading(false); return
       }
 
       // 5. Restore only after checking the current round, roster and submission.
       const draft = readScoreDraft(context)
+      const remaining = unsubmittedDraft(context, draft, savedCards)
+      const selectedIds = draft.selectedPlayerIds ?? context.playerIds.filter((id, index) =>
+        id === playerRow.id || remaining.scores[PLAYER_KEYS[index]].some(value => value != null))
+      setSelectedPlayers(PLAYER_KEYS.filter(pk => !savedCards[hydratedTeam[pk].id] && selectedIds.includes(hydratedTeam[pk].id)))
       setDraftContext(context)
       setDraftStatus(draft.status === 'unavailable' ? 'unavailable' : 'empty')
       setDraftNotice(draft.status === 'restored'
@@ -179,14 +199,8 @@ export default function ScoreEntry({ session, onBack }) {
           : '')
       setCurrentHole(draft.currentHole ?? 0)
       setShowStats(draft.showStats ?? false)
-      setScores(draft.scores || {
-        p1: Array(loadedCourse.num_holes).fill(null),
-        p2: Array(loadedCourse.num_holes).fill(null),
-      })
-      setStats(draft.stats || {
-        p1: Array.from({ length: loadedCourse.num_holes }, () => ({})),
-        p2: Array.from({ length: loadedCourse.num_holes }, () => ({})),
-      })
+      setScores(remaining.scores)
+      setStats(remaining.stats)
 
       setLoading(false)
     } catch (e) {
@@ -204,14 +218,6 @@ export default function ScoreEntry({ session, onBack }) {
       setShowHoleEvent(true)
     }
   }, [currentHole, event])
-
-  function setScore(player, holeIdx, value) {
-    const num = value === '' ? null : Math.max(1, Math.min(20, parseInt(value, 10) || 0))
-    setScores(prev => ({
-      ...prev,
-      [player]: prev[player].map((s, i) => i === holeIdx ? num : s),
-    }))
-  }
 
   function handleIncrement(player, holeIdx, delta) {
     setScores(prev => {
@@ -247,7 +253,7 @@ export default function ScoreEntry({ session, onBack }) {
   // scoreColor, scoreBg, vsParLabel imported from ../../lib/scoreUtils
 
   function canAdvance() {
-    return scores.p1[currentHole] != null && scores.p2[currentHole] != null
+    return activePlayers.length > 0 && activePlayers.every(pk => scores[pk][currentHole] != null)
   }
 
   function goNext() {
@@ -259,6 +265,7 @@ export default function ScoreEntry({ session, onBack }) {
   }
 
   function totalScore(player) {
+    if (submitted[team?.[player]?.id]) return submitted[team[player].id].gross_total
     if (!scores[player] || !Array.isArray(scores[player])) return 0
     return scores[player].reduce((sum, s) => sum + (s || 0), 0)
   }
@@ -278,19 +285,17 @@ export default function ScoreEntry({ session, onBack }) {
   // vsParLabel imported from ../lib/scoreUtils
 
   async function handleSubmit() {
-    if (saving) return
-    const allFilled = scores.p1.every(s => s != null) && scores.p2.every(s => s != null)
+    if (savingRef.current) return
+    const allFilled = activePlayers.length > 0 && activePlayers.every(pk => scorecardComplete(scores[pk], numHoles))
     if (!allFilled) {
-      showToast(`Please enter scores for all ${numHoles} holes before submitting.`, 'error')
+      showToast(`Enter all ${numHoles} holes for each selected player before submitting.`, 'error')
       return
     }
 
+    savingRef.current = true
     setSaving(true)
 
-    const entries = [
-      { player_id: team.p1.id, hole_scores: scores.p1, hole_stats: statsPayload('p1') },
-      { player_id: team.p2.id, hole_scores: scores.p2, hole_stats: statsPayload('p2') },
-    ]
+    const entries = activePlayers.map(pk => ({ player_id: team[pk].id, hole_scores: scores[pk], hole_stats: statsPayload(pk) }))
     try {
       const { data: result, error: insertErr } = await supabase.rpc('submit_scores', {
         p_event_id: event.id,
@@ -299,17 +304,51 @@ export default function ScoreEntry({ session, onBack }) {
 
       if (insertErr) {
         showToast('Error saving scores: ' + mutationErrorMessage(insertErr, 'submit scores'), 'error')
-        setSaving(false)
         return
       }
 
-      if (draftContext) clearScoreDraft(draftContext)
-      setSaving(false)
-      setPendingReview(true)
-      setAlreadySubmitted(true)
-      showToast(result?.already_submitted ? 'Your team already submitted scores for this round.' : 'Scores submitted and awaiting admin review!')
+      // Always read back: another device may have submitted either card first.
+      const savedCards = await loadSubmittedCards()
+      if (!entries.every(entry => savedCards[entry.player_id])) throw new Error('Unconfirmed submission')
+      if (PLAYER_KEYS.every(pk => savedCards[team[pk].id]) && draftContext) clearScoreDraft(draftContext)
+      setSelectedPlayers([])
+      setDraftNotice(result?.already_submitted
+        ? 'These scorecards were already submitted. The saved scores have been kept.'
+        : `Scores submitted for ${activePlayers.map(pk => team[pk].name).join(' and ')}. Your partner can submit separately while this round is open.`)
+      showToast('Saved scorecards confirmed. See each player’s review status below.')
     } catch {
-      showToast('Could not submit scores. Please check your connection and try again.', 'error')
+      showToast('Submission could not be confirmed. Your draft is kept. Refresh submitted cards before trying again.', 'error')
+    } finally {
+      savingRef.current = false
+      setSaving(false)
+    }
+  }
+
+  async function loadSubmittedCards() {
+    const { data, error: readError } = await supabase.from('scores')
+      .select('id, player_id, status, hole_scores, gross_total')
+      .eq('event_id', event.id).eq('location_id', locationId)
+      .in('player_id', PLAYER_KEYS.map(pk => team[pk].id))
+      .eq('entry_type', 'played').neq('status', 'rejected')
+    if (readError) throw readError
+    const savedCards = submittedByPlayer(data || [])
+    setSubmitted(savedCards)
+    return savedCards
+  }
+
+  async function refreshSubmittedCards() {
+    if (savingRef.current) return
+    savingRef.current = true
+    setSaving(true)
+    try {
+      const savedCards = await loadSubmittedCards()
+      setSelectedPlayers(previous => previous.filter(pk => !savedCards[team[pk].id]))
+      if (PLAYER_KEYS.every(pk => savedCards[team[pk].id]) && draftContext) clearScoreDraft(draftContext)
+      setDraftNotice('Submitted cards refreshed. Any unfinished partner card is still saved on this device.')
+    } catch {
+      showToast('Could not refresh submitted cards. Check your connection and try again.', 'error')
+    } finally {
+      savingRef.current = false
       setSaving(false)
     }
   }
@@ -348,64 +387,22 @@ export default function ScoreEntry({ session, onBack }) {
   }
 
   if (alreadySubmitted) {
-    const hasScores = Array.isArray(scores.p1) && scores.p1.some(s => s != null)
-    const p1v = hasScores ? vsPar('p1') : null
-    const p2v = hasScores ? vsPar('p2') : null
     return (
       <div style={styles.doneWrap}>
+        <Toast toast={toast} />
         <div style={styles.doneCard}>
-          <div style={styles.doneEmoji}>🏌️</div>
-          <h2 style={styles.doneTitle}>
-            {hasScores ? 'Scores Submitted!' : 'Already Submitted'}
-          </h2>
-          <p style={styles.doneSub}>
-            {hasScores
-              ? `Nice round, ${team?.p1?.name?.split(' ')[0]}!`
-              : `Your team already entered scores for this week's round.`}
-          </p>
-          {pendingReview && (
-            <p style={{
-              fontSize: 12, fontWeight: 700, color: '#92400e', background: '#fef3c7',
-              padding: '6px 12px', borderRadius: 20, display: 'inline-block', marginTop: 4,
-            }}>
-              ⏳ Awaiting admin review
-            </p>
-          )}
-          {hasScores && (
-            <div style={styles.doneSummary}>
-              <div style={styles.doneSummaryRow}>
-                <span>{team?.p1?.name}</span>
-                <span style={{ fontWeight: 700 }}>
-                  {totalScore('p1')}
-                  {p1v !== null && (
-                    <span style={{ color: p1v <= 0 ? 'var(--green)' : '#c53030', marginLeft: 4 }}>
-                      ({vsParLabel(p1v)})
-                    </span>
-                  )}
-                </span>
+          <Check size={40} color="var(--green)" style={{ marginBottom: 12 }} />
+          <h2 style={styles.doneTitle}>Both scorecards submitted</h2>
+          <p style={styles.doneSub}>Your team’s scores are saved for this round. Ask an admin if a correction is needed.</p>
+          <div style={styles.doneSummary}>
+            {PLAYER_KEYS.map(pk => (
+              <div key={pk} style={styles.doneSummaryRow}>
+                <span>{team[pk].name}<small style={styles.cardStatus}>{submitted[team[pk].id].status === 'pending' ? 'Awaiting admin review' : 'Approved'}</small></span>
+                <strong>{submitted[team[pk].id].gross_total}</strong>
               </div>
-              <div style={styles.doneSummaryRow}>
-                <span>{team?.p2?.name}</span>
-                <span style={{ fontWeight: 700 }}>
-                  {totalScore('p2')}
-                  {p2v !== null && (
-                    <span style={{ color: p2v <= 0 ? 'var(--green)' : '#c53030', marginLeft: 4 }}>
-                      ({vsParLabel(p2v)})
-                    </span>
-                  )}
-                </span>
-              </div>
-            </div>
-          )}
-          <Button
-            variant="primary"
-            size="lg"
-            fullWidth
-            icon={<ArrowLeft size={15} strokeWidth={2.25} />}
-            onClick={onBack}
-          >
-            Back to League
-          </Button>
+            ))}
+          </div>
+          <Button variant="primary" size="lg" fullWidth icon={<ArrowLeft size={15} />} onClick={onBack}>Back to League</Button>
         </div>
       </div>
     )
@@ -416,7 +413,7 @@ export default function ScoreEntry({ session, onBack }) {
   const hole = displayHole(currentHole, course)
   const par = getPar(currentHole)
   const isLastHole = currentHole === numHoles - 1
-  const allDone = scores.p1.every(s => s != null) && scores.p2.every(s => s != null)
+  const allDone = activePlayers.length > 0 && activePlayers.every(pk => scorecardComplete(scores[pk], numHoles))
 
   return (
     <div style={styles.container}>
@@ -441,6 +438,30 @@ export default function ScoreEntry({ session, onBack }) {
         <div style={{ width: 52 }} />
       </div>
 
+      <fieldset style={styles.playerSelection} disabled={saving}>
+        <legend style={styles.selectionTitle}>Whose scores are you entering?</legend>
+        <p style={styles.selectionHelp}>Play at different times? Submit one complete card now; your partner can submit later while the round is open. Select both to enter scores together.</p>
+        {PLAYER_KEYS.map(pk => {
+          const saved = submitted[team[pk].id]
+          return (
+            <label key={pk} style={styles.selectionRow}>
+              <input type="checkbox" checked={!!saved || selectedPlayers.includes(pk)} disabled={!!saved || saving}
+                aria-label={'Include ' + team[pk].name}
+                style={{ accentColor: 'var(--green)', width: 18, height: 18, flexShrink: 0 }}
+                onChange={event => setSelectedPlayers(previous => event.target.checked ? [...new Set([...previous, pk])] : previous.filter(key => key !== pk))} />
+              <span style={{ flex: 1, minWidth: 0 }}>
+                <strong>{team[pk].name}</strong>
+                <small style={styles.cardStatus}>{saved
+                  ? saved.status === 'pending' ? 'Submitted · Awaiting admin review' : 'Submitted · Approved'
+                  : 'Not submitted'}</small>
+              </span>
+              {saved && <strong>{saved.gross_total}</strong>}
+            </label>
+          )
+        })}
+        <Button variant="secondary" size="sm" onClick={refreshSubmittedCards} disabled={saving}>Refresh submitted cards</Button>
+      </fieldset>
+
       {/* Progress dots */}
       <div role="status" style={{
         padding: '10px 16px', fontSize: 13, lineHeight: 1.5,
@@ -455,14 +476,16 @@ export default function ScoreEntry({ session, onBack }) {
             : 'Your scores will save on this device as you play.'}</p>
       </div>
 
+      {activePlayers.length > 0 ? <>
       <div style={styles.progressRow}>
         {Array.from({ length: numHoles }, (_, i) => {
-          const done = scores.p1[i] != null && scores.p2[i] != null
+          const done = activePlayers.every(pk => scores[pk][i] != null)
           const active = i === currentHole
           return (
             <button
               key={i}
               aria-label={`Hole ${displayHole(i, course)}`}
+              disabled={saving}
               onClick={() => setCurrentHole(i)}
               style={{
                 ...styles.dot,
@@ -489,7 +512,7 @@ export default function ScoreEntry({ session, onBack }) {
         </div>
 
         {/* Score inputs for each player */}
-        {['p1', 'p2'].map(pk => {
+        {activePlayers.map(pk => {
           const player = team[pk]
           const s = scores[pk][currentHole]
           const diff = s != null && par ? s - par : null
@@ -503,6 +526,8 @@ export default function ScoreEntry({ session, onBack }) {
               <div style={styles.scoreControls}>
                 <button
                   style={styles.stepBtn}
+                  disabled={saving}
+                  aria-label={`Decrease score for ${player.name}`}
                   onClick={() => handleIncrement(pk, currentHole, -1)}
                 >
                   −
@@ -522,6 +547,8 @@ export default function ScoreEntry({ session, onBack }) {
                 </div>
                 <button
                   style={styles.stepBtn}
+                  disabled={saving}
+                  aria-label={`Increase score for ${player.name}`}
                   onClick={() => handleIncrement(pk, currentHole, 1)}
                 >
                   +
@@ -532,29 +559,29 @@ export default function ScoreEntry({ session, onBack }) {
         })}
 
         {/* Optional per-hole stats — always skippable */}
-        <button type="button" style={statStyles.toggle} onClick={() => setShowStats(v => !v)}>
+        <button type="button" disabled={saving} style={statStyles.toggle} onClick={() => setShowStats(v => !v)}>
           {showStats ? '− Hide stats' : '+ Track stats (putts · fairway · green)'}
         </button>
-        {showStats && ['p1', 'p2'].map(pk => {
+        {showStats && activePlayers.map(pk => {
           const h = stats[pk]?.[currentHole] || {}
           return (
             <div key={pk} style={statStyles.row}>
               <span style={statStyles.name}>{team[pk].name.split(' ')[0]}</span>
               <div style={statStyles.putts}>
-                <button type="button" style={statStyles.puttBtn}
+                <button type="button" disabled={saving} style={statStyles.puttBtn}
                   onClick={() => setStat(pk, currentHole, 'putts', Math.max(0, (h.putts ?? 2) - 1))}>−</button>
                 <span style={statStyles.puttVal}>{h.putts ?? '–'} putts</span>
-                <button type="button" style={statStyles.puttBtn}
+                <button type="button" disabled={saving} style={statStyles.puttBtn}
                   onClick={() => setStat(pk, currentHole, 'putts', Math.min(10, (h.putts ?? 1) + 1))}>+</button>
               </div>
               {par !== 3 && (
-                <button type="button"
+                <button type="button" disabled={saving}
                   style={{ ...statStyles.chip, ...(h.fir === true ? statStyles.chipOn : h.fir === false ? statStyles.chipOff : {}) }}
                   onClick={() => setStat(pk, currentHole, 'fir', h.fir === true ? false : h.fir === false ? null : true)}>
                   FW {h.fir === true ? '✓' : h.fir === false ? '✗' : ''}
                 </button>
               )}
-              <button type="button"
+              <button type="button" disabled={saving}
                 style={{ ...statStyles.chip, ...(h.gir === true ? statStyles.chipOn : h.gir === false ? statStyles.chipOff : {}) }}
                 onClick={() => setStat(pk, currentHole, 'gir', h.gir === true ? false : h.gir === false ? null : true)}>
                 GIR {h.gir === true ? '✓' : h.gir === false ? '✗' : ''}
@@ -569,9 +596,9 @@ export default function ScoreEntry({ session, onBack }) {
         <div style={styles.totalsTitle}>Running Total</div>
         {['p1', 'p2'].map(pk => {
           const gross = totalScore(pk)
-          const filled = scores[pk].filter(s => s != null).length
+          const authoritativeHoles = submitted[team[pk].id]?.hole_scores || scores[pk]
           const par_so_far = course?.hole_pars
-            ? course.hole_pars.slice(0, filled).reduce((a, b) => a + b, 0)
+            ? authoritativeHoles.reduce((sum, score, index) => sum + (score != null ? course.hole_pars[index] : 0), 0)
             : null
           const diff = par_so_far ? gross - par_so_far : null
           return (
@@ -597,7 +624,7 @@ export default function ScoreEntry({ session, onBack }) {
           size="lg"
           icon={<ArrowLeft size={14} strokeWidth={2.25} />}
           onClick={goPrev}
-          disabled={currentHole === 0}
+          disabled={saving || currentHole === 0}
           style={{ flex: 1, padding: '12px' }}
         >
           {currentHole === 0 ? 'Previous hole' : `Hole ${hole - 1}`}
@@ -609,7 +636,7 @@ export default function ScoreEntry({ session, onBack }) {
             size="lg"
             iconRight={<ArrowRight size={15} strokeWidth={2.25} />}
             onClick={goNext}
-            disabled={!canAdvance()}
+            disabled={saving || !canAdvance()}
             style={{
               flex: 2,
               padding: '14px',
@@ -637,7 +664,7 @@ export default function ScoreEntry({ session, onBack }) {
               boxShadow: '0 2px 8px rgba(45,106,79,0.4)',
             }}
           >
-            Submit Scores
+            {activePlayers.length === 1 ? 'Submit Scorecard' : 'Submit Both Scorecards'}
           </Button>
         )}
       </div>
@@ -664,7 +691,7 @@ export default function ScoreEntry({ session, onBack }) {
             <div style={styles.scPar}>{totalPar() ?? '—'}</div>
 
             {/* Player rows */}
-            {['p1', 'p2'].map(pk => (
+            {activePlayers.map(pk => (
               <React.Fragment key={pk}>
                 <div style={styles.scLabel}>{team[pk].name.split(' ')[0]}</div>
                 {scores[pk].map((s, i) => {
@@ -689,6 +716,9 @@ export default function ScoreEntry({ session, onBack }) {
           </div>
         </div>
       )}
+      </> : (
+        <p style={styles.selectionEmpty}>Select an unsubmitted player above to enter their scorecard, or go back to the league. Saved cards are protected from changes here.</p>
+      )}
     </div>
   )
 }
@@ -706,6 +736,12 @@ const statStyles = {
 }
 
 const styles = {
+  playerSelection: { margin: '16px 16px 0', padding: '12px 16px', border: '1px solid var(--gray-200)', borderRadius: 'var(--radius)', background: 'var(--white)', minWidth: 0 },
+  selectionTitle: { fontSize: 16, fontWeight: 700, color: 'var(--green-dark)', padding: '0 4px' },
+  selectionHelp: { fontSize: 13, lineHeight: 1.5, color: 'var(--gray-600)', marginBottom: 8 },
+  selectionRow: { display: 'flex', alignItems: 'center', gap: 12, padding: '12px 0', fontSize: 14, overflowWrap: 'anywhere' },
+  cardStatus: { display: 'block', fontSize: 12, lineHeight: 1.5, fontWeight: 400, color: 'var(--gray-600)', marginTop: 2 },
+  selectionEmpty: { padding: '24px 16px', color: 'var(--gray-600)', fontSize: 14, lineHeight: 1.6 },
   container: { display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--off-white)', overflowY: 'auto' },
   centered: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', padding: 24, textAlign: 'center', gap: 12 },
   spinner: { fontSize: 48, animation: 'spin 2s linear infinite' },
@@ -765,7 +801,7 @@ const styles = {
   doneCard: { background: 'var(--white)', borderRadius: 'var(--radius)', padding: '32px 24px', boxShadow: 'var(--shadow-lg)', textAlign: 'center', width: '100%', maxWidth: 360 },
   doneEmoji: { fontSize: 52, marginBottom: 12 },
   doneTitle: { fontSize: 24, fontWeight: 800, color: 'var(--green-dark)', marginBottom: 6 },
-  doneSub: { fontSize: 15, color: 'var(--gray-400)', marginBottom: 24 },
+  doneSub: { fontSize: 15, color: 'var(--gray-600)', marginBottom: 24 },
   doneSummary: { background: 'var(--off-white)', borderRadius: 'var(--radius-sm)', padding: '14px 16px', marginBottom: 24, display: 'flex', flexDirection: 'column', gap: 10 },
   doneSummaryRow: { display: 'flex', justifyContent: 'space-between', fontSize: 14 },
 }
