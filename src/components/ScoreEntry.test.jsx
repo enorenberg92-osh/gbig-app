@@ -95,7 +95,7 @@ it('lets the second partner enter their own card later when the first is already
   expect(checkbox('Blair Partner').props.checked).toBe(true)
   expect(checkbox('Blair Partner').props.disabled).toBe(false)
   expect(checkbox('Alex Player').props.disabled).toBe(true)
-  expect(text(tree)).toContain('Submitted · Approved')
+  expect(text(tree)).toContain('Submitted · Official')
   expect(text(tree)).not.toContain('Both scorecards submitted')
 })
 it('keeps both-player entry available and requires every selected card to be complete', async () => {

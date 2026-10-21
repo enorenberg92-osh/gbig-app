@@ -315,7 +315,7 @@ export default function ScoreEntry({ session, onBack }) {
       setDraftNotice(result?.already_submitted
         ? 'These scorecards were already submitted. The saved scores have been kept.'
         : `Scores submitted for ${activePlayers.map(pk => team[pk].name).join(' and ')}. Your partner can submit separately while this round is open.`)
-      showToast('Saved scorecards confirmed. See each player’s review status below.')
+      showToast('Scorecards saved. They count right away on standings and handicaps.')
     } catch {
       showToast('Submission could not be confirmed. Your draft is kept. Refresh submitted cards before trying again.', 'error')
     } finally {
@@ -397,7 +397,7 @@ export default function ScoreEntry({ session, onBack }) {
           <div style={styles.doneSummary}>
             {PLAYER_KEYS.map(pk => (
               <div key={pk} style={styles.doneSummaryRow}>
-                <span>{team[pk].name}<small style={styles.cardStatus}>{submitted[team[pk].id].status === 'pending' ? 'Awaiting admin review' : 'Approved'}</small></span>
+                <span>{team[pk].name}<small style={styles.cardStatus}>Official</small></span>
                 <strong>{submitted[team[pk].id].gross_total}</strong>
               </div>
             ))}
@@ -452,7 +452,7 @@ export default function ScoreEntry({ session, onBack }) {
               <span style={{ flex: 1, minWidth: 0 }}>
                 <strong>{team[pk].name}</strong>
                 <small style={styles.cardStatus}>{saved
-                  ? saved.status === 'pending' ? 'Submitted · Awaiting admin review' : 'Submitted · Approved'
+                  ? 'Submitted · Official'
                   : 'Not submitted'}</small>
               </span>
               {saved && <strong>{saved.gross_total}</strong>}

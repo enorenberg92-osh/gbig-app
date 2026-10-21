@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { AlertTriangle, Target, Plus, Check, Trash2 } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useLocation } from '../../context/LocationContext'
-import { scoreColor } from '../../lib/scoreUtils'
+import { scoreColor, vsParLabel } from '../../lib/scoreUtils'
 import { isDateInRange, isFutureDate } from '../../lib/dateUtils'
 import { hasCompleteCoursePars, displayHole } from '../../lib/holeUtils'
 import { loadWorkingLeague } from '../../lib/leagueUtils'
@@ -13,6 +13,9 @@ import { Button, Toast } from '../ui'
 import { useFeature } from '../../context/FeatureContext'
 
 import { loadSkinsRound } from '../../lib/loadSkinsRound'
+
+// League rule: a round is exceptional when net is MORE than this far from par.
+const EXCEPTIONAL_STROKES = 5
 
 export default function AdminScores({ activeEventId = null, onEventChange = () => {} }) {
   const { locationId, timezone } = useLocation()
@@ -29,6 +32,7 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
   const [skinsResult, setSkinsResult] = useState(null)
   const [subMap, setSubMap]           = useState({})  // { player_id: { sub_first_name, sub_last_name, sub_handicap } }
   const [leagueId, setLeagueId]       = useState(null)
+  const [overrides, setOverrides]     = useState({})  // { score_id: draft override handicap }
 
   useEffect(() => {
     if (locationId) loadEvents()
@@ -320,26 +324,20 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
       .catch(() => showToast('Handicap recalculation failed — use Handicaps → Recalculate', 'error'))
   }
 
-  async function handleReviewScore(score, status) {
-    const { error } = await supabase.rpc('admin_review_score', {
-      p_score_id: score.id,
-      p_status: status,
-    })
-    if (error) { showToast(mutationErrorMessage(error, 'review a score'), 'error'); return }
-    showToast(status === 'verified' ? 'Score approved' : 'Score rejected — the team can resubmit')
-    if (status === 'verified') recalcHandicaps([score.player_id])
-    loadEventData(selectedEvent)
-  }
-
-  async function handleApproveAll() {
+  // Rewrites that round's handicap + net (gross untouched) and makes it the
+  // player's registered handicap; the server recalculates their current one.
+  async function handleOverride(score, name) {
+    const value = parseInt(overrides[score.id], 10)
+    if (!Number.isFinite(value)) { showToast('Enter a whole-number handicap.', 'error'); return }
     setSaving(true)
-    const { data, error } = await supabase.rpc('admin_bulk_approve_scores', {
-      p_event_id: selectedEvent,
+    const { data, error } = await supabase.rpc('admin_override_score_handicap', {
+      p_score_id: score.id,
+      p_handicap: value,
     })
     setSaving(false)
-    if (error) { showToast(mutationErrorMessage(error, 'approve scores'), 'error'); return }
-    showToast(`Approved ${data?.approved ?? 0} score(s)`)
-    recalcHandicaps(data?.player_ids || [])
+    if (error) { showToast(mutationErrorMessage(error, 'override a handicap'), 'error'); return }
+    showToast(`${name} now plays off ${data.handicap_used} this week — net ${data.net_total}`)
+    setOverrides(prev => ({ ...prev, [score.id]: '' }))
     loadEventData(selectedEvent)
   }
 
@@ -358,10 +356,13 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
   const unsubmitted = teams.filter(t => !t.score1 && !t.score2)
   const completeTeams = teams.filter(t => t.score1 && t.score2).length
   const partialTeams = submitted.length - completeTeams
-  const pendingCount = teams.reduce((n, t) =>
-    n + (t.score1?.status === 'pending' ? 1 : 0) + (t.score2?.status === 'pending' ? 1 : 0), 0)
   const holePars    = eventData?.holePars || []
   const totalPar    = holePars.reduce((s, p) => s + p, 0)
+  const exceptional = teams
+    .flatMap(t => [{ player: t.p1, score: t.score1 }, { player: t.p2, score: t.score2 }])
+    .filter(({ score }) => score?.entry_type === 'played' && totalPar &&
+      Math.abs(score.net_total - totalPar) > EXCEPTIONAL_STROKES)
+    .sort((a, b) => Math.abs(b.score.net_total - totalPar) - Math.abs(a.score.net_total - totalPar))
 
   if (loading && !events.length) return <div style={styles.loading}>Loading…</div>
 
@@ -401,29 +402,60 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
 
       {!loading && (
         <>
-          {/* Review Queue */}
-          {pendingCount > 0 && (
+          {/* Exceptional Scores */}
+          {exceptional.length > 0 && (
             <div style={{ ...styles.card, borderColor: '#f6c453', background: '#fffbeb' }}>
               <div style={styles.cardTitleRow}>
-                <h3 style={{ ...styles.cardTitle, color: '#92400e' }}>⏳ Review Queue</h3>
+                <h3 style={{ ...styles.cardTitle, color: '#92400e' }}>Exceptional Scores</h3>
                 <span style={{ ...styles.badge, background: '#fef3c7', color: '#92400e' }}>
-                  {pendingCount} pending
+                  {exceptional.length}
                 </span>
               </div>
               <p style={{ fontSize: 12, color: '#92400e', marginBottom: 10 }}>
-                Player-submitted scores await review. Approve, edit a team to fix-and-approve,
-                or reject below. Publishing is blocked until the queue is empty.
+                Net more than {EXCEPTIONAL_STROKES} strokes from par. An override sets the handicap
+                for this week only (net recalculates, gross stays) and becomes the player’s
+                registered handicap going forward.
               </p>
-              <Button
-                variant="primary"
-                fullWidth
-                loading={saving}
-                loadingText="Approving…"
-                icon={<Check size={14} strokeWidth={2.5} />}
-                onClick={handleApproveAll}
-              >
-                Approve all {pendingCount} pending score{pendingCount === 1 ? '' : 's'}
-              </Button>
+              {exceptional.map(({ player, score }) => {
+                const draft = overrides[score.id] ?? ''
+                const draftHcp = parseInt(draft, 10)
+                return (
+                  <div key={score.id} style={exStyles.row}>
+                    <div style={exStyles.who}>
+                      <span style={exStyles.name}>
+                        {player.name}
+                        {score.sub_played && <span style={trStyles.subPillSm}>sub played</span>}
+                      </span>
+                      <span style={{ ...exStyles.vsPar, color: score.net_total > totalPar ? '#c53030' : 'var(--green)' }}>
+                        {vsParLabel(score.net_total - totalPar)} net
+                      </span>
+                    </div>
+                    <div style={exStyles.boxes}>
+                      <div style={exStyles.box}><span style={exStyles.boxLabel}>Gross</span><span style={exStyles.boxVal}>{score.gross_total}</span></div>
+                      <div style={exStyles.box}><span style={exStyles.boxLabel}>Net</span><span style={exStyles.boxVal}>{score.net_total}</span></div>
+                      <div style={exStyles.box}><span style={exStyles.boxLabel}>Hcp</span><span style={exStyles.boxVal}>{score.handicap_used}</span></div>
+                      <label style={{ ...exStyles.box, background: 'var(--white)', borderColor: '#f6c453' }}>
+                        <span style={exStyles.boxLabel}>Override</span>
+                        <input
+                          type="number"
+                          step="1"
+                          inputMode="numeric"
+                          aria-label={`Override handicap for ${player.name}`}
+                          style={exStyles.input}
+                          value={draft}
+                          onChange={e => setOverrides(prev => ({ ...prev, [score.id]: e.target.value }))}
+                          onKeyDown={e => { if (e.key === 'Enter') handleOverride(score, player.name) }}
+                        />
+                      </label>
+                    </div>
+                    {Number.isFinite(draftHcp) && (
+                      <Button variant="primary" size="sm" fullWidth loading={saving} loadingText="Saving…" onClick={() => handleOverride(score, player.name)}>
+                        Apply — net becomes {score.gross_total - draftHcp} ({vsParLabel(score.gross_total - draftHcp - totalPar)})
+                      </Button>
+                    )}
+                  </div>
+                )
+              })}
             </div>
           )}
 
@@ -450,7 +482,6 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
                   onSave={() => handleSaveTeamScores(team)}
                   onCancel={() => setEditingTeam(null)}
                   onDeleteScore={handleDeleteScore}
-                  onReview={handleReviewScore}
                   calcGross={calcGross}
                   calcNet={calcNet}
                   calcNetVsPar={calcNetVsPar}
@@ -485,7 +516,6 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
                   onSave={() => handleSaveTeamScores(team)}
                   onCancel={() => setEditingTeam(null)}
                   onDeleteScore={handleDeleteScore}
-                  onReview={handleReviewScore}
                   calcGross={calcGross}
                   calcNet={calcNet}
                   calcNetVsPar={calcNetVsPar}
@@ -561,7 +591,7 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
 }
 
 // ─── Team Row Component ───────────────────────────────────────────────────────
-function TeamRow({ team, holePars, course, isEditing, holeScores, saving, subMap = {}, onEdit, onHoleChange, onSave, onCancel, onDeleteScore, onReview, calcGross, calcNet, calcNetVsPar }) {
+function TeamRow({ team, holePars, course, isEditing, holeScores, saving, subMap = {}, onEdit, onHoleChange, onSave, onCancel, onDeleteScore, calcGross, calcNet, calcNetVsPar }) {
   const totalPar = holePars.reduce((s, p) => s + p, 0)
   const submitted = !!(team.score1 || team.score2)
 
@@ -605,9 +635,6 @@ function TeamRow({ team, holePars, course, isEditing, holeScores, saving, subMap
                 <span>1 of 2 scorecards submitted</span>
                 <span>Awaiting {(team.score1 ? team.p2 : team.p1)?.name}</span>
               </>}
-              {(team.score1?.status === 'pending' || team.score2?.status === 'pending') && (
-                <span style={{ color: '#b45309', fontWeight: 700 }}>Pending review</span>
-              )}
             </div>
             <Button
               variant="secondary"
@@ -834,17 +861,6 @@ function TeamRow({ team, holePars, course, isEditing, holeScores, saving, subMap
                 <span style={trStyles.submittedScores}>
                   Gross {s?.gross_total ?? '—'} · Net {s?.net_total ?? '—'}
                 </span>
-                {s?.status === 'pending' && onReview && (
-                  <span style={trStyles.reviewActions}>
-                    <span style={trStyles.pendingPill}>pending</span>
-                    <button type="button" style={trStyles.approveBtn} onClick={() => onReview(s, 'verified')}>
-                      Approve
-                    </button>
-                    <button type="button" style={trStyles.rejectBtn} onClick={() => onReview(s, 'rejected')}>
-                      Reject
-                    </button>
-                  </span>
-                )}
               </div>
             )
           })}
@@ -933,11 +949,19 @@ const trStyles = {
   submittedRow: { display: 'flex', gap: '8px', alignItems: 'center' },
   submittedName: { fontSize: '12px', fontWeight: 600, color: 'var(--black)' },
   submittedScores: { fontSize: '12px', color: 'var(--gray-400)' },
-  reviewActions: { display: 'flex', alignItems: 'center', gap: '6px' },
-  pendingPill: { fontSize: '10px', fontWeight: 700, background: '#fef3c7', color: '#92400e', padding: '1px 6px', borderRadius: '10px' },
-  approveBtn: { background: 'var(--green-xlight)', border: 'none', color: 'var(--green)', fontSize: '11px', fontWeight: 700, cursor: 'pointer', padding: '3px 10px', borderRadius: '6px' },
-  rejectBtn: { background: '#fee2e2', border: 'none', color: '#c53030', fontSize: '11px', fontWeight: 700, cursor: 'pointer', padding: '3px 10px', borderRadius: '6px' },
   subPill: { fontSize: '10px', fontWeight: 700, background: '#fff3cd', color: '#7a5c00', padding: '1px 6px', borderRadius: '10px', marginLeft: '4px', verticalAlign: 'middle' },
   subPillSm: { fontSize: '9px', fontWeight: 700, background: '#fff3cd', color: '#7a5c00', padding: '1px 5px', borderRadius: '8px', marginLeft: '3px', verticalAlign: 'middle' },
   subForLabel: { fontSize: '9px', color: '#7a5c00', fontStyle: 'italic' },
+}
+
+const exStyles = {
+  row: { display: 'flex', flexDirection: 'column', gap: '8px', padding: '10px 0', borderTop: '1px solid #fde68a' },
+  who: { display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '8px' },
+  name: { fontSize: '14px', fontWeight: 700, color: 'var(--black)' },
+  vsPar: { fontSize: '12px', fontWeight: 700, whiteSpace: 'nowrap' },
+  boxes: { display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '6px' },
+  box: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px', padding: '6px 4px', background: '#fef3c7', border: '1.5px solid transparent', borderRadius: 'var(--radius-sm)' },
+  boxLabel: { fontSize: '10px', fontWeight: 700, color: '#92400e', textTransform: 'uppercase', letterSpacing: '0.3px' },
+  boxVal: { fontSize: '18px', fontWeight: 800, color: 'var(--black)', lineHeight: '26px' },
+  input: { width: '100%', maxWidth: '64px', height: '26px', border: 'none', borderBottom: '1.5px solid #f6c453', textAlign: 'center', fontSize: '18px', fontWeight: 800, background: 'transparent', outline: 'none', padding: 0, MozAppearance: 'textfield' },
 }

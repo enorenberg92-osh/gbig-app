@@ -320,7 +320,7 @@ export default function AdminPlayers() {
   }
 
   function startEditPlayer(player) {
-    setPlayerForm({ name: player.name || '', email: player.email || '', handicap: player.handicap != null ? String(player.handicap) : '', in_skins: player.in_skins || false, handicap_locked: player.handicap_locked || false, league_password: player.league_password || 'password' })
+    setPlayerForm({ name: player.name || '', email: player.email || '', handicap: (player.starting_handicap ?? player.handicap) != null ? String(player.starting_handicap ?? Math.round(player.handicap)) : '', in_skins: player.in_skins || false, handicap_locked: player.handicap_locked || false, league_password: player.league_password || 'password' })
     setEditingPlayer(player)
     setShowPlayerForm(true)
     setShowTeamForm(false)
@@ -551,7 +551,7 @@ export default function AdminPlayers() {
               <span style={styles.hint}>Default is "password" — player can change this after logging in.</span>
             </div>}
             <div style={styles.fieldGroup}>
-              <label style={styles.label}>Handicap</label>
+              <label style={styles.label}>Registered handicap</label>
               <input
                 type="number"
                 step="1"
@@ -563,7 +563,7 @@ export default function AdminPlayers() {
                 onChange={e => setPlayerForm(f => ({ ...f, handicap: e.target.value }))}
                 placeholder="e.g. 12"
               />
-              <span style={styles.hint}>Whole numbers only, -2 to 27.</span>
+              <span style={styles.hint}>Whole numbers only, -2 to 27. Counts as one round in the handicap average{editingPlayer ? ` · current playing handicap: ${editingPlayer.handicap ?? '—'}` : ''}.</span>
             </div>
 
             {/* Handicap Lock Toggle */}

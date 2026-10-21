@@ -22,7 +22,7 @@ _Audience: players, league admins, and super-admins. Written for training new us
 
 ## 1. What This App Is
 
-The app runs an indoor golf league end to end: weekly schedules, hole-by-hole score entry by players, admin review and approval, multiple scoring formats (stroke, match play, scramble, best ball, Stableford), matchups and points standings, playoffs, flights, skins, substitutes, handicaps, a money list, tournaments with sign-ups, member messaging, events, reports, and push alerts. It installs on a phone like a native app (PWA) and supports multiple locations — each with its own domain, branding, app icon, admins, and leagues.
+The app runs an indoor golf league end to end: weekly schedules, hole-by-hole score entry by players (official on submit), exceptional-score handicap overrides, multiple scoring formats (stroke, match play, scramble, best ball, Stableford), matchups and points standings, playoffs, flights, skins, substitutes, handicaps, a money list, tournaments with sign-ups, member messaging, events, reports, and push alerts. It installs on a phone like a native app (PWA) and supports multiple locations — each with its own domain, branding, app icon, admins, and leagues.
 
 Four bottom tabs organize the member experience:
 
@@ -38,7 +38,7 @@ Four bottom tabs organize the member experience:
 | Role | Who | Can do |
 |---|---|---|
 | **Player** | League member | Submit own team's scores (with optional stats), view standings/matchups, edit own profile & password, request subs, sign up for tournaments, follow/message friends, RSVP to events |
-| **Admin** | League manager(s) at a location | Everything a player can, plus: approve/edit/reject scores, run the review queue, set formats and matchups, close out weeks, manage players/teams/courses/schedule/flights, run cups, tournaments, and the money list, print reports, approve subs, recalculate handicaps, send alerts, toggle features |
+| **Admin** | League manager(s) at a location | Everything a player can, plus: edit/remove scores, override handicaps on exceptional scores, set formats and matchups, close out weeks, manage players/teams/courses/schedule/flights, run cups, tournaments, and the money list, print reports, approve subs, recalculate handicaps, send alerts, toggle features |
 | **Super-admin** | Platform owner | Create locations, edit branding, invite location admins, set location-level feature flags |
 
 Every change an admin makes (score approvals, week publishes, handicap changes, roster edits, ledger entries, matchup changes) is recorded in a permanent audit trail with who did it and what changed.
@@ -84,7 +84,7 @@ One submission covers your **whole team** — either teammate can do it, once pe
 4. Use **Prev/Next** to move between holes; the progress dots show what's filled.
 5. On the last hole, review the scorecard grid, then tap **Submit**.
 
-**What happens next:** your scores go into a **review queue** — you'll see an "awaiting admin review" badge until an admin approves them. They do **not** appear in standings until approved. This keeps standings trustworthy.
+**What happens next:** your scores are **official immediately** — they show on your profile and in standings, and your handicap updates right away (the new handicap applies from next week). Mistakes are fixed by an admin.
 
 Rules to know:
 - Every hole must have a score from 1–20 for both players.
@@ -99,7 +99,7 @@ Rules to know:
 - **Flight filter** — if the league uses flights/divisions, filter standings to your flight.
 - **Matchups card** — on match-play weeks, This Week shows who plays whom and the result (e.g. 2–0) once scored.
 - **Team result column** — on scramble/best-ball nights, the team-of-the-night result appears once computed.
-- Players see closed (finalized) weeks; only **admin-approved** scores count. Missed weeks show as penalty entries (see [Section 8.3](#83-the-missed-week-penalty)).
+- Players see closed (finalized) weeks; only official (verified) scores count. Missed weeks show as penalty entries (see [Section 8.3](#83-the-missed-week-penalty)).
 
 ### 4.4 My Profile
 
@@ -156,13 +156,17 @@ Open with **League tab → Open Admin Panel**. Sections (left nav on desktop, ch
 
 ### 5.2 Scores Section (the one you'll live in)
 
-Pick any week from the dropdown. When player-submitted scores are waiting, a **Review Queue** card shows the pending count with one-tap **Approve all**; each score also has individual **Approve / Reject** buttons. For each team you can:
-- **Enter Scores** — type both players' hole scores yourself (all holes, 1–20). Admin-entered scores are **instantly approved** — no review step.
-- **Edit** — fix an existing score (works on **closed weeks too** — see 5.3). Saving an edit approves it.
+Pick any week from the dropdown. Player-submitted scores are already official — there is no approval step.
+
+**Exceptional Scores** card: lists every round this week whose **net is more than 5 strokes from par** (either direction), worst first. Each shows four boxes — **Gross**, **Net**, **Hcp** (the handicap the round was played off) and a blank **Override**. Type a handicap and tap **Apply**: that week's handicap and net are rewritten (gross never changes), the override becomes the player's **registered handicap**, and their current handicap recalculates. Closed weeks re-score automatically. Every override is audit-logged.
+
+For each team you can:
+- **Enter Scores** — type both players' hole scores yourself (all holes, 1–20). Admin-entered scores are official immediately.
+- **Edit** — fix an existing score (works on **closed weeks too** — see 5.3). Edits keep the handicap the round was played off.
 - **Remove** — delete a score row entirely.
 - **Skins calculator** — after scores are in, one tap computes skins (lowest unique score per hole, no carryovers; only players marked "in skins" count).
 
-Handicaps recalculate automatically after every save/approval. Rejected scores free the team to resubmit.
+Handicaps recalculate automatically after every submit, save, override or removal.
 
 **Sub weeks:** when an approved sub played, the score you enter is tagged automatically — it counts for the team but is excluded from the absent player's handicap. If the sub has their own profile, they also get a personal copy of the round.
 
@@ -184,7 +188,6 @@ The Overview section is a 5-step wizard for week close-out:
 3. **Results** — final team leaderboard for the week.
 4. **Email** — a pre-written recap email; copy it or open your mail app.
 5. **Publish** — the big one. In a single, safe operation it:
-   - Blocks if any scores are still **pending** (approve or reject them first);
    - Applies the **missed-week penalty** to any rostered player with no score;
    - **Runs the format engine** — scores the week's matchups (match play), Stableford points, or team-of-the-night results (scramble / best ball);
    - Closes the week and **opens the next scheduled week** automatically;
@@ -307,7 +310,7 @@ LEAGUE NIGHT
 
 AFTER PLAY / NEXT MORNING
   □ Admin Panel → Scores
-  □ Review Queue → verify numbers → "Approve all" (or fix/reject individually)
+  □ Exceptional Scores → override handicaps where a round doesn't reflect the player's indoor game
   □ Enter scores for any team that didn't self-submit
   □ Enter sub scores where subs played
   □ Run the Skins calculator
@@ -368,19 +371,10 @@ The first label of the hostname (with any `-app` suffix stripped) is the locatio
 
 ### 8.1 The Score Lifecycle
 
-Every score is `pending`, `verified`, or `rejected`:
-
-```
-player submits  ──►  PENDING  ──(admin approves/saves)──►  VERIFIED
-                        │
-                        └──(admin rejects)──►  REJECTED (kept for audit,
-                                               invisible everywhere else)
-admin enters    ─────────────────────────────►  VERIFIED (instantly)
-```
+Every score is official (`verified`) the moment it is saved — by a player or an admin. Admins correct mistakes by editing or removing the score. (Older `pending`/`rejected` states exist in the data model but are no longer produced.)
 
 - **Standings** count verified scores (and verified missed-week penalties).
 - **Handicaps, skins, format results, and stats** count verified *played* scores only.
-- A week cannot be **published** while any score is pending.
 
 ### 8.2 One Open Week
 
@@ -402,16 +396,17 @@ Each week carries its own format and options, validated when saved — a typo'd 
 
 ## 9. The Handicap System
 
-A custom league handicap, recalculated automatically after every score save:
+A custom league handicap, recalculated automatically (in the database) after every score submit or save:
 
-1. Take the player's most recent **N** verified rounds (N = the league's week count, up to 12; sub-played weeks and handicap-excluded nights like scrambles are skipped).
+1. Take the player's most recent **N** rounds (N = the league's week count, up to 12; sub-played weeks and handicap-excluded nights like scrambles are skipped).
 2. For each round, compute the **differential**: gross score − course par.
+   The player's **registered handicap** counts as one extra (oldest) differential until they have N real rounds. Example: registered 4, shoots +8 → avg(4, 8) = 6 → × 0.90 = 5.4 → **5**.
 3. Discard outliers: with 4+ rounds, drop the **1 highest**; with 5+ rounds, also drop the **1 lowest**.
 4. Average what's left and multiply by **0.90**.
 5. Round **down** to a whole number (never up).
 6. Clamp between **−2 and 27** (subs: −2 to 40).
 
-New players need at least 1 round before a handicap computes; until then, the admin-entered starting handicap is used. Admins can **lock** any player's handicap to stop auto-recalc, or override it manually (both audit-logged). Every change is also recorded in the handicap history that drives the profile trend chart.
+With no rounds yet, a player plays off their registered handicap as-is. The registered handicap is set on import / Players, and replaced by any exceptional-score override. Admins can **lock** any player's handicap to stop auto-recalc, or override it manually (both audit-logged). Every change is also recorded in the handicap history that drives the profile trend chart.
 
 **Net score = gross − handicap** (the handicap in effect the night the round was saved — stored with the score, so later handicap changes never rewrite old net results).
 
@@ -429,7 +424,7 @@ The player isn't on a team in the working league, or their profile isn't linked.
 The event's course has no pars (or the wrong number of holes). Admin: Courses → edit the course → enter a 3–6 par for every hole.
 
 **Player submitted, but standings didn't change.**
-Working as designed — the score is pending. Admin: Scores → Review Queue → Approve. Standings update on approval.
+Standings only include official scores for the working league; check the score appears under Admin → Scores for that week.
 
 **"Resolve N pending score row(s) before publishing."**
 Approve or reject the pending scores in the Scores section (one tap on "Approve all"), then Publish again.

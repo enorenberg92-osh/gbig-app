@@ -25,12 +25,14 @@ beforeAll(async () => {
   }
   await db.exec(fn('202607180007_phase4_hole_stats.sql', 'hole_stats_valid'))
   for (const name of ['redact_audit_payload', 'write_audit_event']) await db.exec(fn('202607100001_phase1_audit_foundation.sql', name))
-  await db.exec(migration('20261020005345_independent_partner_scores.sql'))
+  const rules = '20261021120000_official_scores_handicap_overrides.sql'
+  for (const name of ['apply_player_handicap', 'submit_scores']) await db.exec(fn(rules, name))
+  await db.exec('revoke all on function submit_scores(uuid,jsonb) from public; grant execute on function submit_scores(uuid,jsonb) to authenticated;')
   await db.exec('create trigger validate_scores before insert or update on scores for each row execute function validate_score_row(); grant usage on schema public,auth to authenticated,anon;')
 }, 30000)
 afterAll(async () => { await db?.close() })
 beforeEach(async () => {
-  await db.exec('reset role; truncate scores,events,players,teams,team_memberships,courses,locations,audit_events cascade;' +
+  await db.exec('reset role; truncate scores,handicap_history,events,players,teams,team_memberships,courses,locations,audit_events cascade;' +
     'insert into locations values(' + q(1) + '),(' + q(2) + ');' +
     'insert into teams values(' + q(21) + ',' + q(1) + ',' + q(3) + ",'Partners'),(" + q(22) + ',' + q(1) + ',' + q(3) + ",'Other team');" +
     'insert into players values(' + [q(11), q(101), q(1), "'Alex'", 2, q(21)].join(',') + '),(' + [q(12), q(102), q(1), "'Blair'", 4, q(21)].join(',') + '),(' + [q(13), q(103), q(2), "'Other venue'", 3, 'null'].join(',') + '),(' + [q(14), q(104), q(1), "'Other team'", 3, q(22)].join(',') + ');' +
@@ -42,12 +44,12 @@ beforeEach(async () => {
 it('lets one partner submit, then the other later, preserving the first card and handicap snapshot', async () => {
   expect((await submit([entry(11)])).inserted).toBe(1)
   const first = (await rows())[0]
-  expect(first).toMatchObject({ player_id: id(11), gross_total: 36, net_total: 34, handicap_used: 2, status: 'pending' })
+  expect(first).toMatchObject({ player_id: id(11), gross_total: 36, net_total: 34, handicap_used: 2, status: 'verified' })
   await db.exec('update players set handicap=8 where id=' + q(11))
   expect((await submit([entry(12, 5)], 102)).inserted).toBe(1)
   expect((await rows())[0]).toEqual(first)
-  expect((await rows())[1]).toMatchObject({ gross_total: 45, net_total: 41, handicap_used: 4, status: 'pending' })
-  expect((await db.query("select after_data->'submitted_player_ids' as ids from audit_events order by created_at")).rows.map(row => row.ids)).toEqual([[id(11)], [id(12)]])
+  expect((await rows())[1]).toMatchObject({ gross_total: 45, net_total: 41, handicap_used: 4, status: 'verified' })
+  expect((await db.query("select after_data->'submitted_player_ids' as ids from audit_events where action='score.submit' order by created_at")).rows.map(row => row.ids)).toEqual([[id(11)], [id(12)]])
 })
 it('still allows both cards together and safely retries a mixed existing/new batch', async () => {
   await submit([entry(11)])
@@ -96,4 +98,9 @@ it('keeps the normal round deadline: no second partner submission after publishi
   await db.exec("update events set status='closed'")
   await expect(submit([entry(12)], 102)).rejects.toThrow('no longer open')
   expect(await rows()).toHaveLength(1)
+})
+it('makes a submitted score official and averages in the registered handicap (4 shoots +8 -> 5)', async () => {
+  await submit([entry(12, 5, { hole_scores: [5, 5, 5, 5, 5, 5, 5, 5, 4] })], 102)
+  expect((await rows())[0]).toMatchObject({ gross_total: 44, handicap_used: 4, net_total: 40, status: 'verified' })
+  expect(Number((await db.query('select handicap from players where id=' + q(12))).rows[0].handicap)).toBe(5)
 })

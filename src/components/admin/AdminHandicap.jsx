@@ -154,6 +154,8 @@ export default function AdminHandicap() {
         </div>
         <div style={styles.formulaNote}>
           Differential = Gross Score − Course Par &nbsp;·&nbsp; Handicap = avg(used diffs) × 90% → truncate
+          &nbsp;·&nbsp; Registered handicap counts as one round until {settings.scoresUsed} real rounds exist
+          &nbsp;·&nbsp; Recalculates automatically on every submitted score
         </div>
       </div>
 
@@ -180,7 +182,13 @@ export default function AdminHandicap() {
           </div>
 
           {playersWithScores.map(player => {
-            const rounds      = (scoreHistory[player.id] || []).filter(r => r.diff != null)
+            const played      = (scoreHistory[player.id] || []).filter(r => r.diff != null)
+            // Mirrors apply_player_handicap: the registered handicap counts as
+            // the oldest round until a full window of real rounds exists.
+            const registered  = player.starting_handicap ?? Math.round(player.handicap)
+            const rounds      = played.length < settings.scoresUsed && Number.isFinite(registered)
+              ? [{ eventName: 'Registered handicap', diff: registered }, ...played]
+              : played
             const diffs       = rounds.map(r => r.diff)
             const breakdown   = calcBreakdown(diffs, settings)
             const newHcp      = breakdown?.capped
@@ -205,7 +213,7 @@ export default function AdminHandicap() {
                         </span>
                       )}
                     </div>
-                    <div style={styles.playerMeta}>{rounds.length} round{rounds.length !== 1 ? 's' : ''} on record</div>
+                    <div style={styles.playerMeta}>{played.length} round{played.length !== 1 ? 's' : ''} on record · registered {registered}</div>
                   </div>
                   <div style={styles.hcpPair}>
                     <div style={styles.hcpBox}>
