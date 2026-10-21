@@ -7,7 +7,7 @@ import {
 import { supabase } from '../../lib/supabase'
 import PlayerProfile from '../PlayerProfile'
 import AdminImport from './AdminImport'
-import PlayerLoginEditor from './PlayerLoginEditor'
+import PlayerLoginEditor, { invokePlayerLogin } from './PlayerLoginEditor'
 import { useLocation } from '../../context/LocationContext'
 import ConfirmDialog from '../ConfirmDialog'
 import { Button, Toast, EmptyState, Input } from '../ui'
@@ -99,6 +99,19 @@ export default function AdminPlayers() {
 
     if (editingPlayer) {
       setSaving(true)
+      // Linked login: a changed email goes through the same reviewed
+      // correction Manage Login uses, so roster and login change together.
+      const newEmail = playerForm.email.trim().toLowerCase()
+      if (editingPlayer.user_id && newEmail !== (editingPlayer.email || '').trim().toLowerCase()) {
+        try {
+          const { review } = await invokePlayerLogin(editingPlayer.id, 'preview', { email: newEmail })
+          await invokePlayerLogin(editingPlayer.id, 'apply', { review, confirmed: true })
+        } catch (err) {
+          setSaving(false)
+          showToast('Email not changed: ' + err.message, 'error')
+          return
+        }
+      }
       const { error } = await supabase.rpc('admin_update_player', {
         p_player_id: editingPlayer.id,
         p_payload: payload,
@@ -532,9 +545,9 @@ export default function AdminPlayers() {
             </div>
             <div style={styles.fieldGroup}>
               <label style={styles.label} htmlFor="player-roster-email">Roster Email</label>
-              <input id="player-roster-email" type="email" style={styles.input} value={playerForm.email} readOnly={!!editingPlayer?.user_id} onChange={e => setPlayerForm(f => ({ ...f, email: e.target.value }))} placeholder="john@example.com" />
+              <input id="player-roster-email" type="email" style={styles.input} value={playerForm.email} required={!!editingPlayer?.user_id} onChange={e => setPlayerForm(f => ({ ...f, email: e.target.value }))} placeholder="john@example.com" />
               {editingPlayer?.user_id && <>
-                <span style={styles.hint}>Use Manage Login to review and correct both the roster email and the existing login.</span>
+                <span style={styles.hint}>Changing this email also updates the player’s login. Their password stays the same.</span>
                 <Button type="button" variant="secondary" size="sm" onClick={() => { setLoginPlayer(editingPlayer); setShowPlayerForm(false) }}>Manage Login</Button>
               </>}
             </div>

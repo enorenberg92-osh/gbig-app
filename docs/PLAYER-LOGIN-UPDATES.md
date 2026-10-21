@@ -13,7 +13,7 @@ The database migration and Edge Function must be released before the frontend. T
 5. Check **I confirmed this address and player identity, and approve changing this existing login.** Then choose **Update roster and login email**.
 6. Wait for the verified result. A confirmed account can use the corrected email with its existing password. An unconfirmed account still needs its normal email verification before sign-in.
 
-Names, handicap, skins, and other profile/league details remain in **Edit Player**. For a linked account, its roster email is read-only there, and the login password field is omitted. A player without a linked login continues through the existing **Create Account** workflow.
+Names, handicap, skins, and other profile/league details remain in **Edit Player**. For a linked account, editing the email there and saving runs this same correction (preview, then apply) before saving the other fields, so the roster email and login change together; if the correction is blocked, nothing is saved and the reason is shown. The login password field is omitted. A player without a linked login continues through the existing **Create Account** workflow.
 
 If the screen reports an unfinished correction or partial failure, use **Refresh login details** and give the correction ID to the account owner. Do not create a replacement account or repeatedly submit corrections. Changing the input invalidates the existing review and clears its checkbox; a fresh review is required.
 

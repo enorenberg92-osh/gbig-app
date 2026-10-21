@@ -3,6 +3,20 @@ import { supabase } from '../../lib/supabase'
 import { Button } from '../ui'
 import './player-login.css'
 
+export async function invokePlayerLogin(playerId, action, extra = {}) {
+  const { data, error: requestError } = await supabase.functions.invoke('update-player-login', {
+    body: { action, player_id: playerId, ...extra },
+  })
+  if (requestError) {
+    let message = 'Could not reach login management. Refresh and try again.'
+    try { message = (await requestError.context.json()).error || message } catch { /* No server response. */ }
+    throw new Error(message)
+  }
+  if (data?.error) throw new Error(data.error)
+  if (!data?.player || data.player.id !== playerId) throw new Error('The player details could not be verified. Refresh and try again.')
+  return data
+}
+
 export default function PlayerLoginEditor({ playerId, onClose, onSaved }) {
   const [details, setDetails] = useState(null)
   const [email, setEmail] = useState('')
@@ -16,19 +30,7 @@ export default function PlayerLoginEditor({ playerId, onClose, onSaved }) {
   const inFlight = useRef(false)
   const mounted = useRef(true)
 
-  async function invoke(action, extra = {}) {
-    const { data, error: requestError } = await supabase.functions.invoke('update-player-login', {
-      body: { action, player_id: playerId, ...extra },
-    })
-    if (requestError) {
-      let message = 'Could not reach login management. Refresh and try again.'
-      try { message = (await requestError.context.json()).error || message } catch { /* No server response. */ }
-      throw new Error(message)
-    }
-    if (data?.error) throw new Error(data.error)
-    if (!data?.player || data.player.id !== playerId) throw new Error('The player details could not be verified. Refresh and try again.')
-    return data
-  }
+  const invoke = (action, extra) => invokePlayerLogin(playerId, action, extra)
 
   useEffect(() => {
     mounted.current = true
