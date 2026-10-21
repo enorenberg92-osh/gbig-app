@@ -158,7 +158,7 @@ Open with **League tab → Open Admin Panel**. Sections (left nav on desktop, ch
 
 Pick any week from the dropdown. Player-submitted scores are already official — there is no approval step.
 
-**Exceptional Scores** card: lists every round this week whose **net is more than 5 strokes from par** (either direction), worst first. Each shows four boxes — **Gross**, **Net**, **Hcp** (the handicap the round was played off) and a blank **Override**. Type a handicap and tap **Apply**: that week's handicap and net are rewritten (gross never changes), the override becomes the player's **registered handicap**, and their current handicap recalculates. Closed weeks re-score automatically. Every override is audit-logged.
+**Exceptional Scores** card: lists every round this week whose **net is more than 5 strokes from par** (either direction), worst first. Each shows four boxes — **Gross**, **Net**, **Hcp** (the handicap the round was played off) and a blank **Override**. Fill in any Override boxes, then tap **Apply N overrides** once to save them all: each round's handicap and net for that week are rewritten (gross never changes), the override becomes the player's **registered handicap**, and their current handicap recalculates. Closed weeks re-score automatically. Every override is audit-logged.
 
 For each team you can:
 - **Enter Scores** — type both players' hole scores yourself (all holes, 1–20). Admin-entered scores are official immediately.

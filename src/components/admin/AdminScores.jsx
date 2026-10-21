@@ -324,20 +324,29 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
       .catch(() => showToast('Handicap recalculation failed — use Handicaps → Recalculate', 'error'))
   }
 
-  // Rewrites that round's handicap + net (gross untouched) and makes it the
-  // player's registered handicap; the server recalculates their current one.
-  async function handleOverride(score, name) {
-    const value = parseInt(overrides[score.id], 10)
-    if (!Number.isFinite(value)) { showToast('Enter a whole-number handicap.', 'error'); return }
+  // Each override rewrites that round's handicap + net (gross untouched) and
+  // makes it the player's registered handicap; the server recalculates their
+  // current one. Sequential: each call is its own audited transaction, so a
+  // failure leaves that row's draft in place to retry.
+  async function handleApplyOverrides(rows) {
     setSaving(true)
-    const { data, error } = await supabase.rpc('admin_override_score_handicap', {
-      p_score_id: score.id,
-      p_handicap: value,
-    })
+    const failed = []
+    for (const { player, score, hcp } of rows) {
+      const { error } = await supabase.rpc('admin_override_score_handicap', {
+        p_score_id: score.id,
+        p_handicap: hcp,
+      })
+      if (error) failed.push(`${player.name}: ${mutationErrorMessage(error, 'override a handicap')}`)
+      else setOverrides(prev => ({ ...prev, [score.id]: '' }))
+    }
     setSaving(false)
-    if (error) { showToast(mutationErrorMessage(error, 'override a handicap'), 'error'); return }
-    showToast(`${name} now plays off ${data.handicap_used} this week — net ${data.net_total}`)
-    setOverrides(prev => ({ ...prev, [score.id]: '' }))
+    const applied = rows.length - failed.length
+    showToast(
+      failed.length
+        ? `Applied ${applied} of ${rows.length}. ${failed.join(' · ')}`
+        : `Applied ${applied} handicap override${applied === 1 ? '' : 's'}`,
+      failed.length ? 'error' : 'success'
+    )
     loadEventData(selectedEvent)
   }
 
@@ -363,6 +372,9 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
     .filter(({ score }) => score?.entry_type === 'played' && totalPar &&
       Math.abs(score.net_total - totalPar) > EXCEPTIONAL_STROKES)
     .sort((a, b) => Math.abs(b.score.net_total - totalPar) - Math.abs(a.score.net_total - totalPar))
+  const readyOverrides = exceptional
+    .map(row => ({ ...row, hcp: parseInt(overrides[row.score.id], 10) }))
+    .filter(row => Number.isFinite(row.hcp))
 
   if (loading && !events.length) return <div style={styles.loading}>Loading…</div>
 
@@ -444,18 +456,30 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
                           style={exStyles.input}
                           value={draft}
                           onChange={e => setOverrides(prev => ({ ...prev, [score.id]: e.target.value }))}
-                          onKeyDown={e => { if (e.key === 'Enter') handleOverride(score, player.name) }}
                         />
                       </label>
                     </div>
                     {Number.isFinite(draftHcp) && (
-                      <Button variant="primary" size="sm" fullWidth loading={saving} loadingText="Saving…" onClick={() => handleOverride(score, player.name)}>
-                        Apply — net becomes {score.gross_total - draftHcp} ({vsParLabel(score.gross_total - draftHcp - totalPar)})
-                      </Button>
+                      <span style={exStyles.preview}>
+                        New net {score.gross_total - draftHcp} ({vsParLabel(score.gross_total - draftHcp - totalPar)})
+                      </span>
                     )}
                   </div>
                 )
               })}
+              <Button
+                variant="primary"
+                fullWidth
+                loading={saving}
+                loadingText="Applying…"
+                disabled={!readyOverrides.length}
+                onClick={() => handleApplyOverrides(readyOverrides)}
+                style={{ marginTop: 10 }}
+              >
+                {readyOverrides.length
+                  ? `Apply ${readyOverrides.length} override${readyOverrides.length === 1 ? '' : 's'}`
+                  : 'Enter overrides above, then apply them together'}
+              </Button>
             </div>
           )}
 
@@ -963,5 +987,6 @@ const exStyles = {
   box: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px', padding: '6px 4px', background: '#fef3c7', border: '1.5px solid transparent', borderRadius: 'var(--radius-sm)' },
   boxLabel: { fontSize: '10px', fontWeight: 700, color: '#92400e', textTransform: 'uppercase', letterSpacing: '0.3px' },
   boxVal: { fontSize: '18px', fontWeight: 800, color: 'var(--black)', lineHeight: '26px' },
+  preview: { fontSize: '12px', fontWeight: 600, color: '#92400e', textAlign: 'right' },
   input: { width: '100%', maxWidth: '64px', height: '26px', border: 'none', borderBottom: '1.5px solid #f6c453', textAlign: 'center', fontSize: '18px', fontWeight: 800, background: 'transparent', outline: 'none', padding: 0, MozAppearance: 'textfield' },
 }
