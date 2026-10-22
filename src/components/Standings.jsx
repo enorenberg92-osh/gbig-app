@@ -556,7 +556,9 @@ export default function Standings({ session, onBack, adminMode = false }) {
 }
 
 const styles = {
-  container:    { display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--off-white)' },
+  // Let the outer page scroller reach every row instead of shrinking the
+  // overflow-hidden tables to the viewport, including in the admin flex wrapper.
+  container:    { display: 'flex', flexDirection: 'column', minHeight: '100%', flexShrink: 0, background: 'var(--off-white)' },
   centered:     { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 16, padding: 24 },
   header:       { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', background: 'var(--green-dark)', color: 'var(--white)', flexShrink: 0 },
   headerBack:   { color: 'rgba(255,255,255,0.8)', fontSize: 13, fontWeight: 500, width: 52 },
