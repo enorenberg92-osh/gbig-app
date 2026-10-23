@@ -82,7 +82,10 @@ export default function AdminSkins({ activeEventId = null, onEventChange = () =>
         if (cancelled || currentScope !== scope.current) return
         setWorkingLeague(league)
         setEvents(evts)
-        setLeaguePlayers(enrolledPlayers.sort((a, b) => playerName(a).localeCompare(playerName(b))))
+        setLeaguePlayers(enrolledPlayers.sort((a, b) =>
+          playerLastName(a).localeCompare(playerLastName(b), undefined, { sensitivity: 'base' }) ||
+          playerName(a).localeCompare(playerName(b), undefined, { sensitivity: 'base' })
+        ))
         const nextEvent = evts.find(event => event.id === activeEventId) || evts.find(event => event.status === 'open') || evts[0]
         setSelectedEvent(nextEvent?.id || '')
         if (nextEvent && nextEvent.id !== activeEventId) onEventChange(nextEvent.id)
@@ -247,6 +250,10 @@ export default function AdminSkins({ activeEventId = null, onEventChange = () =>
   function playerName(p) {
     if (!p) return 'Unknown'
     return p.first_name ? `${p.first_name} ${p.last_name || ''}`.trim() : p.name || 'Unknown'
+  }
+
+  function playerLastName(p) {
+    return p.last_name?.trim() || (p.name || playerName(p)).trim().split(/\s+/).at(-1) || ''
   }
 
   if (loading) return <div style={st.loading}>Loading…</div>
