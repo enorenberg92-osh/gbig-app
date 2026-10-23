@@ -2,11 +2,8 @@ import { compareEffectiveScores } from './roundUtils'
 import { displayHole } from './holeUtils'
 import { skinScoreRows } from './skinsUtils'
 
-export function penaltyNet(course, handicap) {
-  // PostgreSQL round(numeric) rounds halves away from zero, including plus handicaps.
-  const h = Number(handicap ?? 0)
-  const rounded = Math.sign(h) * Math.round(Math.abs(h))
-  return Number(course?.total_par ?? 36) + rounded + 7
+export function penaltyNet(course) {
+  return Number(course?.total_par ?? 36) + 7
 }
 
 export function closeoutStatus(roster, scores) {

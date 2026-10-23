@@ -13,6 +13,7 @@ import ConfirmDialog from '../ConfirmDialog'
 import { Button, Toast, EmptyState, Input } from '../ui'
 import { loadWorkingLeague } from '../../lib/leagueUtils'
 import { mutationErrorMessage } from '../../lib/rpcErrors'
+import { withSeasonSkinsEnrollment } from '../../lib/loadSkinsRound'
 
 const EMPTY_PLAYER_FORM = { name: '', email: '', handicap: '', in_skins: false, handicap_locked: false, league_password: 'password' }
 const EMPTY_TEAM_FORM   = { name: '', player1_id: '', player2_id: '' }
@@ -63,7 +64,13 @@ export default function AdminPlayers() {
       supabase.from('teams').select('id, name, player1_id, player2_id').eq('location_id', locationId).eq('league_id', league.id).order('created_at', { ascending: true }),
     ])
     if (plrErr) console.error('Players load error:', plrErr)
-    setPlayers(plrs || [])
+    try {
+      setPlayers(await withSeasonSkinsEnrollment(supabase, league.id, locationId, plrs || []))
+    } catch (error) {
+      showToast(error.message || 'Skins enrollment could not be loaded.', 'error')
+      setLoading(false)
+      return
+    }
     setTeams(tms || [])
     setLoading(false)
   }
@@ -434,9 +441,15 @@ export default function AdminPlayers() {
     )
   }
 
+  const searchTerm = search.trim().toLowerCase()
   const filtered = players.filter(p =>
-    p.name?.toLowerCase().includes(search.toLowerCase()) ||
-    p.email?.toLowerCase().includes(search.toLowerCase())
+    p.name?.toLowerCase().includes(searchTerm) ||
+    p.email?.toLowerCase().includes(searchTerm)
+  )
+  const matchingPlayerIds = new Set(filtered.map(p => p.id))
+  const filteredTeams = teams.filter(team =>
+    !searchTerm || team.name?.toLowerCase().includes(searchTerm) ||
+    matchingPlayerIds.has(team.player1_id) || matchingPlayerIds.has(team.player2_id)
   )
 
   const unassigned = players.filter(p => !p.team_id)
@@ -648,7 +661,7 @@ export default function AdminPlayers() {
           <div style={styles.searchWrap}>
             <Input
               type="search"
-              placeholder="Search players…"
+              placeholder="Search players or teams…"
               prefixIcon={<Search size={14} strokeWidth={2.25} />}
               size="sm"
               value={search}
@@ -838,8 +851,14 @@ export default function AdminPlayers() {
             title="No teams yet"
             description='Click "Create Team" above to pair players up for the league.'
           />
+        ) : filteredTeams.length === 0 ? (
+          <EmptyState
+            icon={<Inbox size={36} strokeWidth={1.5} />}
+            title="No matching teams"
+            description={`No teams match "${search}".`}
+          />
         ) : (
-          teams.map((team, idx) => {
+          filteredTeams.map(team => {
             const p1 = players.find(p => p.id === team.player1_id)
             const p2 = players.find(p => p.id === team.player2_id)
             // Handicaps are integers per league spec, so the sum is already an
@@ -848,7 +867,7 @@ export default function AdminPlayers() {
               ? String(p1.handicap + p2.handicap) : null
             return (
               <div key={team.id} style={styles.teamRow}>
-                <div style={styles.teamNum}>{idx + 1}</div>
+                <div style={styles.teamNum}>{teamNumber(team)}</div>
                 <div style={styles.teamInfo}>
                   <div style={styles.teamName}>{team.name || 'Unnamed Team'}</div>
                   <div style={styles.teamPlayers}>

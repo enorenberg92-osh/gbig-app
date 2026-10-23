@@ -73,6 +73,8 @@ try {
   await sql(migration('202609060001_closeout_consistency.sql'))
   await sql(migration('202609060001_closeout_consistency.sql'))
   await sql(migration('202610060002_publication_guards.sql'))
+  await sql(migration('20261023180948_missed_penalty_net_par_plus_seven.sql'))
+  await sql(migration('20261023180948_missed_penalty_net_par_plus_seven.sql'))
   const tests = [
     ['invalid course or incomplete roster cannot be published', async () => {
       await sql(`UPDATE courses SET total_par=35 WHERE id=${quote(31)}`)
@@ -102,12 +104,33 @@ try {
       assert.equal(await sql(`SELECT status FROM events WHERE id=${quote(41)}`),'open')
       assert.equal(await sql("SELECT count(*) FROM scores WHERE entry_type='missed_penalty'"),'0')
     }],
-    ['penalty includes par and handicap; repeated publish is a no-op', async () => {
+    ['individual net penalty is par plus seven; repeated publish is a no-op', async () => {
+      await sql(`UPDATE players SET handicap=12 WHERE id=${quote(11)}; UPDATE players SET handicap=-2 WHERE id=${quote(12)}`)
       await publish()
-      assert.equal(await sql(`SELECT net_total FROM scores WHERE player_id=${quote(11)}`),'45')
+      assert.equal(await sql(`SELECT net_total FROM scores WHERE player_id=${quote(11)}`),'43')
+      assert.equal(await sql(`SELECT net_total FROM scores WHERE player_id=${quote(12)}`),'43')
+      assert.equal(await sql(`SELECT handicap_used FROM scores WHERE player_id=${quote(11)}`),'12')
+      assert.equal(await sql(`SELECT handicap_used FROM scores WHERE player_id=${quote(12)}`),'-2')
       assert.equal(await sql(`SELECT status FROM events WHERE id=${quote(42)}`),'open')
       assert.equal(JSON.parse(await publish()).already_closed,true)
       assert.equal(await sql('SELECT count(*) FROM scores'),'2')
+    }],
+    ['penalties use the assigned nine- or eighteen-hole course par', async () => {
+      for (const [numHoles,par,expected] of [[9,35,42],[9,37,44],[18,72,79]]) {
+        await reset()
+        const pars=Array(numHoles).fill(4); pars[0]+=par-numHoles*4
+        await sql(`UPDATE courses SET num_holes=${numHoles},hole_pars='${JSON.stringify(pars)}',total_par=${par} WHERE id=${quote(31)}`)
+        await publish()
+        assert.equal(await sql(`SELECT count(*) FROM scores WHERE entry_type='missed_penalty' AND net_total=${expected}`),'2')
+      }
+    }],
+    ['a missing player penalty leaves the played partner unchanged', async () => {
+      const card=JSON.stringify([{player_id:id(12),hole_scores:Array(9).fill(4)}])
+      await call(100,`admin_upsert_score(${quote(41)}, '${card}')`)
+      await publish()
+      assert.equal(await sql(`SELECT net_total FROM scores WHERE player_id=${quote(11)} AND entry_type='missed_penalty'`),'43')
+      assert.equal(await sql(`SELECT net_total FROM scores WHERE player_id=${quote(12)} AND entry_type='played'`),'32')
+      assert.equal(await sql("SELECT count(*) FROM scores WHERE entry_type='missed_penalty'"),'1')
     }],
     ['review rejection allows resubmission; approval then publish succeeds', async () => {
       await submit()

@@ -4,7 +4,7 @@ import { closeoutSkins } from './closeoutUtils'
 import { rosterScores } from './scoreSelection'
 import { handicapRounds, calcHandicap, recalcPlayerHandicap } from './handicapCalc'
 import { ledgerBalances } from './ledgerUtils'
-import { loadSkinsRound } from './loadSkinsRound'
+import { loadSkinsRound, withSeasonSkinsEnrollment } from './loadSkinsRound'
 
 const score = (player, holes, extra = {}) => ({id: player, player_id: player, event_id:'w1', status:'verified', entry_type:'played', hole_scores:holes, ...extra})
 const players = ['regular', 'partner', 'sub'].map(id => ({id, name:id, in_skins:true}))
@@ -57,15 +57,44 @@ it('the shared skins reader loads a full 150-team field even with a lower server
   const field = Array.from({length:300},(_,i)=>({id:`p${i}`,name:`Golfer ${i}`,in_skins:true}))
   const rows = field.map((p,i)=>score(p.id,Array(9).fill(i===299?2:4)))
   const memberships=field.map(p=>({event_id:'w1',player_id:p.id,team_id:'t'}))
-  const tables={scores:rows,players:field,roster_at:memberships}
+  const tables={scores:rows,players:field,roster_at:memberships,league_skins_enrollments:field.map(p=>({player_id:p.id,enrolled:true}))}
   const ranges=[]
   const client={from(table){return {
     select(){return this},eq(){return this},order(){return this},
-    single(){return Promise.resolve({data:{courses:{num_holes:9,total_par:36,hole_pars:Array(9).fill(4),start_hole:10}}})},
+    single(){return Promise.resolve({data:{league_id:'season',courses:{num_holes:9,total_par:36,hole_pars:Array(9).fill(4),start_hole:10}}})},
     range(from,to){ranges.push([table,from]);return Promise.resolve({data:tables[table].slice(from,Math.min(to+1,from+100)),error:null})},
   }}}
   const result=await loadSkinsRound(client,'w1','venue')
   expect(result.scores).toHaveLength(300)
   expect(Object.values(result.skins)).toEqual(Array(9).fill('p299'))
   expect(ranges.filter(r=>r[0]==='scores').map(r=>r[1])).toEqual([0,100,200,300])
+  expect(ranges.filter(r=>r[0]==='league_skins_enrollments').map(r=>r[1])).toEqual([0,100,200,300])
+})
+
+it('skins enrollment is scoped to the selected season and venue, with no legacy carryover', async () => {
+  const entries = [
+    { league_id:'fall',location_id:'venue',player_id:'regular',enrolled:true },
+    { league_id:'winter',location_id:'venue',player_id:'partner',enrolled:true },
+    { league_id:'fall',location_id:'other-venue',player_id:'sub',enrolled:true },
+    { league_id:'fall',location_id:'venue',player_id:'partner',enrolled:false },
+  ]
+  const client={from(table){
+    expect(table).toBe('league_skins_enrollments')
+    const filters=[]
+    return {
+      select(){return this},eq(key,value){filters.push([key,value]);return this},order(){return this},
+      range(from,to){return Promise.resolve({data:entries.filter(row=>filters.every(([key,value])=>row[key]===value)).slice(from,to+1),error:null})},
+    }
+  }}
+  const projected=await withSeasonSkinsEnrollment(client,'fall','venue',players)
+  expect(projected.map(p=>[p.id,p.in_skins])).toEqual([['regular',true],['partner',false],['sub',false]])
+  expect(players.every(p=>p.in_skins)).toBe(true)
+  const winter=await withSeasonSkinsEnrollment(client,'winter','venue',players)
+  expect(winter.filter(p=>p.in_skins).map(p=>p.id)).toEqual(['partner'])
+})
+
+it('enrollment read failures stop skins rather than using a player-wide flag', async () => {
+  const failure={message:'enrollment unavailable'}
+  const chain={select(){return this},eq(){return this},order(){return this},range(){return Promise.resolve({data:null,error:failure})}}
+  await expect(withSeasonSkinsEnrollment({from:()=>chain},'fall','venue',players)).rejects.toEqual(failure)
 })

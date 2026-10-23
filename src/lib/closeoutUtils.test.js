@@ -27,10 +27,13 @@ describe('league closeout',()=>{
     expect(closeoutStatus([roster[0],roster[0]],[]).rosterValid).toBe(false)
     expect(closeoutStatus([roster[0]],[]).rosterValid).toBe(false)
   })
-  it('matches database penalty math, including negative half-handicaps',()=>{
-    expect(penaltyNet({total_par:36},2)).toBe(45)
-    expect(penaltyNet({total_par:35},2.5)).toBe(45)
-    expect(penaltyNet({total_par:36},-2.5)).toBe(40)
+  it('uses the round par plus seven net regardless of handicap',()=>{
+    for (const handicap of [12,0,-2,-2.5,27]) {
+      expect(penaltyNet({num_holes:9,total_par:36},handicap)).toBe(43)
+      expect(penaltyNet({num_holes:9,total_par:35},handicap)).toBe(42)
+      expect(penaltyNet({num_holes:9,total_par:37},handicap)).toBe(44)
+      expect(penaltyNet({num_holes:18,total_par:72},handicap)).toBe(79)
+    }
   })
   it('labels back-nine skins correctly and treats ties as no winner',()=>{
     const course={num_holes:2,start_hole:10}

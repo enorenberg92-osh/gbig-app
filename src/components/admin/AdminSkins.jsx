@@ -1,11 +1,12 @@
-import React, { useState, useEffect } from 'react'
-import { AlertTriangle, Target, Inbox } from 'lucide-react'
+import React, { useState, useEffect, useRef } from 'react'
+import { Target, Inbox } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useLocation } from '../../context/LocationContext'
 import { Button, Toast, EmptyState } from '../ui'
 import { displayHole } from '../../lib/holeUtils'
-import { loadSkinsRound } from '../../lib/loadSkinsRound'
+import { loadSkinsRound, loadSeasonSkinsEnrollments } from '../../lib/loadSkinsRound'
 import { loadWorkingLeague } from '../../lib/leagueUtils'
+import { fetchAllRows } from '../../lib/fetchAllRows'
 
 const SCORE_LABELS = [
   { diff: -3, label: 'Albatross', color: '#b8860b', bg: '#fef9c3' },
@@ -32,55 +33,92 @@ export default function AdminSkins({ activeEventId = null, onEventChange = () =>
   const [calculating, setCalculating] = useState(false)
   const [loading, setLoading]         = useState(true)
   const [toast, setToast]             = useState(null)
-  const [skinsPlayers, setSkinsPlayers] = useState([])
+  const [leaguePlayers, setLeaguePlayers] = useState([])
+  const [workingLeague, setWorkingLeague] = useState(null)
+  const [loadError, setLoadError] = useState(null)
+  const [savingPlayers, setSavingPlayers] = useState(new Set())
+  const pendingPlayers = useRef(new Set())
+  const scope = useRef(0)
+  const reportRequest = useRef(0)
 
   useEffect(() => {
     if (!locationId) return
+    const currentScope = ++scope.current
+    let cancelled = false
+    setLoading(true)
+    setLoadError(null)
+    setWorkingLeague(null)
+    setLeaguePlayers([])
+    setSkinResults(null)
+    setSavingPlayers(new Set())
     async function load() {
-      let league
-      try { league = await loadWorkingLeague(supabase, locationId) }
-      catch (error) { showToast(error.message, 'error'); setLoading(false); return }
-      const [{ data: evts }, { data: plrs }] = await Promise.all([
-        supabase.from('events')
-          .select('id, name, week_number, start_date, course_id, status')
-          .eq('location_id', locationId)
-          .eq('league_id', league.id)
-          .neq('is_bye', true)
-          .order('week_number', { ascending: true }),
-        supabase.from('players')
-          .select('id, name, first_name, last_name, in_skins')
-          .eq('location_id', locationId)
-          .eq('in_skins', true)
-          .order('name'),
-      ])
-      setEvents(evts || [])
-      setSkinsPlayers(plrs || [])
-      // Only fall back to local default if parent hasn't provided one
-      if (!activeEventId && evts?.length) {
-        const open = evts.find(e => e.status === 'open') || evts[0]
-        setSelectedEvent(open.id)
-        onEventChange(open.id)
+      try {
+        const league = await loadWorkingLeague(supabase, locationId)
+        const [results, enrollments] = await Promise.all([
+          Promise.all([
+            fetchAllRows(() => supabase.from('events')
+              .select('id, name, week_number, start_date, course_id, status')
+              .eq('location_id', locationId)
+              .eq('league_id', league.id)
+              .neq('is_bye', true)
+              .order('week_number', { ascending: true }).order('id')),
+            fetchAllRows(() => supabase.from('players')
+              .select('id, name, first_name, last_name, league_id')
+              .eq('location_id', locationId)
+              .order('id')),
+            fetchAllRows(() => supabase.from('teams')
+              .select('id, player1_id, player2_id').eq('location_id', locationId).eq('league_id', league.id).order('id')),
+          ]),
+          loadSeasonSkinsEnrollments(supabase, league.id, locationId),
+        ])
+        const failure = results.find(result => result.error)
+        if (failure) throw failure.error
+        const [evts, plrs, teams] = results.map(result => result.data || [])
+        const rosterIds = new Set(teams.flatMap(team => [team.player1_id, team.player2_id]).filter(Boolean))
+        enrollments.forEach(row => rosterIds.add(row.player_id))
+        const enrolledIds = new Set(enrollments.filter(row => row.enrolled).map(row => row.player_id))
+        const roster = plrs.filter(player => rosterIds.has(player.id) || player.league_id === league.id)
+        const enrolledPlayers = roster.map(player => ({ ...player, in_skins: enrolledIds.has(player.id) }))
+        if (cancelled || currentScope !== scope.current) return
+        setWorkingLeague(league)
+        setEvents(evts)
+        setLeaguePlayers(enrolledPlayers.sort((a, b) => playerName(a).localeCompare(playerName(b))))
+        const nextEvent = evts.find(event => event.id === activeEventId) || evts.find(event => event.status === 'open') || evts[0]
+        setSelectedEvent(nextEvent?.id || '')
+        if (nextEvent && nextEvent.id !== activeEventId) onEventChange(nextEvent.id)
+      } catch (error) {
+        if (cancelled || currentScope !== scope.current) return
+        setEvents([])
+        setSelectedEvent('')
+        setLoadError(error.message || 'Skins enrollment could not be loaded. Reload to try again.')
+      } finally {
+        if (!cancelled && currentScope === scope.current) setLoading(false)
       }
-      setLoading(false)
     }
     load()
+    return () => { cancelled = true; scope.current++; reportRequest.current++ }
   }, [locationId])
 
   // Sync when parent changes the active event
   useEffect(() => {
-    if (activeEventId && activeEventId !== selectedEvent) {
+    if (activeEventId && activeEventId !== selectedEvent && events.some(event => event.id === activeEventId)) {
       setSelectedEvent(activeEventId)
     }
   }, [activeEventId])
 
   // Reset report when event changes
   useEffect(() => {
+    reportRequest.current++
     setSkinResults(null)
+    setCalculating(false)
+    setEventDetails(null)
+    let cancelled = false
     if (!selectedEvent) return
     // Load event details (for course par info)
     supabase.from('events').select('*, courses(id, name, num_holes, hole_pars, total_par, start_hole)')
       .eq('id', selectedEvent).eq('location_id', locationId).single()
-      .then(({ data }) => setEventDetails(data || null))
+      .then(({ data }) => { if (!cancelled) setEventDetails(data || null) })
+    return () => { cancelled = true }
   }, [selectedEvent])
 
   function showToast(msg, type = 'success') {
@@ -88,18 +126,51 @@ export default function AdminSkins({ activeEventId = null, onEventChange = () =>
     setTimeout(() => setToast(null), 3500)
   }
 
+  async function toggleEnrollment(player, enrolled) {
+    if (!workingLeague || loadError) return
+    const key = `${workingLeague.id}:${player.id}`
+    if (pendingPlayers.current.has(key)) return
+    const currentScope = scope.current
+    pendingPlayers.current.add(key)
+    setSavingPlayers(previous => new Set(previous).add(player.id))
+    setLeaguePlayers(previous => previous.map(row => row.id === player.id ? { ...row, in_skins: enrolled } : row))
+    reportRequest.current++
+    setSkinResults(null)
+    try {
+      const { data, error } = await supabase.rpc('admin_set_skins_enrollment', {
+        p_league_id: workingLeague.id, p_player_id: player.id, p_enrolled: enrolled,
+      })
+      if (error) throw error
+      if (data !== enrolled) throw new Error('Enrollment could not be verified. Please try again.')
+    } catch (error) {
+      if (currentScope !== scope.current) return
+      setLeaguePlayers(previous => previous.map(row => row.id === player.id ? { ...row, in_skins: player.in_skins } : row))
+      showToast('Enrollment not saved: ' + error.message, 'error')
+    } finally {
+      pendingPlayers.current.delete(key)
+      if (currentScope === scope.current) setSavingPlayers(previous => {
+        const next = new Set(previous)
+        next.delete(player.id)
+        return next
+      })
+    }
+  }
+
   async function runSkinReport() {
     if (!selectedEvent) return
+    const request = ++reportRequest.current
     setCalculating(true)
     setSkinResults(null)
 
     let round
     try { round = await loadSkinsRound(supabase, selectedEvent, locationId) }
     catch (error) {
+      if (request !== reportRequest.current) return
       showToast('Error loading skins: ' + error.message, 'error')
       setCalculating(false)
       return
     }
+    if (request !== reportRequest.current) return
     const { scores: skinsScores, players: allPlayers, course: resolvedCourse } = round
     const holePars = resolvedCourse.hole_pars
     const playerMap = {}
@@ -159,6 +230,7 @@ export default function AdminSkins({ activeEventId = null, onEventChange = () =>
   }
 
   // ── Derived summary ─────────────────────────────────────────────────────────
+  const skinsPlayers = leaguePlayers.filter(player => player.in_skins)
   const wonHoles    = skinResults ? skinResults.filter(r => r.status === 'won') : []
   const tiedHoles   = skinResults ? skinResults.filter(r => r.status === 'tied') : []
   const totalSkins  = wonHoles.length
@@ -204,19 +276,26 @@ export default function AdminSkins({ activeEventId = null, onEventChange = () =>
           ))}
         </select>
 
-        {/* Skins players note */}
-        <div style={st.skinsNote}>
-          {skinsPlayers.length === 0
-            ? <>
-                <AlertTriangle size={15} strokeWidth={2.25} style={{ verticalAlign: '-3px', marginRight: 6, color: '#b45309' }} />
-                No players are marked as "In Skins" — go to Players tab to enroll them.
-              </>
-            : <>
-                <Target size={15} strokeWidth={2} style={{ verticalAlign: '-3px', marginRight: 6, color: 'var(--green-dark)' }} />
-                {skinsPlayers.length} player{skinsPlayers.length !== 1 ? 's' : ''} enrolled in skins: {skinsPlayers.map(p => p.first_name || p.name).join(', ')}
-              </>
-          }
+        <div style={st.skinsNote} aria-live="polite">
+          {loadError || `${skinsPlayers.length} of ${leaguePlayers.length} players enrolled in skins${workingLeague?.name ? ` · ${workingLeague.name}` : ''}`}
         </div>
+        {!loadError && leaguePlayers.length > 0 && (
+          <div role="region" aria-label="Skins enrollment players" tabIndex={0} style={st.enrollmentList}>
+            {leaguePlayers.map(player => (
+              <label key={player.id} style={st.enrollmentRow}>
+                <span style={st.enrollmentName}>{playerName(player)}</span>
+                <input
+                  type="checkbox"
+                  checked={player.in_skins}
+                  disabled={savingPlayers.has(player.id) || calculating}
+                  onChange={event => toggleEnrollment(player, event.target.checked)}
+                  aria-label={`Enroll ${playerName(player)} in skins`}
+                  style={st.enrollmentCheckbox}
+                />
+              </label>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Run report button */}
@@ -227,7 +306,7 @@ export default function AdminSkins({ activeEventId = null, onEventChange = () =>
         icon={<Target size={16} strokeWidth={2.25} />}
         loading={calculating}
         loadingText="Calculating…"
-        disabled={!selectedEvent}
+        disabled={!selectedEvent || !!loadError || savingPlayers.size > 0}
         onClick={runSkinReport}
         style={{
           background: 'var(--green-dark)',
@@ -378,6 +457,10 @@ const st = {
   label:   { fontSize: '11px', fontWeight: 700, color: 'var(--gray-500)', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'block', marginBottom: '8px' },
   select:  { width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-sm)', border: '1.5px solid var(--gray-200)', fontSize: '14px', background: 'var(--gray-100)', color: 'var(--black)' },
   skinsNote: { marginTop: '10px', fontSize: '12px', color: 'var(--gray-500)', lineHeight: '1.5', padding: '8px 12px', background: 'var(--off-white)', borderRadius: '6px' },
+  enrollmentList: { maxHeight: 'min(45dvh, 360px)', overflowY: 'auto', WebkitOverflowScrolling: 'touch' },
+  enrollmentRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', minHeight: '44px', borderBottom: '1px solid var(--gray-200)', cursor: 'pointer' },
+  enrollmentName: { fontSize: '14px', color: 'var(--black)', overflowWrap: 'anywhere', minWidth: 0 },
+  enrollmentCheckbox: { width: '18px', height: '18px', margin: '0 2px 0 0', flexShrink: 0, accentColor: 'var(--green-dark)', cursor: 'pointer' },
 
   // Summary banner
   summaryCard:  { background: 'var(--green-dark)', borderRadius: 'var(--radius)', padding: '20px', boxShadow: 'var(--shadow)' },

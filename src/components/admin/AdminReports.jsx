@@ -4,7 +4,7 @@ import { Printer, Download, FileText } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useLocation } from '../../context/LocationContext'
 import { loadWorkingLeague } from '../../lib/leagueUtils'
-import { loadSkinsRound } from '../../lib/loadSkinsRound'
+import { loadSkinsRound, withSeasonSkinsEnrollment } from '../../lib/loadSkinsRound'
 import { rosterScores } from '../../lib/scoreSelection'
 import { ledgerBalances } from '../../lib/ledgerUtils'
 import { aggregateSeason } from '../../lib/seasonStandings'
@@ -64,7 +64,13 @@ export default function AdminReports() {
     const failed = [ev, pl, tm].find(r => r.error)
     if (failed) { setLoadError(failed.error.message); setLoading(false); return }
     setEvents(ev.data || [])
-    setPlayers(pl.data || [])
+    try {
+      setPlayers(await withSeasonSkinsEnrollment(supabase, lg.id, locationId, pl.data || []))
+    } catch (error) {
+      setLoadError(error.message || 'Skins enrollment could not be loaded.')
+      setLoading(false)
+      return
+    }
     setTeams(tm.data || [])
     setLoading(false)
   }

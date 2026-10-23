@@ -19,12 +19,17 @@ beforeAll(async () => {
   db = new PGlite()
   await db.exec(readFileSync(new URL('../../scripts/database-fixture.sql', import.meta.url), 'utf8'))
   await db.exec('create role anon;')
+  await db.exec(fn('enable_rls_phase1.sql', 'is_admin_of_location'))
   await db.exec(migration('202607100003_phase1_league_rosters.sql').match(/CREATE OR REPLACE VIEW public\.roster_at[\s\S]*?;/)[0])
   for (const name of ['jsonb_int_array_valid', 'jsonb_int_array_sum', 'int_array_valid', 'int_array_sum', 'validate_score_row']) {
     await db.exec(fn('202607100002_phase1_score_and_course_constraints.sql', name))
   }
   await db.exec(fn('202607180007_phase4_hole_stats.sql', 'hole_stats_valid'))
   for (const name of ['redact_audit_payload', 'write_audit_event']) await db.exec(fn('202607100001_phase1_audit_foundation.sql', name))
+  for (const name of ['require_location_admin', 'phase1_apply_no_show_policy', 'admin_upsert_score']) await db.exec(fn('202607100004_phase1_mutation_rpcs.sql', name))
+  await db.exec(fn('202607180005_phase3_special_events.sql', 'compute_event_results'))
+  await db.exec(migration('20261023180948_missed_penalty_net_par_plus_seven.sql'))
+  await db.exec(migration('20261023180948_missed_penalty_net_par_plus_seven.sql'))
   const rules = '20261021120000_official_scores_handicap_overrides.sql'
   for (const name of ['apply_player_handicap', 'submit_scores']) await db.exec(fn(rules, name))
   await db.exec('revoke all on function submit_scores(uuid,jsonb) from public; grant execute on function submit_scores(uuid,jsonb) to authenticated;')
@@ -32,7 +37,7 @@ beforeAll(async () => {
 }, 30000)
 afterAll(async () => { await db?.close() })
 beforeEach(async () => {
-  await db.exec('reset role; truncate scores,handicap_history,events,players,teams,team_memberships,courses,locations,audit_events cascade;' +
+  await db.exec('reset role; truncate scores,handicap_history,events,players,teams,team_memberships,courses,locations,league_config,audit_events cascade;' +
     'insert into locations values(' + q(1) + '),(' + q(2) + ');' +
     'insert into teams values(' + q(21) + ',' + q(1) + ',' + q(3) + ",'Partners'),(" + q(22) + ',' + q(1) + ',' + q(3) + ",'Other team');" +
     'insert into players values(' + [q(11), q(101), q(1), "'Alex'", 2, q(21)].join(',') + '),(' + [q(12), q(102), q(1), "'Blair'", 4, q(21)].join(',') + '),(' + [q(13), q(103), q(2), "'Other venue'", 3, 'null'].join(',') + '),(' + [q(14), q(104), q(1), "'Other team'", 3, q(22)].join(',') + ');' +
@@ -103,4 +108,50 @@ it('makes a submitted score official and averages in the registered handicap (4 
   await submit([entry(12, 5, { hole_scores: [5, 5, 5, 5, 5, 5, 5, 5, 4] })], 102)
   expect((await rows())[0]).toMatchObject({ gross_total: 44, handicap_used: 4, net_total: 40, status: 'verified' })
   expect(Number((await db.query('select handicap from players where id=' + q(12))).rows[0].handicap)).toBe(5)
+})
+
+async function prepareCloseout() {
+  await db.exec('insert into location_admins values(' + q(100) + ',' + q(1) + ');' +
+    'insert into league_config values(' + q(3) + ',' + q(1) + ",'Fall',12,true);" +
+    'delete from team_memberships where team_id=' + q(22))
+}
+async function asAdmin(expression) {
+  await db.exec('set role authenticated; set "request.jwt.claim.sub"=' + q(100))
+  try { return (await db.query('select ' + expression + ' as result')).rows[0].result }
+  finally { await db.exec('reset role') }
+}
+it.each([[9,35,42],[9,36,43],[9,37,44],[18,72,79]])('closes a %i-hole par-%i round with individual net penalties of %i for positive and plus handicaps', async (holes,par,net) => {
+  await prepareCloseout()
+  const pars=Array(holes).fill(4); pars[0]+=par-holes*4
+  await db.query('update courses set num_holes=$1,hole_pars=$2,total_par=$3', [holes,JSON.stringify(pars),par])
+  await db.exec('update players set handicap=12 where id=' + q(11) + '; update players set handicap=-2 where id=' + q(12))
+  expect((await asAdmin('publish_week(' + q(41) + ')')).penalties_added).toBe(2)
+  expect(await rows()).toMatchObject([
+    {player_id:id(11),net_total:net,handicap_used:12,entry_type:'missed_penalty',gross_total:null,hole_scores:null},
+    {player_id:id(12),net_total:net,handicap_used:-2,entry_type:'missed_penalty',gross_total:null,hole_scores:null},
+  ])
+  expect((await asAdmin('publish_week(' + q(41) + ')')).already_closed).toBe(true)
+  expect(await rows()).toHaveLength(2)
+})
+it('penalizes only the missing individual and allows a late played correction to supersede that penalty', async () => {
+  await prepareCloseout()
+  await submit([entry(12)])
+  const partner=(await rows())[0]
+  expect((await asAdmin('publish_week(' + q(41) + ')')).penalties_added).toBe(1)
+  expect((await rows())[0]).toMatchObject({player_id:id(11),net_total:43,entry_type:'missed_penalty'})
+  expect((await rows())[1]).toEqual(partner)
+  await asAdmin('admin_upsert_score(' + q(41) + ",'" + JSON.stringify([entry(11)]) + "'::jsonb)")
+  expect((await rows()).every(row=>row.entry_type==='played')).toBe(true)
+  expect((await rows())[0].net_total).toBe(34)
+  expect((await db.query('select status from events where id=' + q(41))).rows[0].status).toBe('closed')
+})
+it('preserves closeout authorization and pending-score guards', async () => {
+  await prepareCloseout()
+  await submit([entry(11)])
+  await db.exec("update scores set status='pending'; set role authenticated; set \"request.jwt.claim.sub\"=" + q(101))
+  await expect(db.query('select publish_week(' + q(41) + ')')).rejects.toThrow('Admin access')
+  await db.exec('reset role')
+  await expect(asAdmin('publish_week(' + q(41) + ')')).rejects.toThrow('pending')
+  expect((await rows()).filter(row=>row.entry_type==='missed_penalty')).toHaveLength(0)
+  expect((await db.query('select status from events where id=' + q(41))).rows[0].status).toBe('open')
 })

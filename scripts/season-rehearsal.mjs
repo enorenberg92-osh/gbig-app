@@ -27,7 +27,7 @@ const venues=locations.map(v=>({...v,admin:100+v.n,league:200+v.n,course:300+v.n
 const expected=new Map(), checkLog=[], weekState=new Map()
 const recordKey=(event,player)=>`${id(event)}:${id(player)}`
 const holes=(v,week,i)=>Array.from({length:9},(_,h)=>h%3!==2&&i===(week*17+h*31)%(teamCount*2)?2:3+((i*3+week*5+h*2+v.n)%5))
-function remember(event,v,p,scores,type='played',sub=false,hcp=p.handicap){const gross=scores?.reduce((a,b)=>a+b,0)??null;expected.set(recordKey(event,p.id),{event_id:id(event),player_id:id(p.id),team_id:id(v.teams[p.team].id),gross_total:gross,net_total:type==='missed_penalty'?36+hcp+7:gross-hcp,handicap_used:hcp,entry_type:type,sub_played:sub,hole_scores:scores});if(type==='played'&&!sub)p.history.push({event,diff:gross-36})}
+function remember(event,v,p,scores,type='played',sub=false,hcp=p.handicap){const gross=scores?.reduce((a,b)=>a+b,0)??null;expected.set(recordKey(event,p.id),{event_id:id(event),player_id:id(p.id),team_id:id(v.teams[p.team].id),gross_total:gross,net_total:type==='missed_penalty'?36+7:gross-hcp,handicap_used:hcp,entry_type:type,sub_played:sub,hole_scores:scores});if(type==='played'&&!sub)p.history.push({event,diff:gross-36})}
 await run('createdb',[...connection,db])
 try{
  await sql(fs.readFileSync(path.join(root,'scripts/database-fixture.sql'),'utf8'))
@@ -39,6 +39,7 @@ try{
  await sql(source('202609060001_closeout_consistency.sql'))
  await sql(source('202610060001_season_handicap_order.sql'))
  await sql(source('202610060002_publication_guards.sql'))
+ await sql(source('20261023180948_missed_penalty_net_par_plus_seven.sql'))
  let seed=''
  for(const v of venues){seed+=`INSERT INTO locations VALUES(${q(v.n)});INSERT INTO location_admins VALUES(${q(v.admin)},${q(v.n)});INSERT INTO league_config VALUES(${q(v.league)},${q(v.n)},'Fall 2026',12,true);INSERT INTO courses VALUES(${q(v.course)},${q(v.n)},9,'[4,4,4,4,4,4,4,4,4]',36,null,1);INSERT INTO courses VALUES(${q(v.course+10)},${q(v.n)},9,'[4,4,4,4,4,4,4,4,4]',36,null,10);`
  for(const t of v.teams)seed+=`INSERT INTO teams VALUES(${q(t.id)},${q(v.n)},${q(v.league)},'${t.name}');`
