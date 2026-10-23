@@ -8,6 +8,7 @@ import { loadWorkingLeague } from '../../lib/leagueUtils'
 import { hasCompleteCoursePars } from '../../lib/holeUtils'
 import { closeoutStatus, closeoutSkins, closeoutResults, penaltyNet, recapText } from '../../lib/closeoutUtils'
 import { mutationErrorMessage } from '../../lib/rpcErrors'
+import { withSeasonSkinsEnrollment } from '../../lib/loadSkinsRound'
 import ConfirmDialog from '../ConfirmDialog'
 import WeeklyEmail from './WeeklyEmail'
 import { Button } from '../ui'
@@ -59,7 +60,8 @@ export default function AdminDashboard({ onWeekClosed = () => {} }) {
       event.course_id ? checked(supabase.from('courses').select('id, name, num_holes, total_par, hole_pars, start_hole').eq('id', event.course_id).eq('location_id', locationId).single()) : null,
       checked(supabase.from('matchups').select('*').eq('event_id', event.id)),
     ])
-    return { event, league, scores, roster, teams, players, course, matchups, skinsEnabled }
+    const seasonPlayers = await withSeasonSkinsEnrollment(supabase, event.league_id, locationId, players || [])
+    return { event, league, scores, roster, teams, players: seasonPlayers, course, matchups, skinsEnabled }
   }
 
   async function load(eventId) {
@@ -161,7 +163,7 @@ export default function AdminDashboard({ onWeekClosed = () => {} }) {
 
     {step === 'review' && <>
       {hasPending && <section><h3>Awaiting review</h3><p>Approve or reject these scores before closing. Pending scores are not missing rounds.</p><ul>{status.pending.map(row => <li key={row.id}>{name(row.player_id)}</li>)}</ul><Link to="/league/admin/scores">Review scores →</Link></section>}
-      {!!status.missing.length && <section><h3>Missing scores</h3><p>Confirm these players did not play. Closing will apply your missed-week rule.</p><ul>{status.missing.map(id => <li key={id}>{name(id)} <span>{courseValid ? `Penalty net ${penaltyNet(course, players.find(p => p.id === id)?.handicap)}` : 'Course setup required'}</span></li>)}</ul><Link to="/league/admin/scores">Enter or correct scores →</Link></section>}
+      {!!status.missing.length && <section><h3>Missing scores</h3><p>Confirm these players did not play. Closing will apply your missed-week rule.</p><ul>{status.missing.map(id => <li key={id}>{name(id)} <span>{courseValid ? `Penalty net ${penaltyNet(course)}` : 'Course setup required'}</span></li>)}</ul><Link to="/league/admin/scores">Enter or correct scores →</Link></section>}
       <section><h3>{closed ? 'Final results' : 'Results preview'}</h3>{!closed && <p>Verified scores only. Missing-round penalties and format results are finalized when the round closes.</p>}
         {results.map(row => <div className="closeout-result" key={row.id}><span>{row.name}</span><strong>{row.result}</strong></div>)}
       </section>
@@ -184,7 +186,7 @@ export default function AdminDashboard({ onWeekClosed = () => {} }) {
       {weeklyEmailEnabled && currentEmailProgress?.review > 0 && <p className="closeout-warning">{currentEmailProgress.review} email recipient result(s) need review in the email service. Resolve those results before closing if further email action is needed.</p>}
       {hasPending && <p className="closeout-warning">Resolve {status.pending.length} pending score(s) before publishing.</p>}
       {!closed && !reviewed && <p className="closeout-warning">Complete the Review step before closing.</p>}
-      {!!status.missing.length && !closed && <label className="closeout-confirm"><input type="checkbox" checked={penaltiesAccepted} onChange={e => setPenaltiesAccepted(e.target.checked)}/><span>I reviewed the {status.missing.length} missing player(s). Apply net penalties of course par + rounded handicap + 7.</span></label>}
+      {!!status.missing.length && !closed && <label className="closeout-confirm"><input type="checkbox" checked={penaltiesAccepted} onChange={e => setPenaltiesAccepted(e.target.checked)}/><span>I reviewed the {status.missing.length} missing player(s). Apply individual net penalties of course par + 7, regardless of handicap.</span></label>}
       {!closed && <Button fullWidth icon={<Lock size={16}/>} disabled={!canPublish || workflowBusy} loading={busy} onClick={() => setConfirm(true)}>Lock &amp; publish round</Button>}
       {closed && <Button onClick={() => setStep('recap')}>View finalized recap</Button>}
     </section>}
