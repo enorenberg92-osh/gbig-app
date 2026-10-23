@@ -374,7 +374,8 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
     // expectation first, then near-threshold scores, with net par last.
     .sort((a, b) => Math.abs(b.score.net_total - totalPar) - Math.abs(a.score.net_total - totalPar))
   const exceptional = scoreReview.filter(({ score }) => Math.abs(score.net_total - totalPar) > EXCEPTIONAL_STROKES)
-  const readyOverrides = exceptional
+  const readyOverrides = scoreReview
+    .filter(({ score }) => score.status === 'verified' && score.gross_total != null)
     .map(row => ({ ...row, hcp: parseInt(overrides[row.score.id], 10) }))
     .filter(row => Number.isFinite(row.hcp))
 
@@ -439,6 +440,7 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
                 const labelStyle = { ...exStyles.boxLabel, color: accent }
                 const draft = overrides[score.id] ?? ''
                 const draftHcp = parseInt(draft, 10)
+                const canOverride = score.status === 'verified' && score.gross_total != null
                 return (
                   <div key={score.id} style={{ ...exStyles.row, background: isExceptional ? '#fffbeb' : 'transparent', borderColor }}>
                     <div style={exStyles.who}>
@@ -454,7 +456,7 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
                       <div style={boxStyle}><span style={labelStyle}>Gross</span><span style={exStyles.boxVal}>{score.gross_total}</span></div>
                       <div style={boxStyle}><span style={labelStyle}>Net</span><span style={exStyles.boxVal}>{score.net_total}</span></div>
                       <div style={boxStyle}><span style={labelStyle}>Hcp</span><span style={exStyles.boxVal}>{score.handicap_used}</span></div>
-                      <label style={{ ...boxStyle, background: 'var(--white)', borderColor }}>
+                      <label style={{ ...boxStyle, background: 'var(--white)', borderColor, cursor: canOverride ? 'text' : 'default' }}>
                         <span style={labelStyle}>Override</span>
                         <input
                           type="number"
@@ -462,15 +464,15 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
                           inputMode="numeric"
                           aria-label={`Override handicap for ${player.name}`}
                           style={{ ...exStyles.input, borderColor }}
-                          disabled={!isExceptional}
-                          title={isExceptional ? undefined : 'Overrides are available for exceptional scores.'}
-                          placeholder={isExceptional ? undefined : '—'}
-                          value={isExceptional ? draft : ''}
+                          disabled={!canOverride || saving}
+                          title={canOverride ? 'Enter a handicap, then apply the override below.' : 'Approve this score before overriding its handicap.'}
+                          placeholder={canOverride ? String(score.handicap_used ?? '') : '—'}
+                          value={draft}
                           onChange={e => setOverrides(prev => ({ ...prev, [score.id]: e.target.value }))}
                         />
                       </label>
                     </div>
-                    {isExceptional && Number.isFinite(draftHcp) && (
+                    {canOverride && Number.isFinite(draftHcp) && (
                       <span style={{ ...exStyles.preview, color: accent }}>
                         New net {score.gross_total - draftHcp} ({vsParLabel(score.gross_total - draftHcp - totalPar)})
                       </span>
@@ -999,5 +1001,5 @@ const exStyles = {
   boxLabel: { fontSize: '10px', fontWeight: 700, color: '#92400e', textTransform: 'uppercase', letterSpacing: '0.3px' },
   boxVal: { fontSize: '18px', fontWeight: 800, color: 'var(--black)', lineHeight: '26px' },
   preview: { fontSize: '12px', fontWeight: 600, color: '#92400e', textAlign: 'right' },
-  input: { width: '100%', maxWidth: '64px', height: '26px', border: 'none', borderBottom: '1.5px solid #f6c453', textAlign: 'center', fontSize: '18px', fontWeight: 800, background: 'transparent', outline: 'none', padding: 0, MozAppearance: 'textfield' },
+  input: { width: '100%', height: '36px', border: '1.5px solid var(--gray-200)', borderRadius: '4px', textAlign: 'center', fontSize: '18px', fontWeight: 800, background: 'transparent', outlineColor: 'var(--green)', padding: 0, MozAppearance: 'textfield' },
 }
