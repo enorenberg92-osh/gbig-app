@@ -492,7 +492,10 @@ export default function Standings({ session, onBack, adminMode = false }) {
             <div style={{ ...styles.thCell, width: 56, textAlign: 'right' }}>Net</div>
           </div>
 
-          {displayRows.map((row, idx) => (
+          {displayRows.map((row, idx) => {
+            const p1Score = sortBy === 'net' ? row.p1Net : row.p1Gross
+            const p2Score = sortBy === 'net' ? row.p2Net : row.p2Gross
+            return (
             <div key={row.teamId} style={{ ...styles.teamRow, ...(idx < 3 ? styles.teamRowTop : {}) }}>
               <div style={{ ...styles.rankCell, color: medalColor(idx) || 'var(--gray-400)' }}>
                 {medalEmoji(idx) ?? idx + 1}
@@ -503,8 +506,8 @@ export default function Standings({ session, onBack, adminMode = false }) {
                 <div style={styles.playerLine}>
                   <span style={styles.playerChip}>
                     {row.p1Name.split(' ')[0]}
-                    {view === 'week' && row.p1Gross != null && (
-                      <span style={styles.chipScore}> {row.p1Gross}</span>
+                    {view === 'week' && p1Score != null && (
+                      <span style={styles.chipScore}> {p1Score}</span>
                     )}
                     {view === 'week' && row.p1IsPenalty && (
                       <span style={styles.penaltyPill}>Missed</span>
@@ -513,8 +516,8 @@ export default function Standings({ session, onBack, adminMode = false }) {
                   <span style={styles.ampersand}>&</span>
                   <span style={styles.playerChip}>
                     {row.p2Name.split(' ')[0]}
-                    {view === 'week' && row.p2Gross != null && (
-                      <span style={styles.chipScore}> {row.p2Gross}</span>
+                    {view === 'week' && p2Score != null && (
+                      <span style={styles.chipScore}> {p2Score}</span>
                     )}
                     {view === 'week' && row.p2IsPenalty && (
                       <span style={styles.penaltyPill}>Missed</span>
@@ -548,7 +551,8 @@ export default function Standings({ session, onBack, adminMode = false }) {
                 {row.hasScore ? row.teamNet : '—'}
               </div>
             </div>
-          ))}
+            )
+          })}
         </div>
       )}
     </div>

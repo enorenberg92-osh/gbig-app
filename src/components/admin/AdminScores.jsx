@@ -367,11 +367,13 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
   const partialTeams = submitted.length - completeTeams
   const holePars    = eventData?.holePars || []
   const totalPar    = holePars.reduce((s, p) => s + p, 0)
-  const exceptional = teams
+  const scoreReview = teams
     .flatMap(t => [{ player: t.p1, score: t.score1 }, { player: t.p2, score: t.score2 }])
-    .filter(({ score }) => score?.entry_type === 'played' && totalPar &&
-      Math.abs(score.net_total - totalPar) > EXCEPTIONAL_STROKES)
+    .filter(({ score }) => score?.entry_type === 'played' && totalPar && Number.isFinite(score.net_total))
+    // Keep the existing two-sided rule: furthest from the round's handicap
+    // expectation first, then near-threshold scores, with net par last.
     .sort((a, b) => Math.abs(b.score.net_total - totalPar) - Math.abs(a.score.net_total - totalPar))
+  const exceptional = scoreReview.filter(({ score }) => Math.abs(score.net_total - totalPar) > EXCEPTIONAL_STROKES)
   const readyOverrides = exceptional
     .map(row => ({ ...row, hcp: parseInt(overrides[row.score.id], 10) }))
     .filter(row => Number.isFinite(row.hcp))
@@ -415,52 +417,61 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
       {!loading && (
         <>
           {/* Exceptional Scores */}
-          {exceptional.length > 0 && (
-            <div style={{ ...styles.card, borderColor: '#f6c453', background: '#fffbeb' }}>
+          {scoreReview.length > 0 && (
+            <div style={styles.card}>
               <div style={styles.cardTitleRow}>
-                <h3 style={{ ...styles.cardTitle, color: '#92400e' }}>Exceptional Scores</h3>
-                <span style={{ ...styles.badge, background: '#fef3c7', color: '#92400e' }}>
+                <h3 style={styles.cardTitle}>Exceptional Scores</h3>
+                <span style={{ ...styles.badge, background: 'var(--green-xlight)', color: 'var(--green-dark)' }}>
                   {exceptional.length}
                 </span>
               </div>
-              <p style={{ fontSize: 12, color: '#92400e', marginBottom: 10 }}>
-                Net more than {EXCEPTIONAL_STROKES} strokes from par. An override sets the handicap
+              <p style={{ fontSize: 12, color: 'var(--gray-600)', marginBottom: 10 }}>
+                Gold marks net scores more than {EXCEPTIONAL_STROKES} strokes from par. All other played scores follow,
+                closest to the exceptional threshold first and closest to handicap last. An override sets the handicap
                 for this week only (net recalculates, gross stays) and becomes the player’s
                 registered handicap going forward.
               </p>
-              {exceptional.map(({ player, score }) => {
+              {scoreReview.map(({ player, score }) => {
+                const isExceptional = Math.abs(score.net_total - totalPar) > EXCEPTIONAL_STROKES
+                const accent = isExceptional ? '#92400e' : 'var(--green-dark)'
+                const borderColor = isExceptional ? '#f6c453' : 'var(--gray-200)'
+                const boxStyle = { ...exStyles.box, background: isExceptional ? '#fef3c7' : 'var(--gray-100)' }
+                const labelStyle = { ...exStyles.boxLabel, color: accent }
                 const draft = overrides[score.id] ?? ''
                 const draftHcp = parseInt(draft, 10)
                 return (
-                  <div key={score.id} style={exStyles.row}>
+                  <div key={score.id} style={{ ...exStyles.row, background: isExceptional ? '#fffbeb' : 'transparent', borderColor }}>
                     <div style={exStyles.who}>
                       <span style={exStyles.name}>
                         {player.name}
-                        {score.sub_played && <span style={trStyles.subPillSm}>sub played</span>}
+                        {score.sub_played && <span style={{ ...trStyles.subPillSm, background: isExceptional ? '#fef3c7' : 'var(--green-xlight)', color: accent }}>sub played</span>}
                       </span>
-                      <span style={{ ...exStyles.vsPar, color: score.net_total > totalPar ? '#c53030' : 'var(--green)' }}>
+                      <span style={{ ...exStyles.vsPar, color: isExceptional ? accent : score.net_total <= totalPar ? 'var(--green)' : 'var(--gray-600)' }}>
                         {vsParLabel(score.net_total - totalPar)} net
                       </span>
                     </div>
                     <div style={exStyles.boxes}>
-                      <div style={exStyles.box}><span style={exStyles.boxLabel}>Gross</span><span style={exStyles.boxVal}>{score.gross_total}</span></div>
-                      <div style={exStyles.box}><span style={exStyles.boxLabel}>Net</span><span style={exStyles.boxVal}>{score.net_total}</span></div>
-                      <div style={exStyles.box}><span style={exStyles.boxLabel}>Hcp</span><span style={exStyles.boxVal}>{score.handicap_used}</span></div>
-                      <label style={{ ...exStyles.box, background: 'var(--white)', borderColor: '#f6c453' }}>
-                        <span style={exStyles.boxLabel}>Override</span>
+                      <div style={boxStyle}><span style={labelStyle}>Gross</span><span style={exStyles.boxVal}>{score.gross_total}</span></div>
+                      <div style={boxStyle}><span style={labelStyle}>Net</span><span style={exStyles.boxVal}>{score.net_total}</span></div>
+                      <div style={boxStyle}><span style={labelStyle}>Hcp</span><span style={exStyles.boxVal}>{score.handicap_used}</span></div>
+                      <label style={{ ...boxStyle, background: 'var(--white)', borderColor }}>
+                        <span style={labelStyle}>Override</span>
                         <input
                           type="number"
                           step="1"
                           inputMode="numeric"
                           aria-label={`Override handicap for ${player.name}`}
-                          style={exStyles.input}
-                          value={draft}
+                          style={{ ...exStyles.input, borderColor }}
+                          disabled={!isExceptional}
+                          title={isExceptional ? undefined : 'Overrides are available for exceptional scores.'}
+                          placeholder={isExceptional ? undefined : '—'}
+                          value={isExceptional ? draft : ''}
                           onChange={e => setOverrides(prev => ({ ...prev, [score.id]: e.target.value }))}
                         />
                       </label>
                     </div>
-                    {Number.isFinite(draftHcp) && (
-                      <span style={exStyles.preview}>
+                    {isExceptional && Number.isFinite(draftHcp) && (
+                      <span style={{ ...exStyles.preview, color: accent }}>
                         New net {score.gross_total - draftHcp} ({vsParLabel(score.gross_total - draftHcp - totalPar)})
                       </span>
                     )}
