@@ -59,13 +59,23 @@ export default function AdminPlayers() {
     try { league = await loadWorkingLeague(supabase, locationId) }
     catch (error) { showToast(error.message, 'error'); setLoading(false); return }
     setWorkingLeague(league)
-    const [{ data: plrs, error: plrErr }, { data: tms }] = await Promise.all([
+    const [{ data: plrs, error: plrErr }, { data: tms, error: teamErr }] = await Promise.all([
       supabase.from('players').select('*').eq('location_id', locationId).order('name'),
       supabase.from('teams').select('id, name, player1_id, player2_id').eq('location_id', locationId).eq('league_id', league.id).order('created_at', { ascending: true }),
     ])
-    if (plrErr) console.error('Players load error:', plrErr)
+    if (plrErr || teamErr) {
+      showToast('Players and teams could not be loaded. Reload to try again.', 'error')
+      setLoading(false)
+      return
+    }
     try {
-      setPlayers(await withSeasonSkinsEnrollment(supabase, league.id, locationId, plrs || []))
+      const enrolledPlayers = await withSeasonSkinsEnrollment(supabase, league.id, locationId, plrs || [])
+      // Assignment belongs to the working league. The legacy player.team_id
+      // can be stale after an edit or refer to another season.
+      const teamByPlayer = new Map((tms || []).flatMap(team =>
+        [team.player1_id, team.player2_id].filter(Boolean).map(id => [id, team.id])
+      ))
+      setPlayers(enrolledPlayers.map(player => ({ ...player, team_id: teamByPlayer.get(player.id) || null })))
     } catch (error) {
       showToast(error.message || 'Skins enrollment could not be loaded.', 'error')
       setLoading(false)

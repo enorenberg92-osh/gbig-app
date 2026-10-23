@@ -270,19 +270,10 @@ export default function AdminSkins({ activeEventId = null, onEventChange = () =>
     <div style={st.page}>
       <Toast toast={toast} />
 
-      {/* Event selector */}
+      {/* Enrollment applies to the entire league, independent of report round. */}
       <div style={st.card}>
-        <label style={st.label}>Select Event</label>
-        <select
-          style={st.select}
-          value={selectedEvent}
-          onChange={e => { setSelectedEvent(e.target.value); onEventChange(e.target.value) }}
-        >
-          {events.map(evt => (
-            <option key={evt.id} value={evt.id}>{eventLabel(evt)}</option>
-          ))}
-        </select>
-
+        <h2 style={st.heading}>Skins enrollment</h2>
+        <p style={st.help}>Applies to every round in {workingLeague?.name || 'the working league'}. Enroll each player once for the entire league.</p>
         <div style={st.skinsNote} aria-live="polite">
           {loadError || `${skinsPlayers.length} of ${leaguePlayers.length} players enrolled in skins${workingLeague?.name ? ` · ${workingLeague.name}` : ''}`}
         </div>
@@ -305,28 +296,44 @@ export default function AdminSkins({ activeEventId = null, onEventChange = () =>
         )}
       </div>
 
-      {/* Run report button */}
-      <Button
-        variant="primary"
-        size="lg"
-        fullWidth
-        icon={<Target size={16} strokeWidth={2.25} />}
-        loading={calculating}
-        loadingText="Calculating…"
-        disabled={!selectedEvent || !!loadError || savingPlayers.size > 0}
-        onClick={runSkinReport}
-        style={{
-          background: 'var(--green-dark)',
-          borderColor: 'var(--green-dark)',
-          padding: '16px',
-          fontSize: '15px',
-          fontWeight: 800,
-          letterSpacing: '0.2px',
-          boxShadow: '0 2px 8px rgba(45,106,79,0.25)',
-        }}
-      >
-        Run Skin Report
-      </Button>
+      {/* Round selection affects only this report, never league enrollment. */}
+      <div style={st.card}>
+        <h2 style={st.heading}>Round results</h2>
+        <label htmlFor="skins-report-round" style={st.label}>Report round</label>
+        <select
+          id="skins-report-round"
+          style={st.select}
+          value={selectedEvent}
+          onChange={e => { setSelectedEvent(e.target.value); onEventChange(e.target.value) }}
+        >
+          {events.length === 0 && <option value="">No rounds scheduled</option>}
+          {events.map(evt => (
+            <option key={evt.id} value={evt.id}>{eventLabel(evt)}</option>
+          ))}
+        </select>
+        <p style={{ ...st.help, marginTop: 8 }}>Choose a round to calculate its skins winners. Enrollment above covers the entire league.</p>
+        <Button
+          variant="primary"
+          size="lg"
+          fullWidth
+          icon={<Target size={16} strokeWidth={2.25} />}
+          loading={calculating}
+          loadingText="Calculating…"
+          disabled={!selectedEvent || !!loadError || savingPlayers.size > 0}
+          onClick={runSkinReport}
+          style={{
+            background: 'var(--green-dark)',
+            borderColor: 'var(--green-dark)',
+            padding: '16px',
+            fontSize: '15px',
+            fontWeight: 800,
+            letterSpacing: '0.2px',
+            boxShadow: '0 2px 8px rgba(45,106,79,0.25)',
+          }}
+        >
+          Run Round Report
+        </Button>
+      </div>
 
       {/* Results */}
       {skinResults === null && !calculating && (
@@ -334,7 +341,7 @@ export default function AdminSkins({ activeEventId = null, onEventChange = () =>
           <EmptyState
             icon={<Target size={44} strokeWidth={1.75} color="var(--green)" />}
             title="Ready to calculate"
-            description="Select an event above and click Run Skin Report to see who won each hole."
+            description="Choose a report round and click Run Round Report to see who won each hole."
           />
         </div>
       )}
@@ -461,6 +468,8 @@ const st = {
   loading: { padding: '60px', textAlign: 'center', color: 'var(--gray-400)' },
 
   card:    { background: '#fff', borderRadius: 'var(--radius)', padding: '16px', boxShadow: 'var(--shadow)', border: '1px solid var(--gray-200)' },
+  heading: { margin: '0 0 8px', fontSize: '18px', fontWeight: 700, color: 'var(--black)' },
+  help: { margin: '0 0 16px', fontSize: '14px', lineHeight: 1.5, color: 'var(--gray-600)' },
   label:   { fontSize: '11px', fontWeight: 700, color: 'var(--gray-500)', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'block', marginBottom: '8px' },
   select:  { width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-sm)', border: '1.5px solid var(--gray-200)', fontSize: '14px', background: 'var(--gray-100)', color: 'var(--black)' },
   skinsNote: { marginTop: '10px', fontSize: '12px', color: 'var(--gray-500)', lineHeight: '1.5', padding: '8px 12px', background: 'var(--off-white)', borderRadius: '6px' },

@@ -181,7 +181,7 @@ export default function AdminPanel({ session, onBack }) {
 
   const current = SECTIONS.find(s => s.id === activeSection) || SECTIONS[0]
   const CurrentIcon = current.Icon
-  const showActiveWeek = activeSection !== 'email' && activeEventLabel
+  const showActiveWeek = activeSection !== 'email' && activeSection !== 'skins' && activeEventLabel
 
   // ── DESKTOP LAYOUT ──────────────────────────────────────────────────────
   if (isDesktop) {
