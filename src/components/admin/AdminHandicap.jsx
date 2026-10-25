@@ -19,6 +19,8 @@ export default function AdminHandicap() {
   const [expanded,     setExpanded]     = useState({}) // { playerId: bool }
   const [toast,        setToast]        = useState(null)
   const [loadError, setLoadError] = useState(null)
+  const [leagueId, setLeagueId] = useState(null)
+  const [minimum, setMinimum] = useState('')
 
   useEffect(() => { if (locationId) loadAll() }, [locationId])
 
@@ -41,16 +43,17 @@ export default function AdminHandicap() {
         .eq('entry_type', 'played')
         .eq('status', 'verified')
         .eq('sub_played', false).order('id')),
-      supabase.from('league_config').select('num_weeks').eq('location_id', locationId).eq('is_working', true).maybeSingle(),
+      supabase.from('league_config').select('id, num_weeks, min_handicap').eq('location_id', locationId).eq('is_working', true).maybeSingle(),
     ])
     const failed = results.find(r => r.error)
     if (failed) { setLoadError(failed.error.message); setLoading(false); return }
     const [{ data: plrs }, { data: scores }, { data: leagueCfg }] = results
 
     // Merge league num_weeks into settings
-    if (leagueCfg?.num_weeks) {
-      setSettings(s => ({ ...s, scoresUsed: leagueCfg.num_weeks }))
-    }
+    setLeagueId(leagueCfg?.id || null)
+    setMinimum(String(leagueCfg?.min_handicap ?? DEFAULT_SETTINGS.minHandicap))
+    setSettings({ ...DEFAULT_SETTINGS, scoresUsed: leagueCfg?.num_weeks || DEFAULT_SETTINGS.scoresUsed,
+      minHandicap: leagueCfg?.min_handicap ?? DEFAULT_SETTINGS.minHandicap })
 
     // Sort by actual play date, then week number. Mirrors handicapCalc.js so
     // `scoresUsed` (slice -N) really
@@ -105,6 +108,22 @@ export default function AdminHandicap() {
     setExpanded(prev => ({ ...prev, [id]: !prev[id] }))
   }
 
+  async function handleSaveMinimum() {
+    const value = minimum.trim() === '' ? NaN : Number(minimum)
+    if (!Number.isInteger(value) || value < -2 || value > settings.maxHandicap) {
+      showToast(`Enter a whole-number minimum handicap from -2 to ${settings.maxHandicap}.`, 'error'); return
+    }
+    setUpdating(true)
+    try {
+      const { error } = await supabase.rpc('admin_set_min_handicap', { p_league_id: leagueId, p_min_handicap: value })
+      if (error) { showToast(mutationErrorMessage(error, 'save the minimum handicap'), 'error'); return }
+      showToast('Minimum handicap saved and unlocked handicaps recalculated.')
+      await loadAll()
+    } catch (error) {
+      showToast(mutationErrorMessage(error, 'save the minimum handicap'), 'error')
+    } finally { setUpdating(false) }
+  }
+
   function formatDate(d) {
     if (!d) return ''
     return formatLocalDate(d, { month: 'short', day: 'numeric', year: '2-digit' })
@@ -141,7 +160,13 @@ export default function AdminHandicap() {
           </div>
           <div style={styles.settingItem}>
             <span style={styles.settingLabel}>Max Handicap</span>
-            <span style={styles.settingValue}>27</span>
+            <span style={styles.settingValue}>{settings.maxHandicap}</span>
+          </div>
+          <div style={styles.settingItem}>
+            <label htmlFor="minimum-handicap" style={styles.settingLabel}>Min Handicap</label>
+            <input id="minimum-handicap" type="number" min="-2" max={settings.maxHandicap} step="1"
+              value={minimum} disabled={updating || !leagueId} onChange={e => setMinimum(e.target.value)}
+              style={{ font: 'inherit', fontSize: 16, width: 90, padding: 8, border: '1px solid var(--gray-300)', borderRadius: 6 }} />
           </div>
           <div style={styles.settingItem}>
             <span style={styles.settingLabel}>Rounding</span>
@@ -152,6 +177,9 @@ export default function AdminHandicap() {
             <span style={styles.settingValue}>4 scores: 1 high · 5+: 1 high, 1 low</span>
           </div>
         </div>
+        <Button variant="secondary" onClick={handleSaveMinimum} loading={updating}
+          disabled={!leagueId || minimum === String(settings.minHandicap)}>Save minimum handicap</Button>
+        <p style={styles.formulaNote}>The minimum applies to this league’s automatic handicap calculations. Locked handicaps and past rounds keep their saved values.</p>
         <div style={styles.formulaNote}>
           Differential = Gross Score − Course Par &nbsp;·&nbsp; Handicap = avg(used diffs) × 90% → truncate
           &nbsp;·&nbsp; Registered handicap counts as one round until {settings.scoresUsed} real rounds exist
@@ -307,7 +335,7 @@ export default function AdminHandicap() {
                       </div>
                       {Math.floor(breakdown.raw) !== breakdown.capped && (
                         <div style={styles.calcRow}>
-                          <span style={styles.calcLabel}>Capped at {settings.maxHandicap}</span>
+                          <span style={styles.calcLabel}>Limited to {breakdown.capped}</span>
                           <span style={styles.calcVal}>{breakdown.capped}</span>
                         </div>
                       )}

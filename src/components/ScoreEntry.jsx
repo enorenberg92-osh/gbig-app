@@ -199,7 +199,8 @@ export default function ScoreEntry({ session, onBack }) {
           : '')
       setCurrentHole(draft.currentHole ?? 0)
       setShowStats(draft.showStats ?? false)
-      setScores(remaining.scores)
+      setScores(Object.fromEntries(PLAYER_KEYS.map(pk => [pk, remaining.scores[pk].map((score, i) =>
+        score == null ? null : Math.min(score, loadedCourse.hole_pars[i] * 2))])))
       setStats(remaining.stats)
 
       setLoading(false)
@@ -222,7 +223,7 @@ export default function ScoreEntry({ session, onBack }) {
   function handleIncrement(player, holeIdx, delta) {
     setScores(prev => {
       const current = prev[player][holeIdx] ?? (getPar(holeIdx) || 4)
-      const next = Math.max(1, Math.min(20, current + delta))
+      const next = Math.max(1, Math.min(getPar(holeIdx) * 2, current + delta))
       return {
         ...prev,
         [player]: prev[player].map((s, i) => i === holeIdx ? next : s),
@@ -295,7 +296,7 @@ export default function ScoreEntry({ session, onBack }) {
     savingRef.current = true
     setSaving(true)
 
-    const entries = activePlayers.map(pk => ({ player_id: team[pk].id, hole_scores: scores[pk], hole_stats: statsPayload(pk) }))
+    const entries = activePlayers.map(pk => ({ player_id: team[pk].id, hole_scores: scores[pk].map((score, i) => Math.min(score, getPar(i) * 2)), hole_stats: statsPayload(pk) }))
     try {
       const { data: result, error: insertErr } = await supabase.rpc('submit_scores', {
         p_event_id: event.id,
@@ -502,7 +503,7 @@ export default function ScoreEntry({ session, onBack }) {
         <div style={styles.holeBadgeRow}>
           <div style={styles.holeBadge}>
             <span style={styles.holeBadgeNum}>HOLE {hole}</span>
-            {par && <span style={styles.holeBadgePar}>Par {par}</span>}
+            {par && <span style={styles.holeBadgePar}>Par {par} · Max {par * 2}</span>}
           </div>
           {event?.hole_event_hole === currentHole + 1 && event?.hole_event_name && (
             <button style={styles.holeEventChip} onClick={() => setShowHoleEvent(true)}>
@@ -547,7 +548,7 @@ export default function ScoreEntry({ session, onBack }) {
                 </div>
                 <button
                   style={styles.stepBtn}
-                  disabled={saving}
+                  disabled={saving || s >= par * 2}
                   aria-label={`Increase score for ${player.name}`}
                   onClick={() => handleIncrement(pk, currentHole, 1)}
                 >

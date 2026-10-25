@@ -34,6 +34,7 @@ beforeAll(async () => {
   for (const name of ['apply_player_handicap', 'submit_scores']) await db.exec(fn(rules, name))
   await db.exec('revoke all on function submit_scores(uuid,jsonb) from public; grant execute on function submit_scores(uuid,jsonb) to authenticated;')
   await db.exec('create trigger validate_scores before insert or update on scores for each row execute function validate_score_row(); grant usage on schema public,auth to authenticated,anon;')
+  await db.exec(migration('20261025193144_admin_score_limits_and_min_handicap.sql'))
 }, 30000)
 afterAll(async () => { await db?.close() })
 beforeEach(async () => {
@@ -112,7 +113,7 @@ it('makes a submitted score official and averages in the registered handicap (4 
 
 async function prepareCloseout() {
   await db.exec('insert into location_admins values(' + q(100) + ',' + q(1) + ');' +
-    'insert into league_config values(' + q(3) + ',' + q(1) + ",'Fall',12,true);" +
+    'insert into league_config(id,location_id,name,num_weeks,is_working) values(' + q(3) + ',' + q(1) + ",'Fall',12,true);" +
     'delete from team_memberships where team_id=' + q(22))
 }
 async function asAdmin(expression) {
@@ -154,4 +155,51 @@ it('preserves closeout authorization and pending-score guards', async () => {
   await expect(asAdmin('publish_week(' + q(41) + ')')).rejects.toThrow('pending')
   expect((await rows()).filter(row=>row.entry_type==='missed_penalty')).toHaveLength(0)
   expect((await db.query('select status from events where id=' + q(41))).rows[0].status).toBe('open')
+})
+
+it.each([9,18])('caps player-entered %i-hole cards at each hole’s double par with consistent totals', async holes => {
+  const pars = Array.from({length:holes},(_,i)=>[3,4,5][i%3])
+  await db.query('update courses set num_holes=$1,hole_pars=$2,total_par=$3', [holes,JSON.stringify(pars),pars.reduce((a,b)=>a+b,0)])
+  await submit([entry(11,4,{hole_scores:Array(holes).fill(15)})])
+  const score=(await rows())[0], gross=pars.reduce((a,b)=>a+b*2,0)
+  expect(score).toMatchObject({hole_scores:pars.map(par=>par*2),gross_total:gross,net_total:gross-2,handicap_used:2})
+})
+it('lets admins save one teammate, then the other, and correct just one without changing the partner', async()=>{
+  await prepareCloseout()
+  const save=entries=>asAdmin('admin_upsert_score('+q(41)+",'"+JSON.stringify(entries)+"'::jsonb)")
+  await save([entry(11,15,{handicap_used:2})])
+  expect(await rows()).toHaveLength(1)
+  expect((await rows())[0]).toMatchObject({hole_scores:Array(9).fill(8),gross_total:72,net_total:70})
+  const first=(await rows())[0]
+  await save([entry(12,5,{handicap_used:4})])
+  expect((await rows())[0]).toEqual(first)
+  const partner=(await rows())[1]
+  await save([entry(11,4,{handicap_used:2})])
+  expect((await rows())[1]).toEqual(partner)
+  expect((await rows())[0].gross_total).toBe(36)
+})
+it('saves a league minimum, applies it with and without rounds, and preserves locked players, history and other venues', async()=>{
+  await prepareCloseout()
+  await db.exec('update players set starting_handicap=handicap; update players set handicap_locked=true where id='+q(14))
+  await submit([entry(11,3)])
+  const historical=(await rows())[0]
+  await asAdmin('admin_set_min_handicap('+q(3)+',6)')
+  expect((await db.query('select min_handicap from league_config where id='+q(3))).rows[0].min_handicap).toBe(6)
+  const handicaps=(await db.query('select id,handicap from players order by id')).rows.map(p=>Number(p.handicap))
+  expect(handicaps).toEqual([6,6,3,3])
+  expect((await rows())[0]).toEqual(historical)
+  await submit([entry(12,3)],102)
+  expect(Number((await db.query('select handicap from players where id='+q(12))).rows[0].handicap)).toBe(6)
+  await asAdmin('admin_set_min_handicap('+q(3)+',-2)')
+  expect(Number((await db.query('select handicap from players where id='+q(12))).rows[0].handicap)).toBe(-2)
+})
+it('rejects invalid and unauthorized minimum changes atomically', async()=>{
+  await prepareCloseout()
+  for(const value of ['null','-3','28']) await expect(asAdmin('admin_set_min_handicap('+q(3)+','+value+')')).rejects.toThrow('Minimum handicap')
+  await db.exec('set role authenticated; set "request.jwt.claim.sub"='+q(101))
+  await expect(db.query('select admin_set_min_handicap('+q(3)+',6)')).rejects.toThrow('Admin access')
+  await db.exec('reset role; set role anon')
+  await expect(db.query('select admin_set_min_handicap('+q(3)+',6)')).rejects.toThrow('permission denied')
+  await db.exec('reset role')
+  expect((await db.query('select min_handicap from league_config where id='+q(3))).rows[0].min_handicap).toBe(-2)
 })
