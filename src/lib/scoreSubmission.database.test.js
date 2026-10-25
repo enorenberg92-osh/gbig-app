@@ -34,7 +34,7 @@ beforeAll(async () => {
   for (const name of ['apply_player_handicap', 'submit_scores']) await db.exec(fn(rules, name))
   await db.exec('revoke all on function submit_scores(uuid,jsonb) from public; grant execute on function submit_scores(uuid,jsonb) to authenticated;')
   await db.exec('create trigger validate_scores before insert or update on scores for each row execute function validate_score_row(); grant usage on schema public,auth to authenticated,anon;')
-  await db.exec(migration('20261025191448_admin_score_limits_and_min_handicap.sql'))
+  await db.exec(migration('20261025193144_admin_score_limits_and_min_handicap.sql'))
 }, 30000)
 afterAll(async () => { await db?.close() })
 beforeEach(async () => {
