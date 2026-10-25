@@ -33,6 +33,8 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
   const [subMap, setSubMap]           = useState({})  // { player_id: { sub_first_name, sub_last_name, sub_handicap } }
   const [leagueId, setLeagueId]       = useState(null)
   const [overrides, setOverrides]     = useState({})  // { score_id: draft override handicap }
+  const [search, setSearch] = useState('')
+  const [selectedPlayers, setSelectedPlayers] = useState([])
 
   useEffect(() => {
     if (locationId) loadEvents()
@@ -177,13 +179,16 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
       [team.p2.id]: p2holes.map(v => v === null ? '' : String(v)),
     })
     setEditingTeam(team.id)
+    const missing = [team.p1, team.p2].filter((player, index) => !team[index === 0 ? 'score1' : 'score2'])
+    setSelectedPlayers((missing.length ? missing : [team.p1, team.p2]).map(player => player.id))
     setSkinsResult(null)
   }
 
   function updateHole(playerId, holeIdx, val) {
     setHoleScores(prev => {
       const updated = [...(prev[playerId] || Array(eventData?.holePars?.length || 0).fill(''))]
-      updated[holeIdx] = val
+      updated[holeIdx] = val !== '' && Number(val) > eventData.holePars[holeIdx] * 2
+        ? String(eventData.holePars[holeIdx] * 2) : val
       return { ...prev, [playerId]: updated }
     })
   }
@@ -204,17 +209,18 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
 
   async function handleSaveTeamScores(team) {
     if (eventData?.courseError) { showToast(eventData.courseError, 'error'); return }
-    setSaving(true)
     const players = [
       { player: team.p1 },
       { player: team.p2 },
-    ]
+    ].filter(({ player }) => selectedPlayers.includes(player.id))
+    if (!players.length) { showToast('Select at least one player to save.', 'error'); return }
+    setSaving(true)
     const entries = []
 
     for (const { player } of players) {
-      const holes = (holeScores[player.id] || []).map(v => parseInt(v, 10) || null)
-      if (holes.length !== eventData.holePars.length || holes.some(value => value == null || value < 1 || value > 20)) {
-        showToast(`Enter all ${eventData.holePars.length} hole scores from 1 to 20.`, 'error')
+      const holes = (holeScores[player.id] || []).map((v, i) => v === '' ? null : Math.min(Number(v), eventData.holePars[i] * 2))
+      if (holes.length !== eventData.holePars.length || holes.some(value => !Number.isInteger(value) || value < 1)) {
+        showToast(`Enter all ${eventData.holePars.length} hole scores for ${player.name}. Maximum per hole is double par.`, 'error')
         setSaving(false)
         return
       }
@@ -361,14 +367,19 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
   }
 
   // ── UI Helpers ──────────────────────────────────────────────────────────────
-  const submitted   = teams.filter(t => t.score1 || t.score2)
-  const unsubmitted = teams.filter(t => !t.score1 && !t.score2)
+  const query = search.trim().toLocaleLowerCase()
+  const matchesPlayer = player => player?.name?.toLocaleLowerCase().includes(query)
+  const filteredTeams = teams.filter(t => !query || [t.p1, t.p2].some(matchesPlayer) ||
+    [subMap[t.p1.id], subMap[t.p2.id]].some(sub => sub && `${sub.sub_first_name || ''} ${sub.sub_last_name || ''}`.toLocaleLowerCase().includes(query)))
+  const submitted   = filteredTeams.filter(t => t.score1 || t.score2)
+  const unsubmitted = filteredTeams.filter(t => !t.score1 && !t.score2)
   const completeTeams = teams.filter(t => t.score1 && t.score2).length
-  const partialTeams = submitted.length - completeTeams
+  const partialTeams = teams.filter(t => Boolean(t.score1) !== Boolean(t.score2)).length
   const holePars    = eventData?.holePars || []
   const totalPar    = holePars.reduce((s, p) => s + p, 0)
   const scoreReview = teams
     .flatMap(t => [{ player: t.p1, score: t.score1 }, { player: t.p2, score: t.score2 }])
+    .filter(({ player }) => !query || matchesPlayer(player))
     .filter(({ score }) => score?.entry_type === 'played' && totalPar && Number.isFinite(score.net_total))
     // Keep the existing two-sided rule: furthest from the round's handicap
     // expectation first, then near-threshold scores, with net par last.
@@ -414,6 +425,13 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
       </div>
 
       {loading && <div style={styles.loading}>Loading scores…</div>}
+
+      <div style={styles.card}>
+        <label htmlFor="score-player-search" style={styles.sectionLabel}>Search by player name</label>
+        <input id="score-player-search" type="search" value={search} onChange={e => setSearch(e.target.value)}
+          placeholder="Enter a player name" style={{ ...styles.select, fontSize: 16 }} />
+        {query && !filteredTeams.length && <p role="status">No players match “{search.trim()}”.</p>}
+      </div>
 
       {!loading && (
         <>
@@ -516,6 +534,8 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
                   subMap={subMap}
                   onEdit={() => startEditTeam(team)}
                   onHoleChange={updateHole}
+                  selectedPlayers={selectedPlayers}
+                  onSelectPlayer={(id, checked) => setSelectedPlayers(prev => checked ? [...prev, id] : prev.filter(value => value !== id))}
                   onSave={() => handleSaveTeamScores(team)}
                   onCancel={() => setEditingTeam(null)}
                   onDeleteScore={handleDeleteScore}
@@ -550,6 +570,8 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
                   subMap={subMap}
                   onEdit={() => startEditTeam(team)}
                   onHoleChange={updateHole}
+                  selectedPlayers={selectedPlayers}
+                  onSelectPlayer={(id, checked) => setSelectedPlayers(prev => checked ? [...prev, id] : prev.filter(value => value !== id))}
                   onSave={() => handleSaveTeamScores(team)}
                   onCancel={() => setEditingTeam(null)}
                   onDeleteScore={handleDeleteScore}
@@ -628,7 +650,7 @@ export default function AdminScores({ activeEventId = null, onEventChange = () =
 }
 
 // ─── Team Row Component ───────────────────────────────────────────────────────
-function TeamRow({ team, holePars, course, isEditing, holeScores, saving, subMap = {}, onEdit, onHoleChange, onSave, onCancel, onDeleteScore, calcGross, calcNet, calcNetVsPar }) {
+function TeamRow({ team, holePars, course, isEditing, holeScores, saving, subMap = {}, selectedPlayers = [], onSelectPlayer, onEdit, onHoleChange, onSave, onCancel, onDeleteScore, calcGross, calcNet, calcNetVsPar }) {
   const totalPar = holePars.reduce((s, p) => s + p, 0)
   const submitted = !!(team.score1 || team.score2)
 
@@ -705,6 +727,17 @@ function TeamRow({ team, holePars, course, isEditing, holeScores, saving, subMap
       {/* Scorecard Editor */}
       {isEditing && (
         <div style={trStyles.scorecard}>
+          <fieldset style={{ border: 0, padding: '8px 0', margin: 0 }}>
+            <legend>Save scores for</legend>
+            {[team.p1, team.p2].map(player => (
+              <label key={player.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0' }}>
+                <input type="checkbox" aria-label={`Save scores for ${player.name}`} checked={selectedPlayers.includes(player.id)}
+                  disabled={saving} onChange={e => onSelectPlayer(player.id, e.target.checked)} />
+                {player.name}
+              </label>
+            ))}
+            <p style={{ fontSize: 13 }}>Select one or both players. Only selected players’ scores will be saved. Maximum per hole: double par.</p>
+          </fieldset>
           <div style={trStyles.scorecardScroll}>
             <table style={trStyles.table}>
               <thead>
@@ -777,7 +810,10 @@ function TeamRow({ team, holePars, course, isEditing, holeScores, saving, subMap
                             <input
                               type="number"
                               min="1"
-                              max="20"
+                              max={par * 2}
+                              step="1"
+                              aria-label={`${player.name}, hole ${displayHole(i, course)}`}
+                              disabled={saving || !selectedPlayers.includes(player.id)}
                               value={val}
                               onChange={e => onHoleChange(player.id, i, e.target.value)}
                               style={{
@@ -871,6 +907,7 @@ function TeamRow({ team, holePars, course, isEditing, holeScores, saving, subMap
               loading={saving}
               loadingText="Saving…"
               onClick={onSave}
+              disabled={!selectedPlayers.length}
               style={{ flex: 1 }}
             >
               Save Scores

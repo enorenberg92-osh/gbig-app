@@ -75,6 +75,18 @@ it('defaults to the signed-in golfer, even if the dated roster order is reversed
   expect(nodes().filter(node => node.props?.['aria-label']?.startsWith('Increase score')).map(node => node.props['aria-label'])).toEqual(['Increase score for Alex Player'])
   expect(button('Hole 2').props.disabled).toBe(true)
 })
+it('caps restored drafts and prevents increasing past double par on each hole', async()=>{
+  h.draft={...completeDraft(),scores:{p1:[15,20],p2:[null,null]}}
+  await mount()
+  const increase=()=>nodes().find(n=>n.props?.['aria-label']==='Increase score for Alex Player')
+  expect(text(tree)).toContain('Par 4 · Max 8')
+  expect(increase().props.disabled).toBe(true)
+  lastHole()
+  expect(text(tree)).toContain('Par 3 · Max 6')
+  expect(increase().props.disabled).toBe(true)
+  await button('Submit Scorecard').props.onClick()
+  expect(h.rpc.mock.calls[0][1].p_entries[0].hole_scores).toEqual([8,6])
+})
 it('submits only a complete selected card and preserves the unfinished partner draft', async () => {
   h.draft = completeDraft()
   await mount(); lastHole()
