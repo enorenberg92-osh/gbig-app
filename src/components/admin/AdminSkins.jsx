@@ -7,6 +7,7 @@ import { displayHole } from '../../lib/holeUtils'
 import { loadSkinsRound, loadSeasonSkinsEnrollments } from '../../lib/loadSkinsRound'
 import { loadWorkingLeague } from '../../lib/leagueUtils'
 import { fetchAllRows } from '../../lib/fetchAllRows'
+import './AdminSkins.css'
 
 const SCORE_LABELS = [
   { diff: -3, label: 'Albatross', color: '#b8860b', bg: '#fef9c3' },
@@ -389,73 +390,89 @@ export default function AdminSkins({ activeEventId = null, onEventChange = () =>
           </div>
 
           {/* Hole-by-hole table */}
-          <div style={st.card}>
-            <div style={st.tableHead}>
-              <span style={st.thHole}>Hole</span>
-              <span style={st.thPar}>Par</span>
-              <span style={{ flex: 1 }}>Result</span>
-              <span style={st.thScore}>Score</span>
-            </div>
+          <div style={st.card} className="skins-report-shell">
+            <table className="skins-report-table">
+              <caption>Hole-by-hole results</caption>
+              <colgroup>
+                <col className="skins-report-hole-column" />
+                <col className="skins-report-par-column" />
+                <col />
+                <col className="skins-report-score-column" />
+              </colgroup>
+              <thead>
+                <tr>
+                  <th scope="col">Hole</th>
+                  <th scope="col" className="skins-report-par">Par</th>
+                  <th scope="col">Result</th>
+                  <th scope="col">Low score</th>
+                </tr>
+              </thead>
+              <tbody>
+                {skinResults.map(r => {
+                  const lbl = r.score != null ? scoreLabel(r.score, r.par) : null
+                  const isWon  = r.status === 'won'
+                  const isTied = r.status === 'tied'
 
-            {skinResults.map(r => {
-              const lbl = r.status === 'won' ? scoreLabel(r.score, r.par) : null
-              const isWon  = r.status === 'won'
-              const isTied = r.status === 'tied'
-
-              return (
-                <div
-                  key={r.hole}
-                  style={{
-                    ...st.tableRow,
-                    background: isWon ? '#f0fdf4' : isTied ? '#fffbeb' : '#fafafa',
-                    borderLeft: `3px solid ${isWon ? 'var(--green)' : isTied ? '#f6c90e' : '#e5e7eb'}`,
-                  }}
-                >
-                  <span style={st.thHole}>
-                    <span style={st.holeBadge}>{r.hole}</span>
-                  </span>
-                  <span style={{ ...st.thPar, color: 'var(--gray-400)', fontSize: '13px' }}>
-                    {r.par ?? '—'}
-                  </span>
-                  <div style={{ flex: 1 }}>
-                    {isWon && (
-                      <>
-                        <div style={st.winnerName}>🏆 {playerName(r.winner)}</div>
-                        {r.allEntries && r.allEntries.length > 1 && (
-                          <div style={st.otherScores}>
-                            {r.allEntries
-                              .filter(e => e.playerId !== r.winner?.id)
-                              .map(e => `${playerName(e.player)} ${e.score}`)
-                              .join(' · ')}
-                          </div>
+                  return (
+                    <tr
+                      key={r.hole}
+                      className={isWon ? 'skins-report-won' : isTied ? 'skins-report-tied' : ''}
+                    >
+                      <td>
+                        <span style={st.holeBadge}>{r.hole}</span>
+                        <span className="skins-report-mobile-par">Par {r.par ?? '—'}</span>
+                      </td>
+                      <td className="skins-report-par">
+                        {r.par ?? '—'}
+                      </td>
+                      <td>
+                        {isWon && (
+                          <>
+                            <div style={st.winnerName}>🏆 {playerName(r.winner)}</div>
+                            {r.allEntries && r.allEntries.length > 1 && (
+                              <div style={st.otherScores}>
+                                {r.allEntries
+                                  .filter(e => e.playerId !== r.winner?.id)
+                                  .map(e => `${playerName(e.player)} ${e.score}`)
+                                  .join(' · ')}
+                              </div>
+                            )}
+                          </>
                         )}
-                      </>
-                    )}
-                    {isTied && (
-                      <div style={st.tiedLabel}>
-                        Tied — No skin
-                        <span style={st.tiedCount}>{r.tiedPlayers.length} players tied</span>
-                      </div>
-                    )}
-                    {r.status === 'no_scores' && (
-                      <div style={st.noScoreLabel}>Awaiting scores</div>
-                    )}
-                  </div>
-                  <div style={st.thScore}>
-                    {r.score != null && (
-                      <>
-                        <span style={st.scoreNum}>{r.score}</span>
-                        {lbl && (
-                          <span style={{ ...st.scoreLbl, background: lbl.bg, color: lbl.color }}>
-                            {lbl.label}
-                          </span>
+                        {isTied && (
+                          <>
+                            <div className="skins-report-tie-label">
+                              Tied — No skin
+                              <span className="skins-report-tie-count">{r.tiedPlayers.length} players tied</span>
+                            </div>
+                            <ul className="skins-report-tied-players" aria-label="Players tied for the low score">
+                              {r.tiedPlayers.map((player, index) => (
+                                <li key={player?.id ?? index}>{playerName(player)}</li>
+                              ))}
+                            </ul>
+                          </>
                         )}
-                      </>
-                    )}
-                  </div>
-                </div>
-              )
-            })}
+                        {r.status === 'no_scores' && (
+                          <div style={st.noScoreLabel}>Awaiting scores</div>
+                        )}
+                      </td>
+                      <td className="skins-report-low-score">
+                        {r.score != null ? (
+                          <>
+                            <span className="skins-report-score-number">{r.score}</span>
+                            {lbl && (
+                              <span className="skins-report-score-label" style={{ background: lbl.bg, color: lbl.color }}>
+                                {lbl.label}
+                              </span>
+                            )}
+                          </>
+                        ) : <span aria-label="No score yet">—</span>}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
           </div>
         </>
       )}
@@ -491,18 +508,8 @@ const st = {
   leaderCount:  { fontSize: '12px', fontWeight: 700, color: '#f6c90e', background: 'rgba(246,201,14,0.15)', padding: '2px 10px', borderRadius: '20px' },
 
   // Hole table
-  tableHead:  { display: 'flex', alignItems: 'center', padding: '8px 12px', background: 'var(--off-white)', borderRadius: '6px', marginBottom: '6px', gap: '10px' },
-  tableRow:   { display: 'flex', alignItems: 'center', gap: '10px', padding: '12px', borderRadius: '6px', marginBottom: '4px', transition: 'background 0.15s' },
-  thHole:     { width: '44px', flexShrink: 0, fontSize: '11px', fontWeight: 700, color: 'var(--gray-400)', textTransform: 'uppercase', textAlign: 'center' },
-  thPar:      { width: '36px', flexShrink: 0, textAlign: 'center' },
-  thScore:    { width: '100px', flexShrink: 0, textAlign: 'right', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '3px' },
-
   holeBadge:    { width: '28px', height: '28px', borderRadius: '50%', background: 'var(--green-dark)', color: '#fff', fontSize: '12px', fontWeight: 800, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' },
   winnerName:   { fontSize: '14px', fontWeight: 700, color: 'var(--green-dark)' },
-  otherScores:  { fontSize: '11px', color: 'var(--gray-400)', marginTop: '2px' },
-  tiedLabel:    { fontSize: '13px', fontWeight: 600, color: '#b45309', display: 'flex', alignItems: 'center', gap: '8px' },
-  tiedCount:    { fontSize: '11px', fontWeight: 600, color: '#92400e', background: '#fef3c7', padding: '2px 8px', borderRadius: '20px' },
-  noScoreLabel: { fontSize: '12px', color: 'var(--gray-400)', fontStyle: 'italic' },
-  scoreNum:     { fontSize: '18px', fontWeight: 800, color: 'var(--black)' },
-  scoreLbl:     { fontSize: '10px', fontWeight: 700, padding: '2px 7px', borderRadius: '20px', letterSpacing: '0.2px' },
+  otherScores:  { fontSize: '11px', color: 'var(--gray-600)', marginTop: '2px', overflowWrap: 'anywhere' },
+  noScoreLabel: { fontSize: '12px', color: 'var(--gray-600)', fontStyle: 'italic' },
 }
