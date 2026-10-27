@@ -75,7 +75,41 @@ try {
   await sql(migration('202610060002_publication_guards.sql'))
   await sql(migration('20261023180948_missed_penalty_net_par_plus_seven.sql'))
   await sql(migration('20261023180948_missed_penalty_net_par_plus_seven.sql'))
+  await sql(`DO $$ BEGIN
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='anon') THEN CREATE ROLE anon NOLOGIN; END IF;
+  END $$;
+  ALTER TABLE events ADD CONSTRAINT fixture_unique_week UNIQUE(location_id,league_id,week_number);`)
+  const weekMigration = '20261027173026_preserve_named_event_week_numbers.sql'
+  await sql(migration(weekMigration))
   const tests = [
+    ['legacy named weeks backfill numerically and closeout opens week 2, not week 10', async () => {
+      await sql(`ALTER TABLE events DISABLE TRIGGER events_preserve_week_number;
+        UPDATE events SET name='Week 1',week_number=NULL WHERE id=${quote(41)};
+        UPDATE events SET name='Week 2',week_number=NULL WHERE id=${quote(42)};
+        INSERT INTO events(id,location_id,league_id,name,status,start_date)
+          VALUES (${quote(44)},${quote(1)},${quote(3)},'Week 10','draft','2026-12-10');
+        ALTER TABLE events ENABLE TRIGGER events_preserve_week_number;`)
+      await sql(migration(weekMigration))
+      await sql(migration(weekMigration))
+      assert.equal(await sql(`SELECT string_agg(week_number::text,',' ORDER BY week_number) FROM events WHERE league_id=${quote(3)}`),'1,2,10')
+      assert.equal(JSON.parse(await publish()).next_event_id,id(42))
+      assert.equal(await sql(`SELECT week_number FROM events WHERE league_id=${quote(3)} AND status='open'`),'2')
+      assert.equal(await sql(`SELECT status FROM events WHERE id=${quote(44)}`),'draft')
+    }],
+    ['manual event creation fills missing week numbers and preserves explicit values', async () => {
+      await sql(`INSERT INTO events(id,location_id,league_id,name,status)
+        VALUES (${quote(44)},${quote(1)},${quote(3)},'Week 10 — Pebble Beach','draft'),
+          (${quote(45)},${quote(1)},${quote(3)},'Championship 2026','draft');`)
+      assert.equal(await sql(`SELECT week_number FROM events WHERE id=${quote(44)}`),'10')
+      assert.equal(await sql(`SELECT week_number IS NULL FROM events WHERE id=${quote(45)}`),'t')
+      await sql(`UPDATE events SET name='Week 3',week_number=NULL WHERE id=${quote(45)};
+        UPDATE events SET name='Week 99',week_number=NULL WHERE id=${quote(42)};`)
+      assert.equal(await sql(`SELECT week_number FROM events WHERE id=${quote(45)}`),'3')
+      assert.equal(await sql(`SELECT week_number FROM events WHERE id=${quote(42)}`),'2')
+      await assert.rejects(sql(`INSERT INTO events(id,location_id,league_id,name,status)
+        VALUES (${quote(46)},${quote(1)},${quote(3)},'Week 2','draft')`),/unique/)
+      assert.equal(await sql(`SELECT prosecdef FROM pg_proc WHERE oid='public.preserve_named_event_week_number()'::regprocedure`),'f')
+    }],
     ['invalid course or incomplete roster cannot be published', async () => {
       await sql(`UPDATE courses SET total_par=35 WHERE id=${quote(31)}`)
       await assert.rejects(publish(),/complete pars/)
