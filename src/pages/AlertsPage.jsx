@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
 import { useLocation } from '../context/LocationContext'
+import AccountNotifications from '../components/AccountNotifications'
 
 const VAPID_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY
 
@@ -23,7 +24,7 @@ function timeAgo(dateStr) {
   return new Date(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
-export default function AlertsPage({ session }) {
+export default function AlertsPage({ session, accountNotifications }) {
   const { locationId } = useLocation()
   const [alerts, setAlerts]             = useState([])
   const [loading, setLoading]           = useState(true)
@@ -139,7 +140,7 @@ export default function AlertsPage({ session }) {
           <span style={styles.optInIcon}>🔔</span>
           <div style={styles.optInText}>
             <p style={styles.optInTitle}>Get important alerts</p>
-            <p style={styles.optInBody}>We'll only notify you when it really matters — closures, schedule changes, or league news.</p>
+            <p style={styles.optInBody}>Receive league updates, score reminders, and sub requests for location admins.</p>
           </div>
           <button style={styles.optInBtn} onClick={handleSubscribe} disabled={subscribing}>
             {subscribing ? '…' : 'Enable'}
@@ -167,6 +168,8 @@ export default function AlertsPage({ session }) {
           <button style={styles.muteBtn} onClick={handleUnsubscribe}>Mute</button>
         </div>
       )}
+
+      {session && accountNotifications && <AccountNotifications notifications={accountNotifications} />}
 
       {/* ── Alerts feed ────────────────────────────────────── */}
       <div style={styles.feedHeader}>

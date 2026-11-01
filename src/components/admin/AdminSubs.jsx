@@ -6,6 +6,7 @@ import { useLocation } from '../../context/LocationContext'
 import ConfirmDialog from '../ConfirmDialog'
 import { mutationErrorMessage } from '../../lib/rpcErrors'
 import { formatLocalDate } from '../../lib/dateUtils'
+import AdminAddSub from './AdminAddSub'
 
 export default function AdminSubs() {
   const { locationId } = useLocation()
@@ -182,6 +183,7 @@ export default function AdminSubs() {
         />
       )}
       <Toast toast={toast} />
+      <AdminAddSub knownSubs={knownSubs} onAdded={() => { showToast('Sub added and approved.'); setFilter('approved'); load() }} />
 
       {/* Alert banner if pending subs exist */}
       {pendingCount > 0 && (
@@ -243,7 +245,7 @@ export default function AdminSubs() {
                 <div style={styles.subHeader}>
                   <div>
                     <div style={styles.subRequester}>
-                      Requested by: <strong>{sub.playerName}</strong>
+                      Player covered: <strong>{sub.playerName}</strong>
                     </div>
                     <div style={styles.subEvent}>
                       {sub.eventName}

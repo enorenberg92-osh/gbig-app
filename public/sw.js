@@ -27,16 +27,16 @@ self.addEventListener('push', event => {
 // ── Notification tapped — open / focus the app ─────────────────
 self.addEventListener('notificationclick', event => {
   event.notification.close()
-  const target = event.notification.data?.url || '/'
+  let target = new URL(event.notification.data?.url || '/', self.location.origin)
+  if (target.origin !== self.location.origin) target = new URL('/', self.location.origin)
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
       for (const client of list) {
-        if (client.url.includes(self.location.origin) && 'focus' in client) {
-          client.focus()
-          return
+        if (new URL(client.url).origin === self.location.origin && 'focus' in client) {
+          return client.navigate(target.href).then(navigated => (navigated || client).focus())
         }
       }
-      clients.openWindow(target)
+      return clients.openWindow(target.href)
     })
   )
 })

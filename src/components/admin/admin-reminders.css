@@ -1,0 +1,19 @@
+.admin-task { background:var(--white); border:1px solid var(--gray-200); border-radius:var(--radius); padding:20px; }
+.admin-task-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; }
+.admin-task h3 { font-size:16px; color:var(--green-dark); margin:0 0 6px; }
+.admin-task p { font-size:14px; color:var(--gray-600); line-height:1.5; max-width:70ch; }
+.admin-task-form { margin-top:20px; }
+.admin-task fieldset { border:0; padding:0; min-width:0; }
+.admin-task-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; margin-bottom:20px; }
+.admin-task label { display:flex; flex-direction:column; gap:6px; font-size:13px; font-weight:600; color:var(--gray-600); }
+.admin-task-field { display:flex; flex-direction:column; gap:6px; }
+.admin-task select,.admin-task input { width:100%; min-height:44px; padding:10px 12px; border:1.5px solid var(--gray-200); border-radius:var(--radius-sm); background:var(--white); color:var(--black); font:inherit; box-sizing:border-box; }
+.admin-task :is(input,select,button):focus-visible { outline:2px solid var(--green); outline-offset:3px; }
+.admin-task :is(input,select):disabled { background:var(--gray-100); }
+.admin-task .admin-task-error { color:#b91c1c; margin-top:12px; }
+.admin-reminders { padding:20px; display:grid; gap:20px; }
+.admin-reminder-row { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; padding:16px 0; border-top:1px solid var(--gray-200); }
+.admin-reminder-row p { margin:4px 0 0; }
+.admin-reminder-row strong { font-size:14px; color:var(--green-dark); }
+.admin-reminders-status { color:var(--green-dark); font-size:14px; }
+@media(max-width:540px) { .admin-task-grid { grid-template-columns:1fr; } .admin-task { padding:16px; } .admin-reminders { padding:16px; } .admin-task-heading { flex-wrap:wrap; } }

@@ -15,6 +15,8 @@ import SuperAdminPage from './pages/SuperAdminPage'
 
 // Header-mounted "Install App" button (Android beforeinstallprompt + iOS guide)
 import InstallPrompt from './components/InstallPrompt'
+import { useAccountNotifications, usePushAccount } from './hooks/useAccountNotifications'
+import './components/account-notifications.css'
 
 // Icons (inline SVGs for zero-dependency)
 const Icons = {
@@ -148,6 +150,8 @@ export default function App() {
   const [leagueName, setLeagueName] = useState('')
   const { isSuperAdmin }            = useIsSuperAdmin(session)
   const eventsEnabled               = useFeature('events')
+  const accountNotifications = useAccountNotifications(session, locationId)
+  usePushAccount(session, locationId, loading)
 
   const activeTab         = activeTabFromPath(routerLoc.pathname)
   const onSuperAdminRoute = routerLoc.pathname.startsWith('/super-admin')
@@ -266,7 +270,7 @@ export default function App() {
             <Route path="/reservations"  element={<ReservationsPage />} />
             <Route path="/league/*"      element={<LeaguePage session={session} />} />
             <Route path="/events"        element={eventsEnabled ? <EventsPage session={session} /> : <Navigate to="/league" replace />} />
-            <Route path="/alerts"        element={<AlertsPage session={session} />} />
+            <Route path="/alerts"        element={<AlertsPage session={session} accountNotifications={accountNotifications} />} />
             <Route path="/super-admin/*" element={<SuperAdminPage session={session} />} />
             {/* Fallback for unknown URLs */}
             <Route path="*"              element={<Navigate to="/reservations" replace />} />
@@ -295,10 +299,12 @@ export default function App() {
               >
                 <span style={{
                   ...styles.tabIconWrap,
+                  position: 'relative',
                   backgroundColor: isActive ? activeBg : 'transparent',
                   transform: isActive ? 'scale(1.05)' : 'scale(1)',
                 }}>
                   <Icon size={22} />
+                  {id === 'alerts' && accountNotifications.unread > 0 && <span className="account-alert-badge" aria-label={`${accountNotifications.unread} unread account alerts`}>{accountNotifications.unread}</span>}
                 </span>
                 <span style={{
                   ...styles.tabLabel,
