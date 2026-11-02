@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { Routes, Route, Navigate, useLocation as useRouterLocation, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard, Flag, Medal, Users, Trophy, Activity,
-  Calendar, Repeat2, Map, Target, Bell, CalendarPlus, Mail,
+  Calendar, Repeat2, Map, Target, Bell, CalendarPlus, Mail, Clock,
 } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useLocation } from '../../context/LocationContext'
@@ -23,6 +23,7 @@ import AdminMoney     from './AdminMoney'
 import AdminReports   from './AdminReports'
 import AdminTournaments from './AdminTournaments'
 import WeeklyEmail from './WeeklyEmail'
+import AdminScoreReminders from './AdminScoreReminders'
 import './closeout.css'
 import { isFutureDate } from '../../lib/dateUtils'
 import { loadWorkingLeague } from '../../lib/leagueUtils'
@@ -46,6 +47,7 @@ const SECTIONS = [
   { id: 'reports',    label: 'Reports',      Icon: LayoutDashboard },
   { id: 'email',      label: 'Email',        Icon: Mail },
   { id: 'alerts',     label: 'Alerts',       Icon: Bell },
+  { id: 'reminders',  label: 'Score reminders', Icon: Clock },
 ]
 
 // Derive the active section id from /league/admin/<section>. Anything that
@@ -175,6 +177,7 @@ export default function AdminPanel({ session, onBack }) {
       <Route path="tournaments" element={tournamentsEnabled ? <AdminTournaments /> : <Navigate to="/league/admin/dashboard" replace />} />
       <Route path="email"      element={<div className="closeout"><WeeklyEmail key={`direct:${locationId}`} mode="direct" locationId={locationId} actorId={session?.user?.id} venueName={appName} venueSlug={location?.slug} /></div>} />
       <Route path="alerts"     element={<AdminAlerts />} />
+      <Route path="reminders" element={<AdminScoreReminders key={locationId} />} />
       <Route path="*"          element={<Navigate to="/league/admin/dashboard" replace />} />
     </Routes>
   )
